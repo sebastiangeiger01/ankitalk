@@ -183,24 +183,26 @@ The core design principle: **the user self-rates**, just like in Anki. Claude is
 │  PHASE      │  Cloze: "Fill in the blank: The ___ is the powerhouse..."
 │             │  User thinks of the answer silently.
 │             │
-│  Commands:  │  "hint"   → TTS reads first few words of answer
-│             │  "solve"  → give up: TTS reads answer, rate Again, next card
-│             │  "repeat" → TTS re-reads the question
-│             │  "easy"   → rate Easy, skip reveal, go to next card ★
-│             │  "stop"   → end session
+│  Commands:  │  "answer"  → TTS reads the correct answer aloud → go to RATING
+│             │  "hint"    → TTS reads first few words of answer
+│             │  "repeat"  → TTS re-reads the question
+│             │  "stop"    → end session
+│             │
+│  Ratings:   │  "again" / "hard" / "good" / "easy" → rate directly, next card
+│             │  (user rates without hearing answer — trusts self-assessment)
 └──────┬──────┘
-       │ user says "show"
+       │ user says "answer"
        ▼
-┌─────────────┐  Answer displayed on screen (NOT read aloud yet).
-│  REVEAL     │  User reads answer silently, compares to their mental answer.
+┌─────────────┐  TTS reads the correct answer aloud.
+│  RATING     │  Answer also displayed on screen.
 │  PHASE      │
-│  Commands:  │  "read answer" → TTS reads the answer aloud
-│             │  "explain"     → Claude explains the answer, TTS reads it,
-│             │                  chime plays when done → return to rating
-│             │  "repeat"      → TTS re-reads whatever was last spoken
-│             │  "stop"        → end session
+│  Commands:  │  "explain" → Claude explains, TTS reads, chime when done
+│             │  "repeat"  → TTS re-reads the answer
+│             │  "stop"    → end session
+│             │
+│  Ratings:   │  "again" / "hard" / "good" / "easy" → rate, next card
 └──────┬──────┘
-       │ user says "again" / "hard" / "good" / "easy"
+       │ user says rating
        ▼
 ┌─────────────┐  FSRS scheduler updates card state.
 │  NEXT CARD  │  Auto-advance to next due card → back to QUESTION PHASE.
@@ -212,16 +214,14 @@ The core design principle: **the user self-rates**, just like in Anki. Claude is
 
 | Command | Available In | Effect |
 |---|---|---|
-| **"show"** | Question | Reveal the answer on screen (visual only, no TTS) |
+| **"answer"** | Question | TTS reads the correct answer aloud, transition to Rating Phase |
 | **"hint"** | Question | TTS reads first few words/letters of the answer |
-| **"solve"** | Question | Give up: TTS reads the correct answer aloud, rate as Again (1), advance to next card |
-| **"repeat"** | Question, Reveal | Re-read whatever was last spoken (question or answer) |
-| **"easy"** | Question, Reveal | Rate as Easy (4), skip reveal if in Question phase |
-| **"read answer"** | Reveal | TTS reads the correct answer aloud |
-| **"again"** | Reveal | Rate as Again (1) |
-| **"hard"** | Reveal | Rate as Hard (2) |
-| **"good"** | Reveal | Rate as Good (3) |
-| **"explain"** | Reveal | Claude explains the answer in context, TTS reads it, chime when done |
+| **"repeat"** | Question, Rating | Re-read the last spoken text (question or answer) |
+| **"explain"** | Rating | Claude explains the answer in context, TTS reads it, chime when done |
+| **"again"** | Question, Rating | Rate as Again (1), advance to next card |
+| **"hard"** | Question, Rating | Rate as Hard (2), advance to next card |
+| **"good"** | Question, Rating | Rate as Good (3), advance to next card |
+| **"easy"** | Question, Rating | Rate as Easy (4), advance to next card |
 | **"stop"** | Any | End the review session, show summary |
 
 #### Card Type Handling
@@ -241,12 +241,11 @@ The core design principle: **the user self-rates**, just like in Anki. Claude is
 3. Image cards: display image on screen alongside TTS
 4. Cloze cards: convert {{c1::answer}} to "___" in TTS, display on screen
 5. STT listens for voice commands via Deepgram streaming WebSocket
-6. On "show" → display answer on screen (no TTS)
-7. On "solve" → TTS reads answer aloud → rate Again → advance to next card
-8. On "read answer" → Send card back text → OpenAI TTS → stream to user
-9. On "explain" → Send {question, answer} to Claude → TTS reads explanation
-10. On rating command → Update FSRS schedule → advance to next card
-9. Repeat
+6. On rating (again/hard/good/easy) → Update FSRS schedule → next card
+7. On "answer" → TTS reads correct answer aloud → enter Rating Phase
+8. On "explain" (Rating Phase) → Send {question, answer} to Claude → TTS reads explanation
+9. On rating → Update FSRS schedule → next card
+10. Repeat
 ```
 
 ---
@@ -517,7 +516,7 @@ Assuming 3 study sessions/day, 50 cards/session:
 - TTS reads question aloud → user thinks silently → says "show" → TTS reads answer
 - User self-rates by saying "again", "hard", "good", or "easy"
 - "Easy" during question phase skips reveal (power-user shortcut)
-- Voice commands: "show", "solve", "hint", "repeat", "read answer", "explain", "stop"
+- Voice commands: "answer", "hint", "repeat", "explain", "again", "hard", "good", "easy", "stop"
 - "Explain" invokes Claude for deeper context (only AI call in the flow)
 - Cloze cards rendered as fill-in-the-blank for TTS
 - Image cards displayed on screen with TTS for any text
