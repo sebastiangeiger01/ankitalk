@@ -184,20 +184,21 @@ The core design principle: **the user self-rates**, just like in Anki. Claude is
 │             │  User thinks of the answer silently.
 │             │
 │  Commands:  │  "hint"   → TTS reads first few words of answer
-│             │  "skip"   → rate Again, go to next card
+│             │  "solve"  → give up: TTS reads answer, rate Again, next card
 │             │  "repeat" → TTS re-reads the question
 │             │  "easy"   → rate Easy, skip reveal, go to next card ★
 │             │  "stop"   → end session
 └──────┬──────┘
        │ user says "show"
        ▼
-┌─────────────┐  TTS reads the correct answer aloud.
-│  REVEAL     │  Answer also displayed on screen.
+┌─────────────┐  Answer displayed on screen (NOT read aloud yet).
+│  REVEAL     │  User reads answer silently, compares to their mental answer.
 │  PHASE      │
-│  Commands:  │  "explain" → Claude generates explanation, TTS reads it,
-│             │               chime plays when done → return to rating
-│             │  "repeat"  → TTS re-reads the answer
-│             │  "stop"    → end session
+│  Commands:  │  "read answer" → TTS reads the answer aloud
+│             │  "explain"     → Claude explains the answer, TTS reads it,
+│             │                  chime plays when done → return to rating
+│             │  "repeat"      → TTS re-reads whatever was last spoken
+│             │  "stop"        → end session
 └──────┬──────┘
        │ user says "again" / "hard" / "good" / "easy"
        ▼
@@ -211,15 +212,16 @@ The core design principle: **the user self-rates**, just like in Anki. Claude is
 
 | Command | Available In | Effect |
 |---|---|---|
-| **"show"** | Question | Reveal the answer |
-| **"hint"** | Question | TTS reads partial answer (first few words/letters) |
-| **"skip"** | Question | Rate as Again (1), advance to next card |
-| **"repeat"** | Question, Reveal | Re-read the current text (question or answer) |
+| **"show"** | Question | Reveal the answer on screen (visual only, no TTS) |
+| **"hint"** | Question | TTS reads first few words/letters of the answer |
+| **"solve"** | Question | Give up: TTS reads the correct answer aloud, rate as Again (1), advance to next card |
+| **"repeat"** | Question, Reveal | Re-read whatever was last spoken (question or answer) |
 | **"easy"** | Question, Reveal | Rate as Easy (4), skip reveal if in Question phase |
+| **"read answer"** | Reveal | TTS reads the correct answer aloud |
 | **"again"** | Reveal | Rate as Again (1) |
 | **"hard"** | Reveal | Rate as Hard (2) |
 | **"good"** | Reveal | Rate as Good (3) |
-| **"explain"** | Reveal | Claude explains the answer in context, TTS reads it |
+| **"explain"** | Reveal | Claude explains the answer in context, TTS reads it, chime when done |
 | **"stop"** | Any | End the review session, show summary |
 
 #### Card Type Handling
@@ -239,9 +241,11 @@ The core design principle: **the user self-rates**, just like in Anki. Claude is
 3. Image cards: display image on screen alongside TTS
 4. Cloze cards: convert {{c1::answer}} to "___" in TTS, display on screen
 5. STT listens for voice commands via Deepgram streaming WebSocket
-6. On "show" → Send card back text → OpenAI TTS → stream to user
-7. On "explain" → Send {question, answer} to Claude → TTS reads explanation
-8. On rating command → Update FSRS schedule → advance to next card
+6. On "show" → display answer on screen (no TTS)
+7. On "solve" → TTS reads answer aloud → rate Again → advance to next card
+8. On "read answer" → Send card back text → OpenAI TTS → stream to user
+9. On "explain" → Send {question, answer} to Claude → TTS reads explanation
+10. On rating command → Update FSRS schedule → advance to next card
 9. Repeat
 ```
 
@@ -513,7 +517,7 @@ Assuming 3 study sessions/day, 50 cards/session:
 - TTS reads question aloud → user thinks silently → says "show" → TTS reads answer
 - User self-rates by saying "again", "hard", "good", or "easy"
 - "Easy" during question phase skips reveal (power-user shortcut)
-- Voice commands: "show", "skip", "hint", "repeat", "explain", "stop"
+- Voice commands: "show", "solve", "hint", "repeat", "read answer", "explain", "stop"
 - "Explain" invokes Claude for deeper context (only AI call in the flow)
 - Cloze cards rendered as fill-in-the-blank for TTS
 - Image cards displayed on screen with TTS for any text
