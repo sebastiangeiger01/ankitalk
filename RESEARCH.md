@@ -15,6 +15,10 @@
 | Hosting | Cloudflare Pages + Workers | Edge deployment, D1/KV/R2 storage, free tier generous |
 | App Type | PWA | Single codebase, installable, works on all platforms |
 | MVP Scope | Voice review + minimal dashboard UI | Deck list, upload/export, basic stats, and the core voice review loop |
+| Review UX | Self-rated, no AI answer evaluation | User thinks silently, says "show" to reveal, self-rates with voice. Saves Claude costs. |
+| Card Types | Cloze + images supported | Cloze → voice-friendly fill-in-the-blank; image cards displayed on screen with TTS |
+| STT Mode | Real-time streaming via Durable Objects | Commands feel instant; only short utterances (commands/ratings), not full answers |
+| AI Role | "Explain" command only | Claude not invoked per-card; only when user asks for explanation. Major cost savings. |
 
 ---
 
@@ -41,7 +45,10 @@
 │  │ SvelteKit│  │ API Routes│  │  Cloudflare D1 / KV  │  │
 │  │   SSR    │  │ (+server) │  │  (cards, scheduling)  │  │
 │  └──────────┘  └─────┬─────┘  └──────────────────────┘  │
-│                      │                                    │
+│                      │         ┌──────────────────────┐  │
+│                      │         │  Durable Object      │  │
+│                      │         │  (WebSocket relay)   │  │
+│                      │         └──────────────────────┘  │
 └──────────────────────┼────────────────────────────────────┘
                        │
         ┌──────────────┼──────────────┐
@@ -49,7 +56,7 @@
   ┌──────────┐  ┌───────────┐  ┌───────────┐
   │ Deepgram │  │  Claude   │  │ OpenAI    │
   │ Nova-3   │  │ Haiku 4.5 │  │ TTS       │
-  │  (STT)   │  │(eval/chat)│  │           │
+  │  (STT)   │  │(explain)  │  │           │
   └──────────┘  └───────────┘  └───────────┘
 
   ┌───────────┐
@@ -160,17 +167,81 @@ const response = await openai.audio.speech.create({
 // Stream audio bytes back to the browser
 ```
 
-### Voice Flow (per card)
+### Session Flow (UX)
+
+The core design principle: **the user self-rates**, just like in Anki. Claude is NOT invoked per-card — only when the user explicitly asks for an explanation. This keeps costs low and the flow fast.
+
+#### States & Transitions
+
+```
+┌─────────────┐
+│ SESSION START│  User selects deck, taps "Start Review"
+└──────┬──────┘
+       ▼
+┌─────────────┐  TTS reads the card front aloud.
+│  QUESTION   │  Image cards: image displayed on screen.
+│  PHASE      │  Cloze: "Fill in the blank: The ___ is the powerhouse..."
+│             │  User thinks of the answer silently.
+│             │
+│  Commands:  │  "hint"   → TTS reads first few words of answer
+│             │  "skip"   → rate Again, go to next card
+│             │  "repeat" → TTS re-reads the question
+│             │  "easy"   → rate Easy, skip reveal, go to next card ★
+│             │  "stop"   → end session
+└──────┬──────┘
+       │ user says "show"
+       ▼
+┌─────────────┐  TTS reads the correct answer aloud.
+│  REVEAL     │  Answer also displayed on screen.
+│  PHASE      │
+│  Commands:  │  "explain" → Claude generates explanation, TTS reads it,
+│             │               chime plays when done → return to rating
+│             │  "repeat"  → TTS re-reads the answer
+│             │  "stop"    → end session
+└──────┬──────┘
+       │ user says "again" / "hard" / "good" / "easy"
+       ▼
+┌─────────────┐  FSRS scheduler updates card state.
+│  NEXT CARD  │  Auto-advance to next due card → back to QUESTION PHASE.
+│             │  If no cards left → session summary.
+└─────────────┘
+```
+
+#### Voice Commands Summary
+
+| Command | Available In | Effect |
+|---|---|---|
+| **"show"** | Question | Reveal the answer |
+| **"hint"** | Question | TTS reads partial answer (first few words/letters) |
+| **"skip"** | Question | Rate as Again (1), advance to next card |
+| **"repeat"** | Question, Reveal | Re-read the current text (question or answer) |
+| **"easy"** | Question, Reveal | Rate as Easy (4), skip reveal if in Question phase |
+| **"again"** | Reveal | Rate as Again (1) |
+| **"hard"** | Reveal | Rate as Hard (2) |
+| **"good"** | Reveal | Rate as Good (3) |
+| **"explain"** | Reveal | Claude explains the answer in context, TTS reads it |
+| **"stop"** | Any | End the review session, show summary |
+
+#### Card Type Handling
+
+| Card Type | Voice Behavior | Visual |
+|---|---|---|
+| **Basic (front/back)** | TTS reads front, then back on reveal | Text displayed |
+| **Cloze deletion** | "Fill in the blank: The ___ is the powerhouse of the cell" | Cloze text displayed |
+| **Image cards** | TTS reads any text; image shown on screen | Image + text displayed |
+| **Audio cards** | Play original audio from Anki media | Playback controls shown |
+
+#### Voice Flow (per card)
 
 ```
 1. Select next due card (FSRS scheduler)
 2. Send card front text → OpenAI TTS → stream audio to user
-3. User listens, then speaks their answer
-4. getUserMedia captures audio → stream to Deepgram → get transcript
-5. Send {question, correct_answer, user_transcript} → Claude Haiku 4.5
-6. Claude returns {rating: 1-4, feedback: "...", correct: bool} via tool use
-7. Stream feedback → OpenAI TTS → play for user
-8. Update card schedule with FSRS using the rating
+3. Image cards: display image on screen alongside TTS
+4. Cloze cards: convert {{c1::answer}} to "___" in TTS, display on screen
+5. STT listens for voice commands via Deepgram streaming WebSocket
+6. On "show" → Send card back text → OpenAI TTS → stream to user
+7. On "explain" → Send {question, answer} to Claude → TTS reads explanation
+8. On rating command → Update FSRS schedule → advance to next card
 9. Repeat
 ```
 
@@ -178,72 +249,50 @@ const response = await openai.audio.speech.create({
 
 ## 3. Claude AI Integration
 
+### Role: "Explain" Command Only
+
+Claude is **not invoked per-card**. The user self-rates (Again/Hard/Good/Easy), so there's no need for AI answer evaluation on every card. Claude is only called when the user says **"explain"** during the Reveal Phase.
+
+This dramatically reduces costs: from ~$2-3/month to pennies, since most cards won't trigger an explanation.
+
 ### Model: Claude Haiku 4.5
 
 - **Model ID**: `claude-haiku-4-5-20250710`
 - **Input**: $1.00/1M tokens | **Output**: $5.00/1M tokens
-- **Cost per 50-card session**: ~$0.02-0.03
-- **Monthly cost** (3 sessions/day): ~$2-3
+- **Cost per "explain"**: ~$0.001 (small prompt, short response)
+- **Monthly cost**: ~$0.10-0.50 (assuming 5-10 explains/session, 3 sessions/day)
 
 ### System Prompt
 
 ```
-You are a study assistant helping a user review flashcards through spoken conversation.
-You evaluate the user's verbal answers against correct answers on flashcards.
+You are a study assistant helping a user understand flashcard answers.
+When asked to explain, provide a brief, clear explanation of why the answer is correct.
 
 Rules:
-- Be encouraging but honest about answer quality
-- Accept answers that demonstrate understanding even if wording differs from the card
-- Consider partial knowledge — not everything is pass/fail
-- Keep responses concise and conversational (the user is listening, not reading)
-- When the user's answer is wrong, briefly explain why before revealing the correct answer
+- Keep explanations concise (2-4 sentences) — the user is listening, not reading
+- Add helpful context, mnemonics, or connections to aid memory
+- If the card has a cloze deletion, explain the concept behind the missing word
+- Be conversational and encouraging
 ```
 
-### Answer Evaluation (Tool Use)
-
-Use forced tool use for structured, parseable output:
+### Explain Endpoint
 
 ```typescript
 const message = await anthropic.messages.create({
   model: "claude-haiku-4-5-20250710",
-  max_tokens: 150,
+  max_tokens: 200,
   system: [
     {
       type: "text",
       text: SYSTEM_PROMPT,
-      cache_control: { type: "ephemeral" } // cached across session
+      cache_control: { type: "ephemeral" }
     }
   ],
-  tools: [
-    {
-      name: "rate_answer",
-      description: "Rate the user's answer and provide brief spoken feedback",
-      input_schema: {
-        type: "object",
-        properties: {
-          rating: {
-            type: "integer",
-            enum: [1, 2, 3, 4],
-            description: "1=no recall, 2=partial, 3=correct with effort, 4=perfect"
-          },
-          feedback: {
-            type: "string",
-            description: "1-2 sentence conversational feedback (spoken aloud)"
-          },
-          correct: {
-            type: "boolean",
-            description: "Whether the core concept was understood"
-          }
-        },
-        required: ["rating", "feedback", "correct"]
-      }
-    }
-  ],
-  tool_choice: { type: "tool", name: "rate_answer" },
   messages: [{
     role: "user",
-    content: `Question: ${card.front}\nCorrect answer: ${card.back}\nUser said: ${transcript}`
-  }]
+    content: `Flashcard question: ${card.front}\nCorrect answer: ${card.back}\n\nPlease explain this answer briefly.`
+  }],
+  stream: true // Stream to TTS for low-latency audio
 });
 ```
 
@@ -251,10 +300,8 @@ const message = await anthropic.messages.create({
 
 | Feature | Purpose |
 |---|---|
-| **Tool use** | Structured {rating, feedback, correct} output |
-| **Forced tool_choice** | Guarantees tool call, no free-form parsing needed |
-| **Prompt caching** | 90% discount on system prompt for all cards in a session |
-| **Streaming** | Feed feedback text to TTS as tokens arrive (for hints/explanations) |
+| **Prompt caching** | 90% discount on system prompt across session |
+| **Streaming** | Feed explanation text to TTS as tokens arrive for low-latency audio |
 
 ---
 
@@ -443,12 +490,12 @@ Assuming 3 study sessions/day, 50 cards/session:
 
 | Service | Monthly Cost | Notes |
 |---|---|---|
-| Claude Haiku 4.5 | ~$2-3 | With prompt caching |
-| Deepgram STT | ~$3-5 | ~15 min audio/day |
-| OpenAI TTS | ~$1-2 | ~2000 chars/session |
-| Cloudflare | $0 (free tier) | Until significant scale |
+| Claude Haiku 4.5 | ~$0.10-0.50 | Only invoked on "explain" command, not per-card |
+| Deepgram STT | ~$1-2 | Short commands only, not full answers (~5 min audio/day) |
+| OpenAI TTS | ~$1-2 | ~2000 chars/session (questions + answers + explanations) |
+| Cloudflare | $0 (free tier) | Durable Objects: $0.15/M requests (negligible at personal scale) |
 | Hanko | $0 (free tier) | Until 10K MAU |
-| **Total** | **~$6-10/user/month** | |
+| **Total** | **~$2-4.50/user/month** | Significantly lower due to self-rating UX |
 
 ---
 
@@ -462,12 +509,16 @@ Assuming 3 study sessions/day, 50 cards/session:
 - Settings (voice selection, playback speed)
 
 ### Voice Review Mode
-- Hands-free card review loop
-- AI reads question aloud (OpenAI TTS)
-- User speaks answer (Deepgram STT)
-- Claude evaluates and gives feedback
-- FSRS scheduling updates automatically
-- Voice commands: "skip", "hint", "repeat", "stop"
+- Hands-free card review loop (self-rated, like native Anki)
+- TTS reads question aloud → user thinks silently → says "show" → TTS reads answer
+- User self-rates by saying "again", "hard", "good", or "easy"
+- "Easy" during question phase skips reveal (power-user shortcut)
+- Voice commands: "show", "skip", "hint", "repeat", "explain", "stop"
+- "Explain" invokes Claude for deeper context (only AI call in the flow)
+- Cloze cards rendered as fill-in-the-blank for TTS
+- Image cards displayed on screen with TTS for any text
+- FSRS scheduling updates automatically based on user rating
+- Deepgram real-time STT via Durable Object WebSocket relay
 
 ### Not in MVP
 - Card editing/creation in the web UI
