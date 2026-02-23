@@ -259,6 +259,7 @@
 		background: #22223a;
 		border-radius: 10px;
 		overflow: hidden;
+		flex-wrap: wrap;
 	}
 
 	.deck-link {
@@ -266,6 +267,7 @@
 		padding: 1rem 1.25rem;
 		color: inherit;
 		text-decoration: none;
+		min-width: 0;
 	}
 
 	.deck-link:hover {
@@ -293,7 +295,24 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-		padding-right: 0.75rem;
+		padding: 0 0.75rem;
+		flex-wrap: wrap;
+	}
+
+	@media (max-width: 600px) {
+		.deck-card {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.deck-link {
+			padding: 0.75rem 1rem;
+		}
+
+		.deck-actions {
+			padding: 0 1rem 0.75rem;
+			gap: 0.4rem;
+		}
 	}
 
 	.deck-action-link {

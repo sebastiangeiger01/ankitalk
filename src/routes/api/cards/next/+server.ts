@@ -114,8 +114,8 @@ export const GET: RequestHandler = async ({ url, platform, locals }) => {
 
 	// Fetch cards in priority order:
 	// 1. Learning/Relearning (state 1,3) — no limit, due now
-	// 2. Review (state 2) — limited
-	// 3. New (state 0) — limited
+	// 2. Review (state 2) — limited (wrapped in subquery for UNION ALL compatibility)
+	// 3. New (state 0) — limited (wrapped in subquery for UNION ALL compatibility)
 	// Exclude buried cards
 	const cards = await db
 		.prepare(
@@ -133,33 +133,37 @@ export const GET: RequestHandler = async ({ url, platform, locals }) => {
 
 				UNION ALL
 
-				-- Review: daily limit
-				SELECT c.*, n.model_name, n.fields, n.tags, 1 as sort_priority
-				FROM cards c
-				JOIN notes n ON n.id = c.note_id
-				WHERE c.deck_id = ? AND c.user_id = ?
-					AND c.fsrs_state = 2
-					AND c.due_at <= ?
-					AND (c.buried_until IS NULL OR c.buried_until <= ?)
-					AND c.suspended = 0
-					${tagClause}
-				ORDER BY c.due_at ASC
-				LIMIT ?
+				-- Review: daily limit (subquery to allow ORDER BY + LIMIT in UNION)
+				SELECT * FROM (
+					SELECT c.*, n.model_name, n.fields, n.tags, 1 as sort_priority
+					FROM cards c
+					JOIN notes n ON n.id = c.note_id
+					WHERE c.deck_id = ? AND c.user_id = ?
+						AND c.fsrs_state = 2
+						AND c.due_at <= ?
+						AND (c.buried_until IS NULL OR c.buried_until <= ?)
+						AND c.suspended = 0
+						${tagClause}
+					ORDER BY c.due_at ASC
+					LIMIT ?
+				)
 
 				UNION ALL
 
-				-- New: daily limit
-				SELECT c.*, n.model_name, n.fields, n.tags, 2 as sort_priority
-				FROM cards c
-				JOIN notes n ON n.id = c.note_id
-				WHERE c.deck_id = ? AND c.user_id = ?
-					AND c.fsrs_state = 0
-					AND c.due_at <= ?
-					AND (c.buried_until IS NULL OR c.buried_until <= ?)
-					AND c.suspended = 0
-					${tagClause}
-				ORDER BY c.due_at ASC
-				LIMIT ?
+				-- New: daily limit (subquery to allow ORDER BY + LIMIT in UNION)
+				SELECT * FROM (
+					SELECT c.*, n.model_name, n.fields, n.tags, 2 as sort_priority
+					FROM cards c
+					JOIN notes n ON n.id = c.note_id
+					WHERE c.deck_id = ? AND c.user_id = ?
+						AND c.fsrs_state = 0
+						AND c.due_at <= ?
+						AND (c.buried_until IS NULL OR c.buried_until <= ?)
+						AND c.suspended = 0
+						${tagClause}
+					ORDER BY c.due_at ASC
+					LIMIT ?
+				)
 			)
 			ORDER BY sort_priority ASC, due_at ASC
 			LIMIT ?`

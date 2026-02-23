@@ -198,6 +198,8 @@
 			<h1>Ready to Review{deckName ? ` — ${deckName}` : ''}</h1>
 			<p>Tap the button below to start your voice-controlled review session.</p>
 
+			<button class="start-btn" onclick={startReview}>{cramMode ? 'Start Cram' : 'Start Review'}</button>
+
 			<div class="review-options">
 				<label class="option-label">
 					Filter by tags
@@ -221,8 +223,6 @@
 					</label>
 				{/if}
 			</div>
-
-			<button class="start-btn" onclick={startReview}>{cramMode ? 'Start Cram' : 'Start Review'}</button>
 			<div class="commands-help">
 				<h3>Voice Commands & Keyboard Shortcuts</h3>
 				<ul>
