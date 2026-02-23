@@ -9,7 +9,10 @@ import {
 } from 'ts-fsrs';
 import type { Card, RatingName } from './types';
 
-const scheduler = fsrs();
+export interface FsrsOptions {
+	requestRetention?: number;
+	maximumInterval?: number;
+}
 
 /**
  * Convert a D1 card row to a ts-fsrs Card object.
@@ -66,8 +69,13 @@ export interface ScheduleResult {
 export function scheduleCard(
 	card: Card,
 	rating: RatingName,
-	now: Date = new Date()
+	now: Date = new Date(),
+	options?: FsrsOptions
 ): ScheduleResult {
+	const scheduler = fsrs({
+		request_retention: options?.requestRetention ?? 0.9,
+		maximum_interval: options?.maximumInterval ?? 36500
+	});
 	const fsrsCard = dbCardToFsrs(card);
 	const fsrsRating = ratingNameToEnum(rating);
 	const result: RecordLogItem = scheduler.repeat(fsrsCard, now)[fsrsRating];

@@ -60,6 +60,11 @@ const COMMANDS: CommandDef[] = [
 		phases: ['rating']
 	},
 	{
+		command: 'suspend',
+		aliases: ['suspend', 'suspend card'],
+		phases: ['question', 'rating']
+	},
+	{
 		command: 'stop',
 		aliases: [
 			'stop', 'quit', 'end', 'finish', 'done', 'end session',

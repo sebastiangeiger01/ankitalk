@@ -548,3 +548,50 @@ Assuming 3 study sessions/day, 50 cards/session:
 | `anki-reader` | .apkg file parsing | MIT |
 | `sql.js` | SQLite in WASM (used by anki-reader) | MIT |
 | `jszip` | ZIP extraction for .apkg | MIT/GPLv3 |
+
+---
+
+## 10. SRS Implementation Phases
+
+### Phase 1 (done) — Learning steps, daily limits, card ordering, sibling burying
+- `deck_settings` table with `new_cards_per_day`, `max_reviews_per_day`
+- Learning/relearning queue (intra-session re-presentation of short-interval cards)
+- Sibling burying (one card per note per day)
+- Daily limit enforcement in card fetch query
+- Undo last rating (5s window)
+
+### Phase 2 (done) — FSRS tuning, leeches, suspension, statistics
+- Per-deck FSRS parameters (`desired_retention`, `max_interval`) via deck settings UI
+- Leech detection: auto-suspend cards exceeding `leech_threshold` lapses
+- Manual card suspension (voice command, keyboard shortcut `S`, button)
+- Suspended cards excluded from all review/due-count queries
+- Deck statistics page: card state breakdown, retention rate, daily review chart (SVG)
+- Deck settings page: retention slider, max interval, leech threshold, daily limits
+
+### Phase 3 (planned) — Card management, export, browse
+
+**Gaps to close:**
+
+1. **Card browser / management UI** — No way to see all cards in a deck, search by content, or view card state. Users need this to find suspended cards, check schedules, and manage problem cards.
+
+2. **Unsuspend / bulk actions** — Cards get auto-suspended as leeches but there's no UI to find and unsuspend them. Need a filtered view (suspended, leeches, state-based).
+
+3. **Card editing** — Currently import-only. Users should be able to edit card content (front/back fields) and create new cards directly in the app.
+
+4. **Export to .apkg** — Listed in MVP scope but not yet implemented. Users need to get their updated scheduling data back into Anki.
+
+5. **Tag-based review** — Anki users organize with tags heavily. Allow filtering review sessions by tag (e.g., review only `chapter-5` cards).
+
+6. **Custom study / cram mode** — Study cards outside normal schedule: preview new cards, review ahead, study by tag, or re-study recent mistakes.
+
+7. **Server-side undo** — Current undo is client-only (5s window). A proper undo would reverse the review record and restore previous FSRS state.
+
+**Implementation sketch:**
+
+- `GET /api/decks/:id/cards?state=suspended&q=search&page=1` — paginated card browser API
+- `/decks/:id/cards` — browse page with search, state filters, bulk suspend/unsuspend
+- `PUT /api/cards/:id` — edit card fields
+- `POST /api/decks/:id/cards` — create new card (creates note + card)
+- `GET /api/decks/:id/export` — generate .apkg ZIP and stream it
+- `GET /api/cards/next?deckId=X&tags=tag1,tag2` — tag filtering in review
+- `POST /api/cards/:id/review/undo` — server-side undo (delete review, restore previous FSRS snapshot)

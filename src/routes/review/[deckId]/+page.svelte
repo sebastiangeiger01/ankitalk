@@ -1,16 +1,15 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { onDestroy, onMount } from 'svelte';
-	import { createReviewEngine, type ReviewEvent, type SessionStats } from '$lib/client/review-engine';
+	import { createReviewEngine, type ReviewEvent, type SessionStats, type StartOptions } from '$lib/client/review-engine';
 	import type { ReviewPhase } from '$lib/types';
 
 	const deckId = $derived($page.params.deckId);
 
 	let started = $state(false);
 	let phase = $state<ReviewPhase>('question');
-	let status = $state<'idle' | 'speaking' | 'listening' | 'explaining'>('idle');
-	let cardIndex = $state(0);
-	let cardTotal = $state(0);
+	let status = $state<'idle' | 'speaking' | 'listening' | 'explaining' | 'waiting'>('idle');
+	let cardsReviewed = $state(0);
 	let frontText = $state('');
 	let backText = $state('');
 	let transcript = $state('');
@@ -22,8 +21,24 @@
 	let micOn = $state(true);
 	let audioOn = $state(true);
 	let undoAvailable = $state(false);
+	let isLearning = $state(false);
+	let learningCountdown = $state(0);
+	let countdownInterval: ReturnType<typeof setInterval> | null = null;
+	let suspendedNotice = $state('');
+	let suspendedTimer: ReturnType<typeof setTimeout> | null = null;
+	let tagFilter = $state('');
+	let cramMode = $state(false);
+	let cramState = $state<'' | 'new' | 'learning' | 'review'>('');
 
 	const engine = createReviewEngine();
+
+	function clearCountdown() {
+		if (countdownInterval) {
+			clearInterval(countdownInterval);
+			countdownInterval = null;
+		}
+		learningCountdown = 0;
+	}
 
 	engine.onEvent((event: ReviewEvent) => {
 		switch (event.type) {
@@ -31,11 +46,13 @@
 				phase = event.phase;
 				break;
 			case 'card_change':
-				cardIndex = event.index;
-				cardTotal = event.total;
+				clearCountdown();
+				cardsReviewed = event.index + 1;
 				frontText = event.front;
 				backText = event.back;
+				isLearning = event.isLearning;
 				lastCommand = '';
+				status = 'idle';
 				break;
 			case 'speaking':
 				status = 'speaking';
@@ -56,6 +73,7 @@
 				lastCommand = event.command;
 				break;
 			case 'session_end':
+				clearCountdown();
 				sessionEnded = true;
 				stats = event.stats;
 				status = 'idle';
@@ -75,13 +93,37 @@
 			case 'audio_change':
 				audioOn = event.audioOn;
 				break;
+			case 'learning_due': {
+				status = 'waiting';
+				learningCountdown = Math.ceil(event.waitMs / 1000);
+				clearCountdown();
+				countdownInterval = setInterval(() => {
+					learningCountdown--;
+					if (learningCountdown <= 0) {
+						clearCountdown();
+					}
+				}, 1000);
+				break;
+			}
+			case 'card_suspended': {
+				suspendedNotice = 'Card suspended';
+				if (suspendedTimer) clearTimeout(suspendedTimer);
+				suspendedTimer = setTimeout(() => { suspendedNotice = ''; }, 3000);
+				break;
+			}
 		}
 	});
 
 	async function startReview() {
 		started = true;
 		errorMsg = '';
-		await engine.start(deckId!);
+		const options: StartOptions = {};
+		if (tagFilter.trim()) options.tags = tagFilter.trim();
+		if (cramMode) {
+			options.mode = 'cram';
+			if (cramState) options.cramState = cramState;
+		}
+		await engine.start(deckId!, options);
 	}
 
 	function formatDuration(ms: number): string {
@@ -93,7 +135,6 @@
 
 	function handleKeydown(e: KeyboardEvent) {
 		if (!started || sessionEnded) return;
-		// Don't capture if user is in an input
 		if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
 		switch (e.key) {
@@ -122,6 +163,9 @@
 			case 'r':
 				engine.executeCommand('repeat');
 				break;
+			case 's':
+				engine.executeCommand('suspend');
+				break;
 			case 'z':
 				if (undoAvailable) engine.undo();
 				break;
@@ -140,6 +184,8 @@
 	});
 
 	onDestroy(() => {
+		clearCountdown();
+		if (suspendedTimer) clearTimeout(suspendedTimer);
 		engine.destroy();
 	});
 </script>
@@ -151,7 +197,32 @@
 		<div class="start-screen">
 			<h1>Ready to Review{deckName ? ` — ${deckName}` : ''}</h1>
 			<p>Tap the button below to start your voice-controlled review session.</p>
-			<button class="start-btn" onclick={startReview}>Start Review</button>
+
+			<div class="review-options">
+				<label class="option-label">
+					Filter by tags
+					<input type="text" class="option-input" bind:value={tagFilter} placeholder="tag1, tag2" />
+				</label>
+
+				<label class="option-checkbox">
+					<input type="checkbox" bind:checked={cramMode} />
+					Cram mode <span class="option-hint">(ignore due dates & limits)</span>
+				</label>
+
+				{#if cramMode}
+					<label class="option-label">
+						Cram state filter
+						<select class="option-input" bind:value={cramState}>
+							<option value="">All states</option>
+							<option value="new">New only</option>
+							<option value="learning">Learning only</option>
+							<option value="review">Review only</option>
+						</select>
+					</label>
+				{/if}
+			</div>
+
+			<button class="start-btn" onclick={startReview}>{cramMode ? 'Start Cram' : 'Start Review'}</button>
 			<div class="commands-help">
 				<h3>Voice Commands & Keyboard Shortcuts</h3>
 				<ul>
@@ -185,6 +256,37 @@
 			</div>
 			<a href="/" class="back-link">Back to Dashboard</a>
 		</div>
+	{:else if status === 'waiting'}
+		<div class="active-review">
+			<div class="review-header">
+				{#if deckName}
+					<h2 class="deck-title">{deckName}</h2>
+				{/if}
+				<div class="toggles">
+					<button class="toggle-btn" class:off={!audioOn} onclick={() => engine.toggleAudio()} aria-label={audioOn ? 'Mute audio' : 'Unmute audio'} title={audioOn ? 'Mute audio' : 'Unmute audio'}>
+						{#if audioOn}
+							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+						{:else}
+							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+						{/if}
+					</button>
+					<button class="toggle-btn" class:off={!micOn} onclick={() => engine.toggleMic()} aria-label={micOn ? 'Mute microphone' : 'Unmute microphone'} title={micOn ? 'Mute microphone' : 'Unmute microphone'}>
+						{#if micOn}
+							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+						{:else}
+							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.5-.36 2.18"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+						{/if}
+					</button>
+				</div>
+			</div>
+
+			<div class="waiting-card">
+				<p class="waiting-text">Card returning in {learningCountdown}s...</p>
+				<span class="reviewed-count">{cardsReviewed} reviewed</span>
+			</div>
+
+			<button class="stop-btn" onclick={() => engine.executeCommand('stop')}>Stop Session <kbd>Esc</kbd></button>
+		</div>
 	{:else}
 		<div class="active-review">
 			<div class="review-header">
@@ -209,12 +311,14 @@
 				</div>
 			</div>
 
-			<div class="progress-bar-container" aria-live="polite" aria-label="Card {cardIndex + 1} of {cardTotal}">
-				<div class="progress-bar" style="width: {cardTotal > 0 ? ((cardIndex + 1) / cardTotal) * 100 : 0}%"></div>
-				<span class="progress-text">{cardIndex + 1} / {cardTotal}</span>
+			<div class="progress-bar-container" aria-live="polite" aria-label="{cardsReviewed} reviewed">
+				<span class="progress-text">{cardsReviewed} reviewed</span>
 			</div>
 
 			<div class="card-display" role="region" aria-label="Flashcard">
+				{#if isLearning}
+					<span class="learning-badge">Learning</span>
+				{/if}
 				<div class="front" aria-label="Question">
 					<p>{frontText}</p>
 				</div>
@@ -259,16 +363,22 @@
 				<p class="error">{errorMsg}</p>
 			{/if}
 
+			{#if suspendedNotice}
+				<p class="suspended-notice">{suspendedNotice}</p>
+			{/if}
+
 			<div class="action-buttons" role="group" aria-label={phase === 'question' ? 'Question actions' : 'Rating actions'}>
 				{#if phase === 'question'}
 					<button class="action-btn show-answer" onclick={() => engine.executeCommand('answer')}>Show Answer <kbd>Space</kbd></button>
 					<button class="action-btn hint" onclick={() => engine.executeCommand('hint')}>Hint <kbd>H</kbd></button>
+					<button class="action-btn suspend" onclick={() => engine.executeCommand('suspend')}>Suspend <kbd>S</kbd></button>
 				{:else}
 					<button class="action-btn again" aria-label="Rate: Again (1)" onclick={() => engine.executeCommand('again')}>Again <kbd>1</kbd></button>
 					<button class="action-btn hard" aria-label="Rate: Hard (2)" onclick={() => engine.executeCommand('hard')}>Hard <kbd>2</kbd></button>
 					<button class="action-btn good" aria-label="Rate: Good (3)" onclick={() => engine.executeCommand('good')}>Good <kbd>3</kbd></button>
 					<button class="action-btn easy" aria-label="Rate: Easy (4)" onclick={() => engine.executeCommand('easy')}>Easy <kbd>4</kbd></button>
 					<button class="action-btn explain" onclick={() => engine.executeCommand('explain')}>Explain <kbd>E</kbd></button>
+					<button class="action-btn suspend" onclick={() => engine.executeCommand('suspend')}>Suspend <kbd>S</kbd></button>
 				{/if}
 			</div>
 
@@ -319,6 +429,54 @@
 
 	.start-btn:hover {
 		background: #5a5aae;
+	}
+
+	.review-options {
+		max-width: 320px;
+		margin: 1.5rem auto;
+		text-align: left;
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+
+	.option-label {
+		display: block;
+		font-size: 0.85rem;
+		color: #a8a8b8;
+		font-weight: 600;
+	}
+
+	.option-input {
+		display: block;
+		width: 100%;
+		margin-top: 0.3rem;
+		padding: 0.5rem 0.6rem;
+		background: #22223a;
+		border: 1px solid #3a3a5e;
+		border-radius: 6px;
+		color: #e0e0ff;
+		font-size: 0.9rem;
+		font-family: inherit;
+	}
+
+	.option-input:focus {
+		outline: none;
+		border-color: #5a5a8e;
+	}
+
+	.option-checkbox {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		font-size: 0.9rem;
+		color: #e0e0ff;
+		cursor: pointer;
+	}
+
+	.option-hint {
+		color: #8080a0;
+		font-size: 0.8rem;
 	}
 
 	.commands-help {
@@ -470,13 +628,6 @@
 		overflow: hidden;
 	}
 
-	.progress-bar {
-		height: 100%;
-		background: linear-gradient(90deg, #3a3a7e, #6ecb63);
-		border-radius: 12px;
-		transition: width 0.3s ease;
-	}
-
 	.progress-text {
 		position: absolute;
 		inset: 0;
@@ -494,6 +645,19 @@
 		border-radius: 12px;
 		padding: 2rem;
 		min-height: 150px;
+		position: relative;
+	}
+
+	.learning-badge {
+		position: absolute;
+		top: 0.5rem;
+		right: 0.5rem;
+		padding: 0.15rem 0.5rem;
+		font-size: 0.7rem;
+		font-weight: 600;
+		border-radius: 4px;
+		background: #3a2a5e;
+		color: #ccaaff;
 	}
 
 	.front p {
@@ -558,6 +722,16 @@
 		font-size: 0.85rem;
 	}
 
+	.suspended-notice {
+		background: #4a2a20;
+		color: #ff9988;
+		padding: 0.4rem 1rem;
+		border-radius: 6px;
+		font-size: 0.85rem;
+		font-weight: 600;
+		animation: fade-in 0.2s ease;
+	}
+
 	.action-buttons {
 		display: flex;
 		gap: 0.5rem;
@@ -589,6 +763,7 @@
 	.action-btn.good { background: #204a20; color: #88ff88; }
 	.action-btn.easy { background: #20204a; color: #88bbff; }
 	.action-btn.explain { background: #2a2a4e; color: #bbaaff; }
+	.action-btn.suspend { background: #4a2a20; color: #ff9988; }
 
 	kbd {
 		font-size: 0.65rem;
@@ -663,6 +838,26 @@
 	.stop-btn:hover {
 		border-color: #e53e3e;
 		color: #e53e3e;
+	}
+
+	/* Waiting state */
+	.waiting-card {
+		width: 100%;
+		background: #22223a;
+		border-radius: 12px;
+		padding: 2rem;
+		text-align: center;
+	}
+
+	.waiting-text {
+		font-size: 1.1rem;
+		color: #ccaaff;
+		margin: 0 0 0.5rem;
+	}
+
+	.reviewed-count {
+		font-size: 0.85rem;
+		color: #a8a8b8;
 	}
 
 	/* Mic/audio visualization */

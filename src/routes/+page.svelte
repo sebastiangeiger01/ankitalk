@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { parseApkg } from '$lib/client/anki-parser';
+	import { buildApkg } from '$lib/client/apkg-export';
 	import type { DeckWithDueCount } from '$lib/types';
 
 	let decks = $state<DeckWithDueCount[]>([]);
@@ -64,6 +65,32 @@
 		}
 	}
 
+	let exportingDeckId = $state('');
+
+	async function exportDeck(deckId: string, deckName: string) {
+		exportingDeckId = deckId;
+		try {
+			const res = await fetch(`/api/decks/${deckId}/export-data`);
+			if (!res.ok) throw new Error('Failed to fetch deck data');
+			const data = (await res.json()) as { deck: Record<string, unknown>; notes: Record<string, unknown>[]; cards: Record<string, unknown>[] };
+
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const apkg = await buildApkg(data.deck as any, data.notes as any, data.cards as any);
+
+			const blob = new Blob([apkg.buffer as ArrayBuffer], { type: 'application/octet-stream' });
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `${deckName.replace(/[^a-zA-Z0-9]/g, '_')}.apkg`;
+			a.click();
+			URL.revokeObjectURL(url);
+		} catch (err) {
+			alert(`Export failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+		} finally {
+			exportingDeckId = '';
+		}
+	}
+
 	async function deleteDeck(deckId: string, deckName: string) {
 		if (!confirm(`Delete "${deckName}" and all its cards?`)) return;
 
@@ -124,9 +151,17 @@
 						</span>
 					</div>
 				</a>
-				<button class="delete-btn" aria-label="Delete {deck.name} deck" onclick={() => deleteDeck(deck.id, deck.name)}>
-					Delete
-				</button>
+				<div class="deck-actions">
+					<a href="/decks/{deck.id}/cards" class="deck-action-link" aria-label="Browse cards in {deck.name}">Browse</a>
+					<button class="deck-action-link" aria-label="Export {deck.name}" disabled={exportingDeckId === deck.id} onclick={() => exportDeck(deck.id, deck.name)}>
+						{exportingDeckId === deck.id ? 'Exporting...' : 'Export'}
+					</button>
+					<a href="/decks/{deck.id}/settings" class="deck-action-link" aria-label="Settings for {deck.name}">Settings</a>
+					<a href="/decks/{deck.id}/stats" class="deck-action-link" aria-label="Statistics for {deck.name}">Stats</a>
+					<button class="delete-btn" aria-label="Delete {deck.name} deck" onclick={() => deleteDeck(deck.id, deck.name)}>
+						Delete
+					</button>
+				</div>
 			</li>
 		{/each}
 	</ul>
@@ -254,9 +289,37 @@
 		font-weight: 600;
 	}
 
+	.deck-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding-right: 0.75rem;
+	}
+
+	.deck-action-link {
+		padding: 0.5rem 0.75rem;
+		color: #a8a8b8;
+		text-decoration: none;
+		border: 1px solid #444;
+		border-radius: 6px;
+		font-size: 0.8rem;
+		background: none;
+		cursor: pointer;
+		font-family: inherit;
+	}
+
+	.deck-action-link:hover {
+		border-color: #5a5a8e;
+		color: #e0e0ff;
+	}
+
+	.deck-action-link:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
 	.delete-btn {
 		padding: 0.5rem 1rem;
-		margin-right: 0.75rem;
 		background: none;
 		border: 1px solid #444;
 		color: #a8a8b8;

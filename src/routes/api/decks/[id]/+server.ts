@@ -9,7 +9,7 @@ export const GET: RequestHandler = async ({ params, platform, locals }) => {
 	const deck = await db
 		.prepare(
 			`SELECT d.*,
-				(SELECT COUNT(*) FROM cards c WHERE c.deck_id = d.id AND c.due_at <= datetime('now')) as due_count
+				(SELECT COUNT(*) FROM cards c WHERE c.deck_id = d.id AND c.due_at <= datetime('now') AND (c.buried_until IS NULL OR c.buried_until <= datetime('now')) AND c.suspended = 0) as due_count
 			FROM decks d
 			WHERE d.id = ? AND d.user_id = ?`
 		)

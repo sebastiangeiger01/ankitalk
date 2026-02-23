@@ -53,6 +53,19 @@ export interface Card {
 	fsrs_reps: number;
 	fsrs_lapses: number;
 	fsrs_last_review: string | null;
+	buried_until: string | null;
+	suspended: number;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface DeckSettings {
+	deck_id: string;
+	new_cards_per_day: number;
+	max_reviews_per_day: number;
+	desired_retention: number;
+	max_interval: number;
+	leech_threshold: number;
 	created_at: string;
 	updated_at: string;
 }
@@ -85,6 +98,21 @@ export type VoiceCommand =
 	| 'good'
 	| 'easy'
 	| 'stop'
-	| 'explain';
+	| 'explain'
+	| 'suspend';
 
 export type RatingName = 'again' | 'hard' | 'good' | 'easy';
+
+/** Card joined with note fields for the card browser */
+export interface BrowseCard {
+	id: string;
+	note_id: string;
+	card_type: string;
+	due_at: string;
+	fsrs_state: number;
+	fsrs_reps: number;
+	fsrs_lapses: number;
+	suspended: number;
+	fields: string;
+	tags: string;
+}

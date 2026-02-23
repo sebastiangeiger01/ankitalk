@@ -26,17 +26,41 @@ export const POST: RequestHandler = async ({ params, request, platform, locals }
 
 	if (!card) throw error(404, 'Card not found');
 
-	// Calculate FSRS scheduling
-	const result = scheduleCard(card, rating as RatingName);
+	// Load deck settings for per-deck FSRS params
+	const settings = await db
+		.prepare('SELECT desired_retention, max_interval, leech_threshold FROM deck_settings WHERE deck_id = ?')
+		.bind(card.deck_id)
+		.first<{ desired_retention: number; max_interval: number; leech_threshold: number }>();
 
-	// Batch: insert review + update card
+	const desiredRetention = settings?.desired_retention ?? 0.9;
+	const maxInterval = settings?.max_interval ?? 36500;
+	const leechThreshold = settings?.leech_threshold ?? 8;
+
+	// Calculate FSRS scheduling with per-deck options
+	const result = scheduleCard(card, rating as RatingName, new Date(), {
+		requestRetention: desiredRetention,
+		maximumInterval: maxInterval
+	});
+
+	// Detect leech: card rated "again" and lapses reach threshold
+	const leeched = rating === 'again' && result.fsrsLapses >= leechThreshold;
+
+	// Batch: insert review (with FSRS snapshot for undo) + update card + bury siblings + optionally suspend leech
 	const reviewId = newId();
-	await db.batch([
+	const statements = [
 		db
 			.prepare(
-				'INSERT INTO reviews (id, user_id, card_id, deck_id, rating, duration_ms) VALUES (?, ?, ?, ?, ?, ?)'
+				`INSERT INTO reviews (id, user_id, card_id, deck_id, rating, duration_ms,
+					prev_due_at, prev_fsrs_state, prev_fsrs_stability, prev_fsrs_difficulty,
+					prev_fsrs_elapsed_days, prev_fsrs_scheduled_days, prev_fsrs_reps, prev_fsrs_lapses, prev_fsrs_last_review)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
-			.bind(reviewId, locals.userId, card.id, card.deck_id, rating, durationMs ?? null),
+			.bind(
+				reviewId, locals.userId, card.id, card.deck_id, rating, durationMs ?? null,
+				card.due_at, card.fsrs_state, card.fsrs_stability, card.fsrs_difficulty,
+				card.fsrs_elapsed_days, card.fsrs_scheduled_days, card.fsrs_reps, card.fsrs_lapses,
+				card.fsrs_last_review
+			),
 		db
 			.prepare(
 				`UPDATE cards SET
@@ -63,8 +87,26 @@ export const POST: RequestHandler = async ({ params, request, platform, locals }
 				result.fsrsLapses,
 				result.fsrsLastReview,
 				card.id
+			),
+		// Bury siblings (other cards from same note in same deck)
+		db
+			.prepare(
+				`UPDATE cards SET buried_until = date('now', '+1 day')
+				WHERE note_id = ? AND id != ? AND deck_id = ?`
 			)
-	]);
+			.bind(card.note_id, card.id, card.deck_id)
+	];
 
-	return json({ reviewId, dueAt: result.dueAt });
+	// Suspend leeched card
+	if (leeched) {
+		statements.push(
+			db
+				.prepare("UPDATE cards SET suspended = 1, updated_at = datetime('now') WHERE id = ?")
+				.bind(card.id)
+		);
+	}
+
+	await db.batch(statements);
+
+	return json({ reviewId, dueAt: result.dueAt, fsrsState: result.fsrsState, leeched });
 };
