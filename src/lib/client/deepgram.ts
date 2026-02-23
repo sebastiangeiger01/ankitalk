@@ -4,6 +4,8 @@ type ErrorCallback = (error: Error) => void;
 export interface DeepgramClient {
 	start(): Promise<void>;
 	stop(): void;
+	pause(): void;
+	resume(): void;
 	onTranscript(cb: TranscriptCallback): void;
 	onError(cb: ErrorCallback): void;
 }
@@ -124,9 +126,23 @@ export function createDeepgramClient(): DeepgramClient {
 		stream = null;
 	}
 
+	function pause() {
+		if (mediaRecorder && mediaRecorder.state === 'recording') {
+			mediaRecorder.pause();
+		}
+	}
+
+	function resume() {
+		if (mediaRecorder && mediaRecorder.state === 'paused') {
+			mediaRecorder.resume();
+		}
+	}
+
 	return {
 		start,
 		stop,
+		pause,
+		resume,
 		onTranscript(cb: TranscriptCallback) {
 			transcriptCb = cb;
 		},

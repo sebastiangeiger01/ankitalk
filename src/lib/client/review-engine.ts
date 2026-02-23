@@ -6,14 +6,18 @@ import type { ReviewPhase, VoiceCommand, RatingName, NoteField } from '../types'
 export type ReviewEvent =
 	| { type: 'phase_change'; phase: ReviewPhase }
 	| { type: 'card_change'; index: number; total: number; front: string; back: string }
-	| { type: 'speaking'; text: string }
+	| { type: 'speaking' }
 	| { type: 'listening' }
+	| { type: 'idle' }
 	| { type: 'command'; command: VoiceCommand }
 	| { type: 'transcript'; text: string; isFinal: boolean }
 	| { type: 'session_end'; stats: SessionStats }
 	| { type: 'error'; message: string }
 	| { type: 'explaining' }
-	| { type: 'deck_info'; name: string };
+	| { type: 'deck_info'; name: string }
+	| { type: 'undo_available'; available: boolean }
+	| { type: 'mic_change'; micOn: boolean }
+	| { type: 'audio_change'; audioOn: boolean };
 
 export interface SessionStats {
 	cardsReviewed: number;
@@ -38,6 +42,9 @@ export interface ReviewEngine {
 	destroy(): void;
 	onEvent(cb: EventCallback): void;
 	executeCommand(command: VoiceCommand): void;
+	toggleMic(): void;
+	toggleAudio(): void;
+	undo(): void;
 }
 
 /**
@@ -97,6 +104,11 @@ export function createReviewEngine(): ReviewEngine {
 	let startTime = 0;
 	let cardStartTime = 0;
 	let destroyed = false;
+	let audioOn = true;
+	let micOn = true;
+	let isSpeaking = false;
+	let undoInfo: { index: number; rating: RatingName; cardId: string } | null = null;
+	let undoTimer: ReturnType<typeof setTimeout> | null = null;
 	const stats: SessionStats = {
 		cardsReviewed: 0,
 		ratings: { again: 0, hard: 0, good: 0, easy: 0 },
@@ -107,16 +119,43 @@ export function createReviewEngine(): ReviewEngine {
 		if (!destroyed) eventCb?.(event);
 	}
 
-	async function speakText(text: string) {
-		emit({ type: 'speaking', text });
-		await speak(text);
-		try { await playSound('/listen.mp3'); } catch { /* optional */ }
-		emit({ type: 'listening' });
+	/**
+	 * Non-blocking TTS: fires speech in the background, emits speaking/listening.
+	 * Returns immediately. Any command execution will interrupt via stopPlayback().
+	 */
+	function speakText(text: string) {
+		if (!audioOn) {
+			// Audio muted — skip TTS, stay in listening state
+			if (micOn) emit({ type: 'listening' });
+			else emit({ type: 'idle' });
+			return;
+		}
+
+		isSpeaking = true;
+		emit({ type: 'speaking' });
+
+		speak(text)
+			.then(() => playSound('/listen.mp3').catch(() => {}))
+			.catch(() => {})
+			.finally(() => {
+				isSpeaking = false;
+				if (!destroyed) {
+					if (micOn) emit({ type: 'listening' });
+					else emit({ type: 'idle' });
+				}
+			});
 	}
 
-	async function presentCard() {
+	function interruptTTS() {
+		if (isSpeaking) {
+			stopPlayback();
+			isSpeaking = false;
+		}
+	}
+
+	function presentCard() {
 		if (currentIndex >= cards.length) {
-			await endSession();
+			endSession();
 			return;
 		}
 
@@ -133,10 +172,16 @@ export function createReviewEngine(): ReviewEngine {
 		});
 		emit({ type: 'phase_change', phase: 'question' });
 
-		await speakText(card.front);
+		speakText(card.front);
 	}
 
-	async function handleCommand(command: VoiceCommand) {
+	function handleCommand(command: VoiceCommand) {
+		// Interrupt any ongoing TTS
+		interruptTTS();
+
+		// Clear undo window on new action (except undo itself)
+		clearUndo();
+
 		emit({ type: 'command', command });
 
 		const card = cards[currentIndex];
@@ -145,19 +190,19 @@ export function createReviewEngine(): ReviewEngine {
 			case 'answer':
 				phase = 'rating';
 				emit({ type: 'phase_change', phase: 'rating' });
-				await speakText(card.back);
+				speakText(card.back);
 				break;
 
 			case 'hint': {
 				const words = card.back.split(/\s+/).slice(0, 3).join(' ');
-				await speakText(words + '...');
+				speakText(words + '...');
 				break;
 			}
 
 			case 'repeat': {
 				const lastText = getLastSpokenText();
 				if (lastText) {
-					await speakText(lastText);
+					speakText(lastText);
 				}
 				break;
 			}
@@ -172,43 +217,95 @@ export function createReviewEngine(): ReviewEngine {
 					emit({ type: 'phase_change', phase: 'rating' });
 				}
 
-				await submitRating(command);
+				submitRating(command);
 				break;
 			}
 
 			case 'explain':
-				await handleExplain();
+				handleExplain();
 				break;
 
 			case 'stop':
-				await endSession();
+				endSession();
 				break;
 		}
 	}
 
-	async function submitRating(rating: RatingName) {
+	function submitRating(rating: RatingName) {
 		const card = cards[currentIndex];
 		const durationMs = Date.now() - cardStartTime;
 
 		stats.cardsReviewed++;
 		stats.ratings[rating]++;
 
-		try {
-			await fetch(`/api/cards/${card.id}/review`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ rating, durationMs })
-			});
-		} catch {
-			emit({ type: 'error', message: 'Failed to save review' });
-		}
+		// Store undo info
+		undoInfo = { index: currentIndex, rating, cardId: card.id };
+		emit({ type: 'undo_available', available: true });
 
-		try { await playSound('/success.mp3'); } catch { /* optional */ }
+		// Auto-clear undo after 5 seconds
+		undoTimer = setTimeout(() => {
+			undoInfo = null;
+			emit({ type: 'undo_available', available: false });
+		}, 5000);
+
+		// Submit to server (fire-and-forget)
+		fetch(`/api/cards/${card.id}/review`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ rating, durationMs })
+		}).catch(() => {
+			emit({ type: 'error', message: 'Failed to save review' });
+		});
+
+		playSound('/success.mp3').catch(() => {});
 		currentIndex++;
-		await presentCard();
+		presentCard();
+	}
+
+	function clearUndo() {
+		if (undoTimer) {
+			clearTimeout(undoTimer);
+			undoTimer = null;
+		}
+		if (undoInfo) {
+			undoInfo = null;
+			emit({ type: 'undo_available', available: false });
+		}
+	}
+
+	function performUndo() {
+		if (!undoInfo) return;
+
+		interruptTTS();
+
+		// Revert stats
+		stats.cardsReviewed--;
+		stats.ratings[undoInfo.rating]--;
+
+		// Go back to that card
+		currentIndex = undoInfo.index;
+		clearUndo();
+
+		// Re-present the card in rating phase (they already saw the answer)
+		const card = cards[currentIndex];
+		phase = 'rating';
+		cardStartTime = Date.now();
+
+		emit({
+			type: 'card_change',
+			index: currentIndex,
+			total: cards.length,
+			front: card.front,
+			back: card.back
+		});
+		emit({ type: 'phase_change', phase: 'rating' });
+
+		if (micOn) emit({ type: 'listening' });
+		else emit({ type: 'idle' });
 	}
 
 	async function handleExplain() {
+		interruptTTS();
 		emit({ type: 'explaining' });
 		const card = cards[currentIndex];
 
@@ -222,25 +319,21 @@ export function createReviewEngine(): ReviewEngine {
 			if (!res.ok) throw new Error('Explain API failed');
 			const { explanation } = (await res.json()) as { explanation: string };
 
-			await speakText(explanation);
-
-			// Play chime to signal explanation is done
-			try {
-				await playSound('/chime.mp3');
-			} catch {
-				// Chime file may not exist yet
-			}
+			speakText(explanation);
+			playSound('/chime.mp3').catch(() => {});
 		} catch {
 			emit({ type: 'error', message: 'Failed to get explanation' });
-			emit({ type: 'listening' });
+			if (micOn) emit({ type: 'listening' });
+			else emit({ type: 'idle' });
 		}
 	}
 
-	async function endSession() {
+	function endSession() {
+		interruptTTS();
+		clearUndo();
 		stats.durationMs = Date.now() - startTime;
-		stopPlayback();
 		deepgram?.stop();
-		try { await playSound('/complete.mp3'); } catch { /* optional */ }
+		playSound('/complete.mp3').catch(() => {});
 		emit({ type: 'session_end', stats });
 	}
 
@@ -301,13 +394,32 @@ export function createReviewEngine(): ReviewEngine {
 		}
 
 		// 4. Present first card
-		await presentCard();
+		presentCard();
 	}
 
 	function destroy() {
 		destroyed = true;
+		clearUndo();
 		stopPlayback();
 		deepgram?.stop();
+	}
+
+	function toggleMic() {
+		micOn = !micOn;
+		if (micOn) {
+			deepgram?.resume();
+		} else {
+			deepgram?.pause();
+		}
+		emit({ type: 'mic_change', micOn });
+	}
+
+	function toggleAudio() {
+		audioOn = !audioOn;
+		if (!audioOn) {
+			interruptTTS();
+		}
+		emit({ type: 'audio_change', audioOn });
 	}
 
 	return {
@@ -318,6 +430,11 @@ export function createReviewEngine(): ReviewEngine {
 		},
 		executeCommand(command: VoiceCommand) {
 			handleCommand(command);
+		},
+		toggleMic,
+		toggleAudio,
+		undo() {
+			performUndo();
 		}
 	};
 }

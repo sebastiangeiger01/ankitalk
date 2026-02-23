@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { onDestroy } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { createReviewEngine, type ReviewEvent, type SessionStats } from '$lib/client/review-engine';
 	import type { ReviewPhase } from '$lib/types';
 
@@ -19,6 +19,9 @@
 	let sessionEnded = $state(false);
 	let stats = $state<SessionStats | null>(null);
 	let deckName = $state('');
+	let micOn = $state(true);
+	let audioOn = $state(true);
+	let undoAvailable = $state(false);
 
 	const engine = createReviewEngine();
 
@@ -40,6 +43,9 @@
 			case 'listening':
 				status = 'listening';
 				break;
+			case 'idle':
+				status = 'idle';
+				break;
 			case 'explaining':
 				status = 'explaining';
 				break;
@@ -60,6 +66,15 @@
 			case 'deck_info':
 				deckName = event.name;
 				break;
+			case 'undo_available':
+				undoAvailable = event.available;
+				break;
+			case 'mic_change':
+				micOn = event.micOn;
+				break;
+			case 'audio_change':
+				audioOn = event.audioOn;
+				break;
 		}
 	});
 
@@ -76,6 +91,46 @@
 		return `${minutes}m ${secs}s`;
 	}
 
+	function handleKeydown(e: KeyboardEvent) {
+		if (!started || sessionEnded) return;
+		// Don't capture if user is in an input
+		if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+		switch (e.key) {
+			case ' ':
+				e.preventDefault();
+				if (phase === 'question') engine.executeCommand('answer');
+				break;
+			case '1':
+				engine.executeCommand('again');
+				break;
+			case '2':
+				engine.executeCommand('hard');
+				break;
+			case '3':
+				engine.executeCommand('good');
+				break;
+			case '4':
+				engine.executeCommand('easy');
+				break;
+			case 'e':
+				if (phase === 'rating') engine.executeCommand('explain');
+				break;
+			case 'h':
+				if (phase === 'question') engine.executeCommand('hint');
+				break;
+			case 'r':
+				engine.executeCommand('repeat');
+				break;
+			case 'z':
+				if (undoAvailable) engine.undo();
+				break;
+			case 'Escape':
+				engine.executeCommand('stop');
+				break;
+		}
+	}
+
 	// Fetch deck name on mount for the start screen
 	$effect(() => {
 		fetch(`/api/decks/${deckId}`)
@@ -89,6 +144,8 @@
 	});
 </script>
 
+<svelte:window onkeydown={handleKeydown} />
+
 <div class="review-container">
 	{#if !started}
 		<div class="start-screen">
@@ -96,14 +153,14 @@
 			<p>Tap the button below to start your voice-controlled review session.</p>
 			<button class="start-btn" onclick={startReview}>Start Review</button>
 			<div class="commands-help">
-				<h3>Voice Commands</h3>
+				<h3>Voice Commands & Keyboard Shortcuts</h3>
 				<ul>
-					<li><strong>answer / show</strong> — reveal the answer</li>
-					<li><strong>hint</strong> — hear first few words</li>
-					<li><strong>again / hard / good / easy</strong> — rate the card</li>
-					<li><strong>repeat</strong> — hear it again</li>
-					<li><strong>explain</strong> — ask AI to explain</li>
-					<li><strong>stop</strong> — end session</li>
+					<li><strong>answer / show</strong> — reveal the answer <kbd>Space</kbd></li>
+					<li><strong>hint</strong> — hear first few words <kbd>H</kbd></li>
+					<li><strong>again / hard / good / easy</strong> — rate <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></li>
+					<li><strong>repeat</strong> — hear it again <kbd>R</kbd></li>
+					<li><strong>explain</strong> — ask AI to explain <kbd>E</kbd></li>
+					<li><strong>stop</strong> — end session <kbd>Esc</kbd></li>
 				</ul>
 			</div>
 		</div>
@@ -130,11 +187,31 @@
 		</div>
 	{:else}
 		<div class="active-review">
-			{#if deckName}
-				<h2 class="deck-title">{deckName}</h2>
-			{/if}
-			<div class="progress" aria-live="polite" aria-label="Card {cardIndex + 1} of {cardTotal}">
-				{cardIndex + 1} / {cardTotal}
+			<div class="review-header">
+				{#if deckName}
+					<h2 class="deck-title">{deckName}</h2>
+				{/if}
+				<div class="toggles">
+					<button class="toggle-btn" class:off={!audioOn} onclick={() => engine.toggleAudio()} aria-label={audioOn ? 'Mute audio' : 'Unmute audio'} title={audioOn ? 'Mute audio' : 'Unmute audio'}>
+						{#if audioOn}
+							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+						{:else}
+							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+						{/if}
+					</button>
+					<button class="toggle-btn" class:off={!micOn} onclick={() => engine.toggleMic()} aria-label={micOn ? 'Mute microphone' : 'Unmute microphone'} title={micOn ? 'Mute microphone' : 'Unmute microphone'}>
+						{#if micOn}
+							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+						{:else}
+							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.5-.36 2.18"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+						{/if}
+					</button>
+				</div>
+			</div>
+
+			<div class="progress-bar-container" aria-live="polite" aria-label="Card {cardIndex + 1} of {cardTotal}">
+				<div class="progress-bar" style="width: {cardTotal > 0 ? ((cardIndex + 1) / cardTotal) * 100 : 0}%"></div>
+				<span class="progress-text">{cardIndex + 1} / {cardTotal}</span>
 			</div>
 
 			<div class="card-display" role="region" aria-label="Flashcard">
@@ -184,26 +261,34 @@
 
 			<div class="action-buttons" role="group" aria-label={phase === 'question' ? 'Question actions' : 'Rating actions'}>
 				{#if phase === 'question'}
-					<button class="action-btn show-answer" onclick={() => engine.executeCommand('answer')}>Show Answer</button>
-					<button class="action-btn hint" onclick={() => engine.executeCommand('hint')}>Hint</button>
+					<button class="action-btn show-answer" onclick={() => engine.executeCommand('answer')}>Show Answer <kbd>Space</kbd></button>
+					<button class="action-btn hint" onclick={() => engine.executeCommand('hint')}>Hint <kbd>H</kbd></button>
 				{:else}
-					<button class="action-btn again" aria-label="Rate: Again" onclick={() => engine.executeCommand('again')}>Again</button>
-					<button class="action-btn hard" aria-label="Rate: Hard" onclick={() => engine.executeCommand('hard')}>Hard</button>
-					<button class="action-btn good" aria-label="Rate: Good" onclick={() => engine.executeCommand('good')}>Good</button>
-					<button class="action-btn easy" aria-label="Rate: Easy" onclick={() => engine.executeCommand('easy')}>Easy</button>
-					<button class="action-btn explain" onclick={() => engine.executeCommand('explain')}>Explain</button>
+					<button class="action-btn again" aria-label="Rate: Again (1)" onclick={() => engine.executeCommand('again')}>Again <kbd>1</kbd></button>
+					<button class="action-btn hard" aria-label="Rate: Hard (2)" onclick={() => engine.executeCommand('hard')}>Hard <kbd>2</kbd></button>
+					<button class="action-btn good" aria-label="Rate: Good (3)" onclick={() => engine.executeCommand('good')}>Good <kbd>3</kbd></button>
+					<button class="action-btn easy" aria-label="Rate: Easy (4)" onclick={() => engine.executeCommand('easy')}>Easy <kbd>4</kbd></button>
+					<button class="action-btn explain" onclick={() => engine.executeCommand('explain')}>Explain <kbd>E</kbd></button>
 				{/if}
 			</div>
+
+			{#if undoAvailable}
+				<button class="undo-btn" onclick={() => engine.undo()}>Undo <kbd>Z</kbd></button>
+			{/if}
 
 			<div class="voice-hints" aria-label="Available voice commands">
-				{#if phase === 'question'}
-					<span class="voice-hint-label">Say:</span> answer, hint, again, hard, good, easy, stop
+				{#if micOn}
+					{#if phase === 'question'}
+						<span class="voice-hint-label">Say:</span> answer, hint, again, hard, good, easy, stop
+					{:else}
+						<span class="voice-hint-label">Say:</span> explain, again, hard, good, easy, repeat, stop
+					{/if}
 				{:else}
-					<span class="voice-hint-label">Say:</span> explain, again, hard, good, easy, repeat, stop
+					<span class="mic-off-hint">Mic off — use buttons or keyboard</span>
 				{/if}
 			</div>
 
-			<button class="stop-btn" onclick={() => engine.executeCommand('stop')}>Stop Session</button>
+			<button class="stop-btn" onclick={() => engine.executeCommand('stop')}>Stop Session <kbd>Esc</kbd></button>
 		</div>
 	{/if}
 </div>
@@ -238,7 +323,7 @@
 
 	.commands-help {
 		text-align: left;
-		max-width: 350px;
+		max-width: 400px;
 		margin: 2rem auto 0;
 		color: #a8a8b8;
 		font-size: 0.9rem;
@@ -254,6 +339,10 @@
 
 	.commands-help li {
 		margin-bottom: 0.3rem;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 0.5rem;
 	}
 
 	.summary {
@@ -327,6 +416,13 @@
 		padding-top: 1rem;
 	}
 
+	.review-header {
+		width: 100%;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+
 	.deck-title {
 		margin: 0;
 		font-size: 1rem;
@@ -334,9 +430,62 @@
 		color: #b0b0d0;
 	}
 
-	.progress {
+	.toggles {
+		display: flex;
+		gap: 0.4rem;
+	}
+
+	.toggle-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		height: 36px;
+		border-radius: 8px;
+		border: 1px solid #3a3a5e;
+		background: #22223a;
 		color: #a8a8b8;
-		font-size: 0.9rem;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.toggle-btn:hover {
+		border-color: #5a5a8e;
+		color: #e0e0ff;
+	}
+
+	.toggle-btn.off {
+		border-color: #4a2020;
+		color: #ff8888;
+		background: #2a1515;
+	}
+
+	/* Progress bar */
+	.progress-bar-container {
+		width: 100%;
+		position: relative;
+		height: 24px;
+		background: #22223a;
+		border-radius: 12px;
+		overflow: hidden;
+	}
+
+	.progress-bar {
+		height: 100%;
+		background: linear-gradient(90deg, #3a3a7e, #6ecb63);
+		border-radius: 12px;
+		transition: width 0.3s ease;
+	}
+
+	.progress-text {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 0.75rem;
+		color: #e0e0ff;
+		font-weight: 600;
 	}
 
 	.card-display {
@@ -424,6 +573,9 @@
 		font-weight: 600;
 		cursor: pointer;
 		transition: filter 0.15s;
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
 	}
 
 	.action-btn:hover {
@@ -438,6 +590,42 @@
 	.action-btn.easy { background: #20204a; color: #88bbff; }
 	.action-btn.explain { background: #2a2a4e; color: #bbaaff; }
 
+	kbd {
+		font-size: 0.65rem;
+		padding: 0.1rem 0.35rem;
+		border-radius: 3px;
+		background: rgba(255, 255, 255, 0.1);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		font-family: inherit;
+		color: inherit;
+		opacity: 0.7;
+	}
+
+	.undo-btn {
+		padding: 0.35rem 1rem;
+		background: #3a2a10;
+		border: 1px solid #6a5a30;
+		color: #ffcc66;
+		border-radius: 6px;
+		cursor: pointer;
+		font-size: 0.8rem;
+		font-weight: 600;
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		animation: fade-in 0.2s ease;
+	}
+
+	.undo-btn:hover {
+		background: #4a3a20;
+		border-color: #8a7a40;
+	}
+
+	@keyframes fade-in {
+		from { opacity: 0; transform: translateY(-4px); }
+		to { opacity: 1; transform: translateY(0); }
+	}
+
 	.voice-hints {
 		font-size: 0.75rem;
 		color: #8080a0;
@@ -449,6 +637,11 @@
 		color: #a8a8b8;
 	}
 
+	.mic-off-hint {
+		color: #ff8888;
+		font-style: italic;
+	}
+
 	.stop-btn {
 		padding: 0.35rem 1rem;
 		background: none;
@@ -458,6 +651,9 @@
 		cursor: pointer;
 		font-size: 0.8rem;
 		margin-top: 0.5rem;
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
 	}
 
 	.stop-btn:hover {
