@@ -1,4 +1,4 @@
-import { speak, stopPlayback, getLastSpokenText, unlockAudio, playSound } from './audio';
+import { speak, stopPlayback, getLastSpokenText, unlockAudio, playSound, preloadTTS, clearAudioCache } from './audio';
 import { createDeepgramClient, type DeepgramClient } from './deepgram';
 import { matchCommand } from '../commands';
 import type { ReviewPhase, VoiceCommand, RatingName, NoteField } from '../types';
@@ -29,6 +29,7 @@ export type ReviewEvent =
 			isLearning: boolean;
 			intervals: IntervalLabels;
 	  }
+	| { type: 'tts_loading' }
 	| { type: 'speaking' }
 	| { type: 'listening' }
 	| { type: 'idle' }
@@ -210,7 +211,7 @@ export function createReviewEngine(): ReviewEngine {
 	}
 
 	/**
-	 * Non-blocking TTS: fires speech in the background, emits speaking/listening.
+	 * Non-blocking TTS: fires speech in the background, emits tts_loading/speaking/listening.
 	 */
 	function speakText(text: string) {
 		speakGen++;
@@ -223,9 +224,13 @@ export function createReviewEngine(): ReviewEngine {
 		}
 
 		isSpeaking = true;
-		emit({ type: 'speaking' });
+		emit({ type: 'tts_loading' });
 
-		speak(text)
+		speak(text, undefined, undefined, () => {
+			if (gen === speakGen) {
+				emit({ type: 'speaking' });
+			}
+		})
 			.then(() => {
 				if (gen === speakGen) playSound('/listen.mp3').catch(() => {});
 			})
@@ -324,6 +329,11 @@ export function createReviewEngine(): ReviewEngine {
 		});
 		emit({ type: 'phase_change', phase: 'question' });
 
+		// Preload the answer audio while question is playing
+		if (audioOn && currentCard.back) {
+			preloadTTS(currentCard.back);
+		}
+
 		speakText(currentCard.front);
 	}
 
@@ -351,6 +361,10 @@ export function createReviewEngine(): ReviewEngine {
 			case 'answer':
 				phase = 'rating';
 				emit({ type: 'phase_change', phase: 'rating' });
+				// Preload next card's front while answer is playing
+				if (audioOn && reviewQueue.length > 0) {
+					preloadTTS(reviewQueue[0].front);
+				}
 				speakText(currentCard.back);
 				break;
 
@@ -683,6 +697,7 @@ export function createReviewEngine(): ReviewEngine {
 		clearUndo();
 		clearLearningTimer();
 		stopPlayback();
+		clearAudioCache();
 		deepgram?.stop();
 	}
 

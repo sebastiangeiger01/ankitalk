@@ -1,12 +1,15 @@
 <script lang="ts">
 	import { parseApkg } from '$lib/client/anki-parser';
 	import { buildApkg } from '$lib/client/apkg-export';
+	import { locale, t } from '$lib/i18n';
 	import type { DeckWithDueCount } from '$lib/types';
 
 	let decks = $state<DeckWithDueCount[]>([]);
 	let importing = $state(false);
 	let importStatus = $state('');
 	let loading = $state(true);
+	let loc = $state('en');
+	locale.subscribe((v) => { loc = v; });
 
 	async function loadDecks() {
 		const res = await fetch('/api/decks');
@@ -23,11 +26,11 @@
 		if (!file) return;
 
 		importing = true;
-		importStatus = 'Parsing .apkg file...';
+		importStatus = t('import.parsing');
 
 		try {
 			const parsed = await parseApkg(file);
-			importStatus = `Found ${parsed.cards.length} cards in ${parsed.decks.length} deck(s). Uploading...`;
+			importStatus = t('import.found', { cards: parsed.cards.length, decks: parsed.decks.length });
 
 			const formData = new FormData();
 			formData.append(
@@ -54,11 +57,11 @@
 			}
 
 			const result = (await res.json()) as { cardCount: number; mediaCount: number };
-			importStatus = `Imported ${result.cardCount} cards, ${result.mediaCount} media files.`;
+			importStatus = t('import.done', { cards: result.cardCount, media: result.mediaCount });
 
 			await loadDecks();
 		} catch (err) {
-			importStatus = `Error: ${err instanceof Error ? err.message : 'Import failed'}`;
+			importStatus = t('import.error', { message: err instanceof Error ? err.message : 'Import failed' });
 		} finally {
 			importing = false;
 			input.value = '';
@@ -85,14 +88,14 @@
 			a.click();
 			URL.revokeObjectURL(url);
 		} catch (err) {
-			alert(`Export failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+			alert(t('dashboard.exportFailed', { error: err instanceof Error ? err.message : 'Unknown error' }));
 		} finally {
 			exportingDeckId = '';
 		}
 	}
 
 	async function deleteDeck(deckId: string, deckName: string) {
-		if (!confirm(`Delete "${deckName}" and all its cards?`)) return;
+		if (!confirm(t('dashboard.deleteConfirm', { name: deckName }))) return;
 
 		const res = await fetch(`/api/decks/${deckId}`, { method: 'DELETE' });
 		if (res.ok) {
@@ -106,11 +109,11 @@
 	});
 </script>
 
-<h1>Your Decks</h1>
+<h1>{t('dashboard.title')}</h1>
 
 <section class="upload">
-	<label class="upload-btn" class:disabled={importing} aria-label={importing ? 'Importing deck' : 'Import Anki .apkg file'}>
-		{importing ? 'Importing...' : 'Import .apkg File'}
+	<label class="upload-btn" class:disabled={importing} aria-label={importing ? t('dashboard.importing') : t('dashboard.import')}>
+		{importing ? t('dashboard.importing') : t('dashboard.import')}
 		<input type="file" accept=".apkg" onchange={handleFileUpload} disabled={importing} hidden />
 	</label>
 	{#if importStatus}
@@ -119,7 +122,7 @@
 </section>
 
 {#if loading}
-	<p class="loading">Loading decks...</p>
+	<p class="loading">{t('dashboard.loading')}</p>
 {:else if decks.length === 0}
 	<div class="onboarding">
 		<div class="onboarding-icon">
@@ -130,11 +133,11 @@
 				<path d="M48 12 L48 20 M44 16 L52 16" stroke="#e0e0ff" stroke-width="2" stroke-linecap="round"/>
 			</svg>
 		</div>
-		<h2>Welcome to AnkiTalk</h2>
-		<p class="onboarding-desc">Review your Anki flashcards hands-free using voice commands. Just speak to rate cards, hear answers, and get AI explanations.</p>
-		<p class="onboarding-steps">To get started, export a deck from <strong>Anki</strong> as an <strong>.apkg file</strong> (File &rarr; Export), then import it here.</p>
-		<label class="upload-btn primary-cta" class:disabled={importing} aria-label={importing ? 'Importing deck' : 'Import Anki .apkg file'}>
-			{importing ? 'Importing...' : 'Import .apkg File'}
+		<h2>{t('onboarding.welcome')}</h2>
+		<p class="onboarding-desc">{t('onboarding.desc')}</p>
+		<p class="onboarding-steps">{@html t('onboarding.steps')}</p>
+		<label class="upload-btn primary-cta" class:disabled={importing} aria-label={importing ? t('dashboard.importing') : t('dashboard.import')}>
+			{importing ? t('dashboard.importing') : t('dashboard.import')}
 			<input type="file" accept=".apkg" onchange={handleFileUpload} disabled={importing} hidden />
 		</label>
 	</div>
@@ -145,20 +148,20 @@
 				<a href="/review/{deck.id}" class="deck-link">
 					<h2>{deck.name}</h2>
 					<div class="deck-stats">
-						<span>{deck.card_count} cards</span>
+						<span>{t('dashboard.cards', { count: deck.card_count })}</span>
 						<span class="due" class:has-due={deck.due_count > 0}>
-							{deck.due_count} due
+							{t('dashboard.due', { count: deck.due_count })}
 						</span>
 					</div>
 				</a>
 				<div class="deck-actions">
-					<a href="/decks/{deck.id}/cards" class="deck-action-btn" aria-label="Browse cards in {deck.name}" title="Browse">📇</a>
-					<button class="deck-action-btn" aria-label="Export {deck.name}" title="Export" disabled={exportingDeckId === deck.id} onclick={() => exportDeck(deck.id, deck.name)}>
+					<a href="/decks/{deck.id}/cards" class="deck-action-btn" aria-label="{t('dashboard.browse')} {deck.name}" title={t('dashboard.browse')}>📇</a>
+					<button class="deck-action-btn" aria-label="{t('dashboard.export')} {deck.name}" title={t('dashboard.export')} disabled={exportingDeckId === deck.id} onclick={() => exportDeck(deck.id, deck.name)}>
 						{exportingDeckId === deck.id ? '⏳' : '📤'}
 					</button>
-					<a href="/decks/{deck.id}/settings" class="deck-action-btn" aria-label="Settings for {deck.name}" title="Settings">⚙️</a>
-					<a href="/decks/{deck.id}/stats" class="deck-action-btn" aria-label="Statistics for {deck.name}" title="Stats">📊</a>
-					<button class="deck-action-btn delete" aria-label="Delete {deck.name} deck" title="Delete" onclick={() => deleteDeck(deck.id, deck.name)}>🗑️</button>
+					<a href="/decks/{deck.id}/settings" class="deck-action-btn" aria-label="{t('dashboard.settings')} {deck.name}" title={t('dashboard.settings')}>⚙️</a>
+					<a href="/decks/{deck.id}/stats" class="deck-action-btn" aria-label="{t('dashboard.stats')} {deck.name}" title={t('dashboard.stats')}>📊</a>
+					<button class="deck-action-btn delete" aria-label="{t('dashboard.delete')} {deck.name}" title={t('dashboard.delete')} onclick={() => deleteDeck(deck.id, deck.name)}>🗑️</button>
 				</div>
 			</li>
 		{/each}

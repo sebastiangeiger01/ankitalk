@@ -1,31 +1,33 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
 	import { env } from '$env/dynamic/public';
+	import { t } from '$lib/i18n';
 
 	let mounted = $state(false);
 
-	onMount(async () => {
-		const { register } = await import('@teamhanko/hanko-elements');
-		const { hanko } = await register(env.PUBLIC_HANKO_API_URL!);
-		mounted = true;
+	onMount(() => {
+		let cleanup: (() => void) | undefined;
 
-		const cleanup = hanko.onSessionCreated(() => {
-			window.location.href = '/';
+		import('@teamhanko/hanko-elements').then(async ({ register }) => {
+			const { hanko } = await register(env.PUBLIC_HANKO_API_URL!);
+			mounted = true;
+			cleanup = hanko.onSessionCreated(() => {
+				window.location.href = '/';
+			});
 		});
 
-		return cleanup;
+		return () => { cleanup?.(); };
 	});
 </script>
 
 <div class="login-container">
-	<h1>AnkiTalk</h1>
-	<p class="subtitle">Voice-powered flashcard reviews</p>
+	<h1>{t('login.title')}</h1>
+	<p class="subtitle">{t('login.subtitle')}</p>
 
 	{#if mounted}
 		<hanko-auth></hanko-auth>
 	{:else}
-		<p>Loading...</p>
+		<p>{t('login.loading')}</p>
 	{/if}
 </div>
 

@@ -2,13 +2,14 @@
 	import { page } from '$app/stores';
 	import { onDestroy, onMount } from 'svelte';
 	import { createReviewEngine, type ReviewEvent, type SessionStats, type StartOptions, type IntervalLabels, type QueueCounts } from '$lib/client/review-engine';
+	import { locale, t } from '$lib/i18n';
 	import type { ReviewPhase } from '$lib/types';
 
 	const deckId = $derived($page.params.deckId);
 
 	let started = $state(false);
 	let phase = $state<ReviewPhase>('question');
-	let status = $state<'idle' | 'speaking' | 'listening' | 'explaining' | 'waiting'>('idle');
+	let status = $state<'idle' | 'loading' | 'speaking' | 'listening' | 'explaining' | 'waiting'>('idle');
 	let cardsReviewed = $state(0);
 	let frontText = $state('');
 	let backText = $state('');
@@ -33,6 +34,8 @@
 	let intervals = $state<IntervalLabels>({ again: '', hard: '', good: '', easy: '' });
 	let counts = $state<QueueCounts>({ new: 0, learning: 0, review: 0 });
 	let helpOpen = $state(false);
+	let loc = $state('en');
+	locale.subscribe((v) => { loc = v; });
 
 	const engine = createReviewEngine();
 
@@ -59,6 +62,9 @@
 				isLearning = event.isLearning;
 				intervals = event.intervals;
 				status = 'idle';
+				break;
+			case 'tts_loading':
+				status = 'loading';
 				break;
 			case 'speaking':
 				status = 'speaking';
@@ -116,7 +122,7 @@
 				break;
 			}
 			case 'card_suspended': {
-				suspendedNotice = 'Card suspended';
+				suspendedNotice = t('review.cardSuspended');
 				if (suspendedTimer) clearTimeout(suspendedTimer);
 				suspendedTimer = setTimeout(() => { suspendedNotice = ''; }, 3000);
 				break;
@@ -208,47 +214,47 @@
 {#if !started}
 	<div class="review-container">
 		<div class="start-screen">
-			<h1>Ready to Review{deckName ? ` — ${deckName}` : ''}</h1>
-			<p>Tap the button below to start your review session.</p>
+			<h1>{t('review.readyTitle')}{deckName ? ` — ${deckName}` : ''}</h1>
+			<p>{t('review.startHint')}</p>
 
-			<button class="start-btn" onclick={startReview}>{cramMode ? 'Start Cram' : 'Start Review'}</button>
+			<button class="start-btn" onclick={startReview}>{cramMode ? t('review.startCram') : t('review.startReview')}</button>
 
 			<div class="review-options">
 				<label class="option-label">
-					Filter by tags
-					<input type="text" class="option-input" bind:value={tagFilter} placeholder="tag1, tag2" />
+					{t('review.filterTags')}
+					<input type="text" class="option-input" bind:value={tagFilter} placeholder={t('review.tagPlaceholder')} />
 				</label>
 
 				<label class="option-checkbox">
 					<input type="checkbox" bind:checked={cramMode} />
-					Cram mode <span class="option-hint">(ignore due dates & limits)</span>
+					{t('review.cramMode')} <span class="option-hint">{t('review.cramHint')}</span>
 				</label>
 
 				{#if cramMode}
 					<label class="option-label">
-						Cram state filter
+						{t('review.cramStateFilter')}
 						<select class="option-input" bind:value={cramState}>
-							<option value="">All states</option>
-							<option value="new">New only</option>
-							<option value="learning">Learning only</option>
-							<option value="review">Review only</option>
+							<option value="">{t('review.allStates')}</option>
+							<option value="new">{t('review.newOnly')}</option>
+							<option value="learning">{t('review.learningOnly')}</option>
+							<option value="review">{t('review.reviewOnly')}</option>
 						</select>
 					</label>
 				{/if}
 			</div>
 
 			<button class="help-toggle" onclick={() => helpOpen = !helpOpen}>
-				{helpOpen ? 'Hide' : 'Show'} voice commands & shortcuts
+				{helpOpen ? t('review.hideHelp') : t('review.showHelp')}
 			</button>
 			{#if helpOpen}
 				<div class="commands-help">
 					<ul>
-						<li><strong>answer / show</strong> — reveal the answer <kbd>Space</kbd></li>
-						<li><strong>hint</strong> — hear first few words <kbd>H</kbd></li>
-						<li><strong>again / hard / good / easy</strong> — rate <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></li>
-						<li><strong>repeat</strong> — hear it again <kbd>R</kbd></li>
-						<li><strong>explain</strong> — ask AI to explain <kbd>E</kbd></li>
-						<li><strong>stop</strong> — end session <kbd>Esc</kbd></li>
+						<li><strong>{t('help.answer')}</strong> — {t('help.answerDesc')} <kbd>Space</kbd></li>
+						<li><strong>{t('help.hint')}</strong> — {t('help.hintDesc')} <kbd>H</kbd></li>
+						<li><strong>{t('help.ratings')}</strong> — {t('help.ratingsDesc')} <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></li>
+						<li><strong>{t('help.repeat')}</strong> — {t('help.repeatDesc')} <kbd>R</kbd></li>
+						<li><strong>{t('help.explain')}</strong> — {t('help.explainDesc')} <kbd>E</kbd></li>
+						<li><strong>{t('help.stop')}</strong> — {t('help.stopDesc')} <kbd>Esc</kbd></li>
 					</ul>
 				</div>
 			{/if}
@@ -257,24 +263,24 @@
 {:else if sessionEnded && stats}
 	<div class="review-container">
 		<div class="summary">
-			<h1>Session Complete{deckName ? ` — ${deckName}` : ''}</h1>
+			<h1>{t('session.completeTitle')}{deckName ? ` — ${deckName}` : ''}</h1>
 			<div class="stat-grid">
 				<div class="stat">
 					<span class="stat-value">{stats.cardsReviewed}</span>
-					<span class="stat-label">Cards Reviewed</span>
+					<span class="stat-label">{t('session.cardsReviewed')}</span>
 				</div>
 				<div class="stat">
 					<span class="stat-value">{formatDuration(stats.durationMs)}</span>
-					<span class="stat-label">Duration</span>
+					<span class="stat-label">{t('session.duration')}</span>
 				</div>
 			</div>
 			<div class="ratings-summary">
-				<span class="rating again">Again: {stats.ratings.again}</span>
-				<span class="rating hard">Hard: {stats.ratings.hard}</span>
-				<span class="rating good">Good: {stats.ratings.good}</span>
-				<span class="rating easy">Easy: {stats.ratings.easy}</span>
+				<span class="rating again">{t('rating.again')}: {stats.ratings.again}</span>
+				<span class="rating hard">{t('rating.hard')}: {stats.ratings.hard}</span>
+				<span class="rating good">{t('rating.good')}: {stats.ratings.good}</span>
+				<span class="rating easy">{t('rating.easy')}: {stats.ratings.easy}</span>
 			</div>
-			<a href="/" class="back-link">Back to Dashboard</a>
+			<a href="/" class="back-link">{t('session.backToDashboard')}</a>
 		</div>
 	</div>
 {:else}
@@ -292,34 +298,34 @@
 	<!-- Top bar -->
 	<div class="top-bar">
 		<div class="top-left">
-			<button class="toolbar-btn" class:off={!audioOn} onclick={() => engine.toggleAudio()} aria-label={audioOn ? 'Mute audio' : 'Unmute audio'} title={audioOn ? 'Mute audio (speaker)' : 'Unmute audio'}>
+			<button class="toolbar-btn" class:off={!audioOn} onclick={() => engine.toggleAudio()} aria-label={audioOn ? t('review.muteAudio') : t('review.unmuteAudio')} title={audioOn ? t('review.muteAudio') : t('review.unmuteAudio')}>
 				{#if audioOn}
 					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
 				{:else}
 					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
 				{/if}
 			</button>
-			<button class="toolbar-btn" class:off={!micOn} onclick={() => engine.toggleMic()} aria-label={micOn ? 'Mute microphone' : 'Unmute microphone'} title={micOn ? 'Mute microphone' : 'Unmute microphone'}>
+			<button class="toolbar-btn" class:off={!micOn} onclick={() => engine.toggleMic()} aria-label={micOn ? t('review.muteMic') : t('review.unmuteMic')} title={micOn ? t('review.muteMic') : t('review.unmuteMic')}>
 				{#if micOn}
 					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
 				{:else}
 					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.5-.36 2.18"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
 				{/if}
 			</button>
-			<button class="toolbar-btn" onclick={() => engine.executeCommand('hint')} title="Hint (H)" aria-label="Hint">
+			<button class="toolbar-btn" onclick={() => engine.executeCommand('hint')} title="{t('review.hint')} (H)" aria-label={t('review.hint')}>
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/></svg>
 			</button>
-			<button class="toolbar-btn" onclick={() => engine.executeCommand('explain')} title="Explain (E)" aria-label="Explain">
+			<button class="toolbar-btn" onclick={() => engine.executeCommand('explain')} title="{t('review.explain')} (E)" aria-label={t('review.explain')}>
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
 			</button>
-			<button class="toolbar-btn" onclick={() => engine.executeCommand('suspend')} title="Suspend (S)" aria-label="Suspend">
+			<button class="toolbar-btn" onclick={() => engine.executeCommand('suspend')} title="{t('review.suspend')} (S)" aria-label={t('review.suspend')}>
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
 			</button>
-			<button class="toolbar-btn stop" onclick={() => engine.executeCommand('stop')} title="Stop (Esc)" aria-label="Stop session">
+			<button class="toolbar-btn stop" onclick={() => engine.executeCommand('stop')} title="{t('review.stop')} (Esc)" aria-label={t('review.stop')}>
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
 			</button>
-			{#if status === 'speaking' || status === 'listening' || status === 'explaining'}
-				<span class="voice-dot" class:speaking={status === 'speaking'} class:listening={status === 'listening'} class:explaining={status === 'explaining'}></span>
+			{#if status === 'loading' || status === 'speaking' || status === 'listening' || status === 'explaining'}
+				<span class="voice-dot" class:loading={status === 'loading'} class:speaking={status === 'speaking'} class:listening={status === 'listening'} class:explaining={status === 'explaining'}></span>
 			{/if}
 		</div>
 		<div class="top-right">
@@ -337,7 +343,7 @@
 	<!-- Card content area -->
 	<div class="card-area">
 		{#if status === 'waiting'}
-			<p class="waiting-text">Card returning in {learningCountdown}s...</p>
+			<p class="waiting-text">{t('review.waitingCard', { seconds: learningCountdown })}</p>
 		{:else}
 			<div class="card-content" role="region" aria-label="Flashcard">
 				<div class="question-text">{@html frontHtml}</div>
@@ -352,11 +358,11 @@
 	<!-- Fixed bottom actions -->
 	<div class="bottom-bar">
 		{#if undoAvailable}
-			<button class="undo-link" onclick={() => engine.undo()}>undo <kbd>Z</kbd></button>
+			<button class="undo-link" onclick={() => engine.undo()}>{t('review.undo')} <kbd>Z</kbd></button>
 		{/if}
 		{#if phase === 'question' && status !== 'waiting'}
 			<div class="bottom-actions">
-				<button class="show-answer-btn" onclick={() => engine.executeCommand('answer')}>Show Answer</button>
+				<button class="show-answer-btn" onclick={() => engine.executeCommand('answer')}>{t('review.showAnswer')}</button>
 			</div>
 		{:else if phase === 'rating'}
 			<div class="interval-labels">
@@ -366,10 +372,10 @@
 				<span class="interval">{intervals.easy}</span>
 			</div>
 			<div class="rating-buttons">
-				<button class="rate-btn again" onclick={() => engine.executeCommand('again')}>Again</button>
-				<button class="rate-btn hard" onclick={() => engine.executeCommand('hard')}>Hard</button>
-				<button class="rate-btn good" onclick={() => engine.executeCommand('good')}>Good</button>
-				<button class="rate-btn easy" onclick={() => engine.executeCommand('easy')}>Easy</button>
+				<button class="rate-btn again" onclick={() => engine.executeCommand('again')}>{t('rating.again')}</button>
+				<button class="rate-btn hard" onclick={() => engine.executeCommand('hard')}>{t('rating.hard')}</button>
+				<button class="rate-btn good" onclick={() => engine.executeCommand('good')}>{t('rating.good')}</button>
+				<button class="rate-btn easy" onclick={() => engine.executeCommand('easy')}>{t('rating.easy')}</button>
 			</div>
 		{/if}
 	</div>
@@ -648,6 +654,11 @@
 		flex-shrink: 0;
 	}
 
+	.voice-dot.loading {
+		background: #ffbb88;
+		animation: pulse-fade 0.8s ease-in-out infinite;
+	}
+
 	.voice-dot.speaking {
 		background: #ffbb88;
 		animation: pulse-dot 1s ease-in-out infinite;
@@ -666,6 +677,11 @@
 	@keyframes pulse-dot {
 		0%, 100% { opacity: 1; transform: scale(1); }
 		50% { opacity: 0.4; transform: scale(1.3); }
+	}
+
+	@keyframes pulse-fade {
+		0%, 100% { opacity: 0.3; transform: scale(0.8); }
+		50% { opacity: 1; transform: scale(1.2); }
 	}
 
 	.learning-badge {

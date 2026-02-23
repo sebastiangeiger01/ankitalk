@@ -1,11 +1,15 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { locale, t } from '$lib/i18n';
 
 	const deckId = $derived($page.params.id);
 
 	let loading = $state(true);
 	let deckName = $state('');
 	let period = $state(30);
+
+	let loc = $state('en');
+	locale.subscribe((v) => { loc = v; });
 
 	interface CardStates {
 		new: number;
@@ -76,45 +80,45 @@
 </script>
 
 <div class="stats-page">
-	<a href="/" class="back-link">&larr; Dashboard</a>
+	<a href="/" class="back-link">&larr; {t('stats.dashboard')}</a>
 
-	<h1>Statistics{deckName ? ` — ${deckName}` : ''}</h1>
+	<h1>{t('stats.title')}{deckName ? ` — ${deckName}` : ''}</h1>
 
 	{#if loading}
-		<p class="loading">Loading...</p>
+		<p class="loading">{t('stats.loading')}</p>
 	{:else}
 		<section class="section">
-			<h2>Card States</h2>
+			<h2>{t('stats.cardStates')}</h2>
 			<div class="state-bar">
 				{#if totalCards > 0}
-					<div class="state-seg new" style="width: {stateBarWidth(cardStates.new)}" title="New: {cardStates.new}"></div>
-					<div class="state-seg learning" style="width: {stateBarWidth(cardStates.learning + cardStates.relearning)}" title="Learning: {cardStates.learning + cardStates.relearning}"></div>
-					<div class="state-seg review" style="width: {stateBarWidth(cardStates.review)}" title="Review: {cardStates.review}"></div>
-					<div class="state-seg suspended" style="width: {stateBarWidth(cardStates.suspended)}" title="Suspended: {cardStates.suspended}"></div>
+					<div class="state-seg new" style="width: {stateBarWidth(cardStates.new)}" title="{t('state.new')}: {cardStates.new}"></div>
+					<div class="state-seg learning" style="width: {stateBarWidth(cardStates.learning + cardStates.relearning)}" title="{t('state.learning')}: {cardStates.learning + cardStates.relearning}"></div>
+					<div class="state-seg review" style="width: {stateBarWidth(cardStates.review)}" title="{t('state.review')}: {cardStates.review}"></div>
+					<div class="state-seg suspended" style="width: {stateBarWidth(cardStates.suspended)}" title="{t('state.suspended')}: {cardStates.suspended}"></div>
 				{/if}
 			</div>
 			<div class="state-legend">
-				<span class="legend-item"><span class="dot new"></span> New: {cardStates.new}</span>
-				<span class="legend-item"><span class="dot learning"></span> Learning: {cardStates.learning + cardStates.relearning}</span>
-				<span class="legend-item"><span class="dot review"></span> Review: {cardStates.review}</span>
-				<span class="legend-item"><span class="dot suspended"></span> Suspended: {cardStates.suspended}</span>
+				<span class="legend-item"><span class="dot new"></span> {t('state.new')}: {cardStates.new}</span>
+				<span class="legend-item"><span class="dot learning"></span> {t('state.learning')}: {cardStates.learning + cardStates.relearning}</span>
+				<span class="legend-item"><span class="dot review"></span> {t('state.review')}: {cardStates.review}</span>
+				<span class="legend-item"><span class="dot suspended"></span> {t('state.suspended')}: {cardStates.suspended}</span>
 			</div>
 		</section>
 
 		<section class="section">
-			<h2>Retention Rate</h2>
+			<h2>{t('stats.retentionRate')}</h2>
 			{#if retentionRate !== null}
 				<div class="retention-display">
 					<span class="retention-value">{Math.round(retentionRate * 100)}%</span>
-					<span class="retention-label">of mature card reviews passed</span>
+					<span class="retention-label">{t('stats.retentionLabel')}</span>
 				</div>
 			{:else}
-				<p class="no-data">Not enough mature card reviews yet</p>
+				<p class="no-data">{t('stats.noRetention')}</p>
 			{/if}
 		</section>
 
 		<section class="section">
-			<h2>Daily Reviews</h2>
+			<h2>{t('stats.dailyReviews')}</h2>
 			<div class="period-selector">
 				<button class:active={period === 7} onclick={() => setPeriod(7)}>7d</button>
 				<button class:active={period === 30} onclick={() => setPeriod(30)}>30d</button>
@@ -122,7 +126,7 @@
 			</div>
 
 			{#if dailyReviews.length === 0}
-				<p class="no-data">No reviews in this period</p>
+				<p class="no-data">{t('stats.noReviews')}</p>
 			{:else}
 				<div class="chart-container">
 					<svg viewBox="0 0 {dailyReviews.length * 24} 120" class="chart" preserveAspectRatio="none">
@@ -136,25 +140,25 @@
 							{@const againH = day.again_count * scale}
 							<!-- stacked bottom-up: again, hard, good, easy -->
 							<rect x={x} y={100 - againH} width={barW} height={againH} fill="#ff8888" rx="2">
-								<title>{day.day}: Again {day.again_count}</title>
+								<title>{day.day}: {t('rating.again')} {day.again_count}</title>
 							</rect>
 							<rect x={x} y={100 - againH - hardH} width={barW} height={hardH} fill="#ffbb88" rx="2">
-								<title>{day.day}: Hard {day.hard_count}</title>
+								<title>{day.day}: {t('rating.hard')} {day.hard_count}</title>
 							</rect>
 							<rect x={x} y={100 - againH - hardH - goodH} width={barW} height={goodH} fill="#88ff88" rx="2">
-								<title>{day.day}: Good {day.good_count}</title>
+								<title>{day.day}: {t('rating.good')} {day.good_count}</title>
 							</rect>
 							<rect x={x} y={100 - againH - hardH - goodH - easyH} width={barW} height={easyH} fill="#88bbff" rx="2">
-								<title>{day.day}: Easy {day.easy_count}</title>
+								<title>{day.day}: {t('rating.easy')} {day.easy_count}</title>
 							</rect>
 						{/each}
 					</svg>
 				</div>
 				<div class="chart-legend">
-					<span class="legend-item"><span class="dot again"></span> Again</span>
-					<span class="legend-item"><span class="dot hard"></span> Hard</span>
-					<span class="legend-item"><span class="dot good"></span> Good</span>
-					<span class="legend-item"><span class="dot easy"></span> Easy</span>
+					<span class="legend-item"><span class="dot again"></span> {t('rating.again')}</span>
+					<span class="legend-item"><span class="dot hard"></span> {t('rating.hard')}</span>
+					<span class="legend-item"><span class="dot good"></span> {t('rating.good')}</span>
+					<span class="legend-item"><span class="dot easy"></span> {t('rating.easy')}</span>
 				</div>
 			{/if}
 		</section>

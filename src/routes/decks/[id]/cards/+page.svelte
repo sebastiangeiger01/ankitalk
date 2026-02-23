@@ -2,6 +2,7 @@
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 	import CardEditModal from '$lib/components/CardEditModal.svelte';
+	import { locale, t } from '$lib/i18n';
 	import type { BrowseCard, NoteField } from '$lib/types';
 
 	const deckId = $derived($page.params.id);
@@ -17,6 +18,9 @@
 	let selected = $state<Set<string>>(new Set());
 	let bulkLoading = $state(false);
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+	let loc = $state('en');
+	locale.subscribe((v) => { loc = v; });
 
 	// Edit modal state
 	let modalOpen = $state(false);
@@ -137,11 +141,11 @@
 	}
 
 	function stateName(s: number, suspended: number): string {
-		if (suspended) return 'Suspended';
-		if (s === 0) return 'New';
-		if (s === 1 || s === 3) return 'Learning';
-		if (s === 2) return 'Review';
-		return 'Unknown';
+		if (suspended) return t('state.suspended');
+		if (s === 0) return t('state.new');
+		if (s === 1 || s === 3) return t('state.learning');
+		if (s === 2) return t('state.review');
+		return t('state.unknown');
 	}
 
 	function stateClass(s: number, suspended: number): string {
@@ -178,6 +182,8 @@
 		}
 	}
 
+	const stateFilterKeys: Array<'all' | 'new' | 'learning' | 'review' | 'suspended'> = ['all', 'new', 'learning', 'review', 'suspended'];
+
 	const totalPages = $derived(Math.max(1, Math.ceil(total / pageSize)));
 
 	onMount(() => {
@@ -188,56 +194,56 @@
 
 <div class="browser">
 	<div class="header">
-		<a href="/" class="back-link">&larr; Dashboard</a>
-		<h1>{deckName ? `${deckName} — Cards` : 'Cards'}</h1>
+		<a href="/" class="back-link">&larr; {t('cards.dashboard')}</a>
+		<h1>{deckName ? `${deckName} — ${t('cards.title')}` : t('cards.title')}</h1>
 	</div>
 
 	<div class="controls">
 		<input
 			type="text"
 			class="search-input"
-			placeholder="Search cards..."
+			placeholder={t('cards.search')}
 			bind:value={searchQuery}
 			oninput={handleSearch}
 		/>
-		<button class="new-card-btn" onclick={openCreateModal}>New Card</button>
+		<button class="new-card-btn" onclick={openCreateModal}>{t('cards.newCard')}</button>
 	</div>
 
 	<div class="filters">
-		{#each ['all', 'new', 'learning', 'review', 'suspended'] as s}
+		{#each stateFilterKeys as s}
 			<button
 				class="filter-pill"
 				class:active={stateFilter === s}
-				onclick={() => setStateFilter(s as typeof stateFilter)}
+				onclick={() => setStateFilter(s)}
 			>
-				{s.charAt(0).toUpperCase() + s.slice(1)}
+				{t(`state.${s}`)}
 			</button>
 		{/each}
 	</div>
 
 	{#if selected.size > 0}
 		<div class="bulk-bar">
-			<span>{selected.size} selected</span>
-			<button class="bulk-btn" disabled={bulkLoading} onclick={() => bulkAction('suspend')}>Suspend</button>
-			<button class="bulk-btn" disabled={bulkLoading} onclick={() => bulkAction('unsuspend')}>Unsuspend</button>
+			<span>{t('cards.selected', { count: selected.size })}</span>
+			<button class="bulk-btn" disabled={bulkLoading} onclick={() => bulkAction('suspend')}>{t('cards.suspendAction')}</button>
+			<button class="bulk-btn" disabled={bulkLoading} onclick={() => bulkAction('unsuspend')}>{t('cards.unsuspendAction')}</button>
 		</div>
 	{/if}
 
 	{#if loading}
-		<p class="loading-msg">Loading...</p>
+		<p class="loading-msg">{t('cards.loading')}</p>
 	{:else if cards.length === 0}
-		<p class="empty-msg">No cards found.</p>
+		<p class="empty-msg">{t('cards.empty')}</p>
 	{:else}
 		<div class="card-list">
 			<div class="card-list-header">
 				<label class="checkbox-cell">
 					<input type="checkbox" checked={selected.size === cards.length && cards.length > 0} onchange={toggleSelectAll} />
 				</label>
-				<span class="col-front">Front</span>
-				<span class="col-state">State</span>
-				<span class="col-due">Due</span>
-				<span class="col-reps">Reps</span>
-				<span class="col-lapses">Lapses</span>
+				<span class="col-front">{t('cards.front')}</span>
+				<span class="col-state">{t('cards.state')}</span>
+				<span class="col-due">{t('cards.due')}</span>
+				<span class="col-reps">{t('cards.reps')}</span>
+				<span class="col-lapses">{t('cards.lapses')}</span>
 			</div>
 
 			{#each cards as card (card.id)}
@@ -256,9 +262,9 @@
 		</div>
 
 		<div class="pagination">
-			<button class="page-btn" disabled={currentPage <= 1} onclick={prevPage}>Prev</button>
+			<button class="page-btn" disabled={currentPage <= 1} onclick={prevPage}>{t('cards.prev')}</button>
 			<span class="page-info">{currentPage} / {totalPages}</span>
-			<button class="page-btn" disabled={currentPage >= totalPages} onclick={nextPage}>Next</button>
+			<button class="page-btn" disabled={currentPage >= totalPages} onclick={nextPage}>{t('cards.next')}</button>
 		</div>
 	{/if}
 </div>

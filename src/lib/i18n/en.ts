@@ -1,0 +1,159 @@
+export const en: Record<string, string> = {
+	// Layout / Nav
+	'nav.title': 'AnkiTalk',
+	'nav.logout': 'Logout',
+	'nav.settings': 'Settings',
+
+	// Login
+	'login.title': 'AnkiTalk',
+	'login.subtitle': 'Voice-powered flashcard reviews',
+	'login.loading': 'Loading...',
+
+	// Dashboard
+	'dashboard.title': 'Your Decks',
+	'dashboard.import': 'Import .apkg File',
+	'dashboard.importing': 'Importing...',
+	'dashboard.loading': 'Loading decks...',
+	'dashboard.cards': '{count} cards',
+	'dashboard.due': '{count} due',
+	'dashboard.browse': 'Browse',
+	'dashboard.export': 'Export',
+	'dashboard.settings': 'Settings',
+	'dashboard.stats': 'Stats',
+	'dashboard.delete': 'Delete',
+	'dashboard.deleteConfirm': 'Delete "{name}" and all its cards?',
+	'dashboard.exportFailed': 'Export failed: {error}',
+
+	// Dashboard - import status
+	'import.parsing': 'Parsing .apkg file...',
+	'import.found': 'Found {cards} cards in {decks} deck(s). Uploading...',
+	'import.done': 'Imported {cards} cards, {media} media files.',
+	'import.error': 'Error: {message}',
+
+	// Onboarding
+	'onboarding.welcome': 'Welcome to AnkiTalk',
+	'onboarding.desc': 'Review your Anki flashcards hands-free using voice commands. Just speak to rate cards, hear answers, and get AI explanations.',
+	'onboarding.steps': 'To get started, export a deck from <strong>Anki</strong> as an <strong>.apkg file</strong> (File \u2192 Export), then import it here.',
+
+	// Review - Start screen
+	'review.readyTitle': 'Ready to Review',
+	'review.startHint': 'Tap the button below to start your review session.',
+	'review.startReview': 'Start Review',
+	'review.startCram': 'Start Cram',
+	'review.filterTags': 'Filter by tags',
+	'review.tagPlaceholder': 'tag1, tag2',
+	'review.cramMode': 'Cram mode',
+	'review.cramHint': '(ignore due dates & limits)',
+	'review.cramStateFilter': 'Cram state filter',
+	'review.allStates': 'All states',
+	'review.newOnly': 'New only',
+	'review.learningOnly': 'Learning only',
+	'review.reviewOnly': 'Review only',
+	'review.showHelp': 'Show voice commands & shortcuts',
+	'review.hideHelp': 'Hide voice commands & shortcuts',
+
+	// Review - Help commands
+	'help.answer': 'answer / show',
+	'help.answerDesc': 'reveal the answer',
+	'help.hint': 'hint',
+	'help.hintDesc': 'hear first few words',
+	'help.ratings': 'again / hard / good / easy',
+	'help.ratingsDesc': 'rate',
+	'help.repeat': 'repeat',
+	'help.repeatDesc': 'hear it again',
+	'help.explain': 'explain',
+	'help.explainDesc': 'ask AI to explain',
+	'help.stop': 'stop',
+	'help.stopDesc': 'end session',
+
+	// Review - Active session
+	'review.muteAudio': 'Mute audio',
+	'review.unmuteAudio': 'Unmute audio',
+	'review.muteMic': 'Mute microphone',
+	'review.unmuteMic': 'Unmute microphone',
+	'review.hint': 'Hint',
+	'review.explain': 'Explain',
+	'review.suspend': 'Suspend',
+	'review.stop': 'Stop session',
+	'review.showAnswer': 'Show Answer',
+	'review.undo': 'undo',
+	'review.cardSuspended': 'Card suspended',
+	'review.waitingCard': 'Card returning in {seconds}s...',
+
+	// Review - Ratings
+	'rating.again': 'Again',
+	'rating.hard': 'Hard',
+	'rating.good': 'Good',
+	'rating.easy': 'Easy',
+
+	// Review - Session complete
+	'session.completeTitle': 'Session Complete',
+	'session.cardsReviewed': 'Cards Reviewed',
+	'session.duration': 'Duration',
+	'session.backToDashboard': 'Back to Dashboard',
+
+	// Deck Settings
+	'settings.title': 'Settings',
+	'settings.dashboard': 'Dashboard',
+	'settings.loading': 'Loading...',
+	'settings.newPerDay': 'New cards per day',
+	'settings.maxReviews': 'Max reviews per day',
+	'settings.retention': 'Desired retention: {pct}%',
+	'settings.retentionHelper': 'Higher = more reviews but better recall. Default 90%.',
+	'settings.maxInterval': 'Max interval (days)',
+	'settings.maxIntervalYears': '{years} years',
+	'settings.maxIntervalDays': '{days} days',
+	'settings.leechThreshold': 'Leech threshold (lapses)',
+	'settings.leechHelper': 'Cards with this many lapses get auto-suspended.',
+	'settings.save': 'Save',
+	'settings.saving': 'Saving...',
+	'settings.saved': 'Saved',
+	'settings.saveFailed': 'Failed to save',
+	'settings.loadFailed': 'Failed to load settings',
+
+	// App Settings
+	'appSettings.title': 'App Settings',
+	'appSettings.language': 'Language',
+	'appSettings.dashboard': 'Dashboard',
+
+	// Card Browser
+	'cards.title': 'Cards',
+	'cards.dashboard': 'Dashboard',
+	'cards.search': 'Search cards...',
+	'cards.newCard': 'New Card',
+	'cards.loading': 'Loading...',
+	'cards.empty': 'No cards found.',
+	'cards.selected': '{count} selected',
+	'cards.suspendAction': 'Suspend',
+	'cards.unsuspendAction': 'Unsuspend',
+	'cards.front': 'Front',
+	'cards.state': 'State',
+	'cards.due': 'Due',
+	'cards.reps': 'Reps',
+	'cards.lapses': 'Lapses',
+	'cards.prev': 'Prev',
+	'cards.next': 'Next',
+
+	// Card states
+	'state.all': 'All',
+	'state.new': 'New',
+	'state.learning': 'Learning',
+	'state.review': 'Review',
+	'state.suspended': 'Suspended',
+	'state.unknown': 'Unknown',
+
+	// Stats
+	'stats.title': 'Statistics',
+	'stats.dashboard': 'Dashboard',
+	'stats.loading': 'Loading...',
+	'stats.cardStates': 'Card States',
+	'stats.retentionRate': 'Retention Rate',
+	'stats.retentionLabel': 'of mature card reviews passed',
+	'stats.noRetention': 'Not enough mature card reviews yet',
+	'stats.dailyReviews': 'Daily Reviews',
+	'stats.noReviews': 'No reviews in this period',
+
+	// Common
+	'common.loading': 'Loading...',
+	'common.error': 'Error',
+};
