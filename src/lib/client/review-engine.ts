@@ -561,6 +561,11 @@ export function createReviewEngine(): ReviewEngine {
 		stats.ratings[rating]--;
 		cardsReviewedCount--;
 
+		// Put the current card back at the front of the review queue
+		if (currentCard && currentCard.id !== card.id) {
+			reviewQueue.unshift(currentCard);
+		}
+
 		// Remove from learning queue if it was added
 		if (addedToLearning) {
 			const idx = learningQueue.findIndex((e) => e.card.id === card.id);
@@ -569,7 +574,7 @@ export function createReviewEngine(): ReviewEngine {
 
 		clearUndo();
 
-		// Re-present the card in rating phase
+		// Re-present the undone card in rating phase
 		currentCard = card;
 		phase = 'rating';
 		cardStartTime = Date.now();
