@@ -521,14 +521,9 @@ export function createReviewEngine(): ReviewEngine {
 			emit({ type: 'error', message: 'Failed to save review' });
 		}
 
-		// Store undo info
+		// Store undo info — stays available until next command (e.g. "show answer")
 		undoInfo = { rating, card, addedToLearning };
 		emit({ type: 'undo_available', available: true });
-
-		undoTimer = setTimeout(() => {
-			undoInfo = null;
-			emit({ type: 'undo_available', available: false });
-		}, 5000);
 
 		playSound('/success.mp3').catch(() => {});
 		presentCard();
