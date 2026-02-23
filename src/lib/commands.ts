@@ -76,10 +76,11 @@ const COMMANDS: CommandDef[] = [
 
 /**
  * Check if a multi-word alias appears as whole words in the transcript.
+ * Word boundaries allow punctuation (smart_format adds periods, commas, etc.)
  */
 function containsWholePhrase(text: string, phrase: string): boolean {
 	const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-	const re = new RegExp(`(?:^|\\s)${escaped}(?:\\s|$)`);
+	const re = new RegExp(`(?:^|\\s)${escaped}(?=[\\s.,!?;:]|$)`);
 	return re.test(text);
 }
 
@@ -93,7 +94,8 @@ function containsWholePhrase(text: string, phrase: string): boolean {
  * - bare "again" → rating (again)
  */
 export function matchCommand(transcript: string, phase: ReviewPhase): VoiceCommand | null {
-	const normalized = transcript.toLowerCase().trim();
+	// Strip trailing punctuation added by smart_format (e.g. "Gut." → "gut")
+	const normalized = transcript.toLowerCase().trim().replace(/[.,!?;:]+$/g, '');
 
 	if (!normalized) return null;
 

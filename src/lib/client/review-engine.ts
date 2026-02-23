@@ -81,10 +81,17 @@ interface UndoInfo {
 
 type EventCallback = (event: ReviewEvent) => void;
 
+export interface PrefetchedCards {
+	cards: Record<string, unknown>[];
+	deckName: string;
+	counts?: QueueCounts;
+}
+
 export interface StartOptions {
 	tags?: string;
 	mode?: 'cram';
 	cramState?: 'new' | 'learning' | 'review';
+	prefetchedCards?: PrefetchedCards;
 }
 
 export interface ReviewEngine {
@@ -619,11 +626,6 @@ export function createReviewEngine(): ReviewEngine {
 		await unlockAudio();
 
 		// 2. Fetch cards + start Deepgram in parallel (both are independent)
-		const params = new URLSearchParams({ deckId, limit: '50' });
-		if (options?.tags) params.set('tags', options.tags);
-		if (options?.mode) params.set('mode', options.mode);
-		if (options?.cramState) params.set('cramState', options.cramState);
-
 		deepgram = createDeepgramClient();
 		deepgram.onTranscript((transcript, isFinal) => {
 			emit({ type: 'transcript', text: transcript, isFinal });
@@ -639,15 +641,21 @@ export function createReviewEngine(): ReviewEngine {
 			emit({ type: 'error', message: err.message });
 		});
 
-		const [cardsResult, deepgramResult] = await Promise.allSettled([
-			fetch(`/api/cards/next?${params}`).then(async (res) => {
+		// Use prefetched cards if available, otherwise fetch now
+		const cardsFetch = options?.prefetchedCards
+			? Promise.resolve(options.prefetchedCards)
+			: (async () => {
+				const params = new URLSearchParams({ deckId, limit: '50' });
+				if (options?.tags) params.set('tags', options.tags);
+				if (options?.mode) params.set('mode', options.mode);
+				if (options?.cramState) params.set('cramState', options.cramState);
+				const res = await fetch(`/api/cards/next?${params}`);
 				if (!res.ok) throw new Error('Failed to fetch cards');
-				return (await res.json()) as {
-					cards: Record<string, unknown>[];
-					deckName: string;
-					counts?: QueueCounts;
-				};
-			}),
+				return (await res.json()) as PrefetchedCards;
+			})();
+
+		const [cardsResult, deepgramResult] = await Promise.allSettled([
+			cardsFetch,
 			deepgram.start()
 		]);
 

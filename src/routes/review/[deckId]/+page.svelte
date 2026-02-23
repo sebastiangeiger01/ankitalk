@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { onDestroy, onMount } from 'svelte';
-	import { createReviewEngine, type ReviewEvent, type SessionStats, type StartOptions, type IntervalLabels, type QueueCounts } from '$lib/client/review-engine';
+	import { createReviewEngine, type ReviewEvent, type SessionStats, type StartOptions, type IntervalLabels, type QueueCounts, type PrefetchedCards } from '$lib/client/review-engine';
 	import { preloadTTS } from '$lib/client/audio';
 	import { locale, t } from '$lib/i18n';
 	import type { ReviewPhase } from '$lib/types';
@@ -37,6 +37,7 @@
 	let helpOpen = $state(false);
 	let loc = $state('en');
 	locale.subscribe((v) => { loc = v; });
+	let prefetchedCards = $state<PrefetchedCards | null>(null);
 
 	const engine = createReviewEngine();
 
@@ -141,6 +142,10 @@
 			options.mode = 'cram';
 			if (cramState) options.cramState = cramState;
 		}
+		// Use prefetched cards if no filters/cram mode changed the query
+		if (prefetchedCards && !options.tags && !options.mode) {
+			options.prefetchedCards = prefetchedCards;
+		}
 		await engine.start(deckId!, options);
 	}
 
@@ -193,18 +198,20 @@
 		}
 	}
 
-	// Fetch deck name and preload first card's TTS on mount
+	// Prefetch cards + deck name on mount so engine.start() is instant
 	$effect(() => {
 		fetch(`/api/decks/${deckId}`)
 			.then((r) => r.json())
 			.then((data) => { deckName = (data as { deck: { name: string } }).deck.name; })
 			.catch(() => {});
 
-		// Peek at first due card and preload its TTS
-		fetch(`/api/cards/next?${new URLSearchParams({ deckId: deckId!, limit: '1' })}`)
+		// Prefetch the full card set (reused by engine.start to skip duplicate fetch)
+		fetch(`/api/cards/next?${new URLSearchParams({ deckId: deckId!, limit: '50' })}`)
 			.then((r) => r.ok ? r.json() : null)
 			.then((data) => {
 				if (!data) return;
+				prefetchedCards = data as PrefetchedCards;
+				// Preload first card's TTS
 				const cards = (data as { cards: { fields: string; card_type: string }[] }).cards;
 				if (!cards?.length) return;
 				const card = cards[0];
@@ -217,7 +224,6 @@
 					} else {
 						text = fields[0].value;
 					}
-					// Strip HTML to get plain text for TTS
 					const div = document.createElement('div');
 					div.innerHTML = text;
 					const plain = div.textContent ?? '';
