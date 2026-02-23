@@ -127,6 +127,17 @@ function processClozeHtml(text: string, showAnswer: boolean): string {
 }
 
 /**
+ * Rewrite relative image/audio src attributes to use the media API endpoint.
+ * Anki cards store media as `<img src="image.jpg">` — we rewrite to `/api/media/image.jpg`.
+ */
+function rewriteMediaUrls(html: string): string {
+	return html.replace(
+		/(<(?:img|audio|source)\b[^>]*\bsrc\s*=\s*["'])(?!https?:\/\/|\/api\/|data:)([^"']+)(["'])/gi,
+		(_match, prefix, filename, suffix) => `${prefix}/api/media/${filename}${suffix}`
+	);
+}
+
+/**
  * Parse card fields and extract front/back as both HTML (display) and plain text (TTS).
  */
 function renderCard(fieldsJson: string, cardType: string): { front: string; back: string; frontHtml: string; backHtml: string } {
@@ -146,8 +157,8 @@ function renderCard(fieldsJson: string, cardType: string): { front: string; back
 		return {
 			front: stripHtml(processCloze(text, false)),
 			back: stripHtml(processCloze(text, true)),
-			frontHtml: processClozeHtml(text, false),
-			backHtml: processClozeHtml(text, true)
+			frontHtml: rewriteMediaUrls(processClozeHtml(text, false)),
+			backHtml: rewriteMediaUrls(processClozeHtml(text, true))
 		};
 	}
 
@@ -157,8 +168,8 @@ function renderCard(fieldsJson: string, cardType: string): { front: string; back
 	return {
 		front: stripHtml(rawFront),
 		back: stripHtml(rawBack),
-		frontHtml: rawFront,
-		backHtml: rawBack
+		frontHtml: rewriteMediaUrls(rawFront),
+		backHtml: rewriteMediaUrls(rawBack)
 	};
 }
 
@@ -386,10 +397,7 @@ export function createReviewEngine(): ReviewEngine {
 			case 'hard':
 			case 'good':
 			case 'easy': {
-				if (phase === 'question') {
-					phase = 'rating';
-					emit({ type: 'phase_change', phase: 'rating' });
-				}
+				if (phase !== 'rating') break;
 				submitRating(command);
 				break;
 			}

@@ -34,22 +34,22 @@ const COMMANDS: CommandDef[] = [
 	{
 		command: 'again',
 		aliases: ['again', 'nochmal'],
-		phases: ['question', 'rating']
+		phases: ['rating']
 	},
 	{
 		command: 'hard',
 		aliases: ['hard', 'difficult', 'schwer', 'schwierig'],
-		phases: ['question', 'rating']
+		phases: ['rating']
 	},
 	{
 		command: 'good',
 		aliases: ['good', 'okay', 'ok', 'gut'],
-		phases: ['question', 'rating']
+		phases: ['rating']
 	},
 	{
 		command: 'easy',
 		aliases: ['easy', 'simple', 'leicht', 'einfach'],
-		phases: ['question', 'rating']
+		phases: ['rating']
 	},
 	{
 		command: 'explain',
@@ -75,7 +75,18 @@ const COMMANDS: CommandDef[] = [
 ];
 
 /**
+ * Check if a multi-word alias appears as whole words in the transcript.
+ */
+function containsWholePhrase(text: string, phrase: string): boolean {
+	const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	const re = new RegExp(`(?:^|\\s)${escaped}(?:\\s|$)`);
+	return re.test(text);
+}
+
+/**
  * Match a transcript to a voice command, respecting the current review phase.
+ *
+ * Uses whole-word matching to avoid false positives (e.g. "gut" inside "argument").
  *
  * Handles the "again" collision:
  * - "say again" / "again please" → repeat
@@ -91,7 +102,7 @@ export function matchCommand(transcript: string, phase: ReviewPhase): VoiceComma
 	for (const alias of repeatDef.aliases) {
 		if (alias === 'repeat' && normalized === 'repeat') {
 			if (repeatDef.phases.includes(phase)) return 'repeat';
-		} else if (alias !== 'repeat' && normalized.includes(alias)) {
+		} else if (alias !== 'repeat' && containsWholePhrase(normalized, alias)) {
 			if (repeatDef.phases.includes(phase)) return 'repeat';
 		}
 	}
@@ -102,7 +113,9 @@ export function matchCommand(transcript: string, phase: ReviewPhase): VoiceComma
 		if (!def.phases.includes(phase)) continue;
 
 		for (const alias of def.aliases) {
-			if (normalized === alias || normalized.includes(alias)) {
+			// Multi-word aliases: check as whole phrase
+			// Single-word aliases: exact match or whole-word within transcript
+			if (normalized === alias || containsWholePhrase(normalized, alias)) {
 				return def.command;
 			}
 		}

@@ -160,16 +160,16 @@
 				if (phase === 'question') engine.executeCommand('answer');
 				break;
 			case '1':
-				engine.executeCommand('again');
+				if (phase === 'rating') engine.executeCommand('again');
 				break;
 			case '2':
-				engine.executeCommand('hard');
+				if (phase === 'rating') engine.executeCommand('hard');
 				break;
 			case '3':
-				engine.executeCommand('good');
+				if (phase === 'rating') engine.executeCommand('good');
 				break;
 			case '4':
-				engine.executeCommand('easy');
+				if (phase === 'rating') engine.executeCommand('easy');
 				break;
 			case 'e':
 				if (phase === 'rating') engine.executeCommand('explain');
@@ -703,13 +703,14 @@
 	.card-area {
 		position: fixed;
 		top: 48px;
-		bottom: 120px;
+		bottom: 0;
 		left: 0;
 		right: 0;
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		justify-content: center;
 		padding: 1.5rem;
+		padding-bottom: 140px;
 		overflow-y: auto;
 	}
 
