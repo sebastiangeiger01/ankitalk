@@ -146,6 +146,8 @@
 		if (prefetchedCards && !options.tags && !options.mode) {
 			options.prefetchedCards = prefetchedCards;
 		}
+		// Set STT language to match UI locale for accurate voice command recognition
+		options.sttLanguage = loc;
 		await engine.start(deckId!, options);
 	}
 

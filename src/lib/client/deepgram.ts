@@ -14,7 +14,12 @@ export interface DeepgramClient {
  * Create a Deepgram STT client that connects to Deepgram's WebSocket API
  * via a short-lived token obtained from our server.
  */
-export function createDeepgramClient(): DeepgramClient {
+export interface DeepgramOptions {
+	/** Deepgram language code (e.g. 'en', 'de', 'multi'). Default: 'multi'. */
+	language?: string;
+}
+
+export function createDeepgramClient(options?: DeepgramOptions): DeepgramClient {
 	let socket: WebSocket | null = null;
 	let mediaRecorder: MediaRecorder | null = null;
 	let stream: MediaStream | null = null;
@@ -40,9 +45,10 @@ export function createDeepgramClient(): DeepgramClient {
 
 		// 3. Connect to Deepgram WebSocket
 		// JWT access tokens use "bearer" scheme (not "token" which is for API keys)
+		const lang = options?.language ?? 'multi';
 		const params: Record<string, string> = {
 			model: 'nova-3',
-			language: 'multi',
+			language: lang,
 			smart_format: 'true',
 			interim_results: 'true',
 			endpointing: '300'

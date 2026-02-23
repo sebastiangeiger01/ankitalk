@@ -92,6 +92,8 @@ export interface StartOptions {
 	mode?: 'cram';
 	cramState?: 'new' | 'learning' | 'review';
 	prefetchedCards?: PrefetchedCards;
+	/** Language code for STT (e.g. 'en', 'de'). Defaults to 'multi'. */
+	sttLanguage?: string;
 }
 
 export interface ReviewEngine {
@@ -626,7 +628,7 @@ export function createReviewEngine(): ReviewEngine {
 		await unlockAudio();
 
 		// 2. Fetch cards + start Deepgram in parallel (both are independent)
-		deepgram = createDeepgramClient();
+		deepgram = createDeepgramClient({ language: options?.sttLanguage });
 		deepgram.onTranscript((transcript, isFinal) => {
 			emit({ type: 'transcript', text: transcript, isFinal });
 
