@@ -53,17 +53,17 @@ export const de: Record<string, string> = {
 	'review.hideHelp': 'Sprachbefehle & Tastenkombinationen ausblenden',
 
 	// Review - Help commands
-	'help.answer': 'answer / show',
+	'help.answer': 'antwort / zeig',
 	'help.answerDesc': 'Antwort anzeigen',
-	'help.hint': 'hint',
+	'help.hint': 'hinweis / tipp',
 	'help.hintDesc': 'Erste W\u00f6rter h\u00f6ren',
-	'help.ratings': 'again / hard / good / easy',
+	'help.ratings': 'nochmal / schwer / gut / einfach',
 	'help.ratingsDesc': 'Bewerten',
-	'help.repeat': 'repeat',
+	'help.repeat': 'wiederholen / nochmal bitte',
 	'help.repeatDesc': 'Nochmal h\u00f6ren',
-	'help.explain': 'explain',
+	'help.explain': 'erkl\u00e4r / warum',
 	'help.explainDesc': 'KI-Erkl\u00e4rung anfordern',
-	'help.stop': 'stop',
+	'help.stop': 'stopp / aufh\u00f6ren',
 	'help.stopDesc': 'Sitzung beenden',
 
 	// Review - Active session
