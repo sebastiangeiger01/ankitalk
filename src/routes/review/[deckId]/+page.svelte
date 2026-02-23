@@ -2,6 +2,7 @@
 	import { page } from '$app/stores';
 	import { onDestroy, onMount } from 'svelte';
 	import { createReviewEngine, type ReviewEvent, type SessionStats, type StartOptions, type IntervalLabels, type QueueCounts } from '$lib/client/review-engine';
+	import { preloadTTS } from '$lib/client/audio';
 	import { locale, t } from '$lib/i18n';
 	import type { ReviewPhase } from '$lib/types';
 
@@ -192,11 +193,37 @@
 		}
 	}
 
-	// Fetch deck name on mount for the start screen
+	// Fetch deck name and preload first card's TTS on mount
 	$effect(() => {
 		fetch(`/api/decks/${deckId}`)
 			.then((r) => r.json())
 			.then((data) => { deckName = (data as { deck: { name: string } }).deck.name; })
+			.catch(() => {});
+
+		// Peek at first due card and preload its TTS
+		fetch(`/api/cards/next?${new URLSearchParams({ deckId: deckId!, limit: '1' })}`)
+			.then((r) => r.ok ? r.json() : null)
+			.then((data) => {
+				if (!data) return;
+				const cards = (data as { cards: { fields: string; card_type: string }[] }).cards;
+				if (!cards?.length) return;
+				const card = cards[0];
+				try {
+					const fields = JSON.parse(card.fields) as { value: string }[];
+					if (!fields.length) return;
+					let text: string;
+					if (card.card_type === 'cloze') {
+						text = fields[0].value.replace(/\{\{c\d+::(.*?)(?:::(.*?))?\}\}/g, (_m, _a, hint) => hint || 'blank');
+					} else {
+						text = fields[0].value;
+					}
+					// Strip HTML to get plain text for TTS
+					const div = document.createElement('div');
+					div.innerHTML = text;
+					const plain = div.textContent ?? '';
+					if (plain) preloadTTS(plain);
+				} catch { /* ignore parse errors */ }
+			})
 			.catch(() => {});
 	});
 
