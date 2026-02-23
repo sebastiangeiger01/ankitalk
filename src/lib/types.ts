@@ -53,6 +53,7 @@ export interface Card {
 	fsrs_reps: number;
 	fsrs_lapses: number;
 	fsrs_last_review: string | null;
+	learning_step_index: number;
 	buried_until: string | null;
 	suspended: number;
 	created_at: string;

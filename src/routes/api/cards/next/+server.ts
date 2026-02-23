@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { getDb } from '$lib/server/db';
 import { fsrs, createEmptyCard, Rating, State } from 'ts-fsrs';
 import type { Card as FSRSCard } from 'ts-fsrs';
+import { parseSteps, hardDelayMinutes } from '$lib/fsrs';
 import type { RequestHandler } from './$types';
 
 /**
@@ -23,6 +24,14 @@ function formatInterval(scheduledDays: number, dueDate: Date, now: Date): string
 	}
 	const years = diffDays / 365;
 	return years >= 10 ? `${Math.round(years)}y` : `${years.toFixed(1).replace(/\.0$/, '')}y`;
+}
+
+function formatMinutes(minutes: number): string {
+	if (minutes < 60) return `${Math.round(minutes)}m`;
+	const hours = minutes / 60;
+	if (hours < 24) return `${Math.round(hours)}h`;
+	const days = hours / 24;
+	return `${Math.round(days)}d`;
 }
 
 /**
@@ -47,17 +56,63 @@ function rowToFsrsCard(row: Record<string, unknown>): FSRSCard {
 }
 
 /**
- * Compute preview intervals for all 4 ratings on a card.
+ * Compute preview intervals for all 4 ratings on a card,
+ * using traditional learning steps for New/Learning/Relearning states.
  */
 function computeIntervals(
 	row: Record<string, unknown>,
 	scheduler: ReturnType<typeof fsrs>,
-	now: Date
+	now: Date,
+	learningSteps: number[],
+	relearningSteps: number[]
 ): { again: string; hard: string; good: string; easy: string } {
+	const state = ((row.fsrs_state as number) ?? 0) as State;
+	const stepIndex = (row.learning_step_index as number) ?? 0;
+
+	// For New/Learning: show learning step intervals
+	if ((state === State.New || state === State.Learning) && learningSteps.length > 0) {
+		const fsrsCard = rowToFsrsCard(row);
+		const fsrsGood = scheduler.repeat(fsrsCard, now)[Rating.Good];
+		const fsrsEasy = scheduler.repeat(fsrsCard, now)[Rating.Easy];
+
+		const againInterval = formatMinutes(learningSteps[0]);
+		const hardInterval = formatMinutes(hardDelayMinutes(learningSteps, stepIndex));
+		const nextStep = stepIndex + 1;
+		const goodInterval = nextStep >= learningSteps.length
+			? formatInterval(fsrsGood.card.scheduled_days, fsrsGood.card.due, now)
+			: formatMinutes(learningSteps[nextStep]);
+		const easyInterval = formatInterval(fsrsEasy.card.scheduled_days, fsrsEasy.card.due, now);
+
+		return { again: againInterval, hard: hardInterval, good: goodInterval, easy: easyInterval };
+	}
+
+	// For Relearning: show relearning step intervals
+	if (state === State.Relearning && relearningSteps.length > 0) {
+		const fsrsCard = rowToFsrsCard(row);
+		const fsrsGood = scheduler.repeat(fsrsCard, now)[Rating.Good];
+		const fsrsEasy = scheduler.repeat(fsrsCard, now)[Rating.Easy];
+
+		const againInterval = formatMinutes(relearningSteps[0]);
+		const hardInterval = formatMinutes(hardDelayMinutes(relearningSteps, stepIndex));
+		const nextStep = stepIndex + 1;
+		const goodInterval = nextStep >= relearningSteps.length
+			? formatInterval(fsrsGood.card.scheduled_days, fsrsGood.card.due, now)
+			: formatMinutes(relearningSteps[nextStep]);
+		const easyInterval = formatInterval(fsrsEasy.card.scheduled_days, fsrsEasy.card.due, now);
+
+		return { again: againInterval, hard: hardInterval, good: goodInterval, easy: easyInterval };
+	}
+
+	// Review state: pure FSRS, but Again enters relearning
 	const fsrsCard = rowToFsrsCard(row);
 	const result = scheduler.repeat(fsrsCard, now);
+
+	const againInterval = relearningSteps.length > 0
+		? formatMinutes(relearningSteps[0])
+		: formatInterval(result[Rating.Again].card.scheduled_days, result[Rating.Again].card.due, now);
+
 	return {
-		again: formatInterval(result[Rating.Again].card.scheduled_days, result[Rating.Again].card.due, now),
+		again: againInterval,
 		hard: formatInterval(result[Rating.Hard].card.scheduled_days, result[Rating.Hard].card.due, now),
 		good: formatInterval(result[Rating.Good].card.scheduled_days, result[Rating.Good].card.due, now),
 		easy: formatInterval(result[Rating.Easy].card.scheduled_days, result[Rating.Easy].card.due, now)
@@ -113,6 +168,20 @@ export const GET: RequestHandler = async ({ url, platform, locals }) => {
 
 	const now = new Date().toISOString();
 
+	// Load deck settings for FSRS scheduler + learning steps
+	const fsrsSettings = await db
+		.prepare('SELECT desired_retention, max_interval, learning_steps, relearning_steps FROM deck_settings WHERE deck_id = ?')
+		.bind(deckId)
+		.first<{ desired_retention: number; max_interval: number; learning_steps: string; relearning_steps: string }>();
+
+	const scheduler = fsrs({
+		request_retention: fsrsSettings?.desired_retention ?? 0.9,
+		maximum_interval: fsrsSettings?.max_interval ?? 36500
+	});
+	const learningSteps = parseSteps(fsrsSettings?.learning_steps ?? '1,10');
+	const relearningSteps = parseSteps(fsrsSettings?.relearning_steps ?? '10');
+	const intervalNow = new Date();
+
 	// Cram mode: skip daily limits, ignore due_at filter, different ordering
 	if (mode === 'cram') {
 		let stateClause = '';
@@ -140,11 +209,9 @@ export const GET: RequestHandler = async ({ url, platform, locals }) => {
 			.bind(deckId, locals.userId, now, ...stateBinds, ...tagBinds, limit)
 			.all();
 
-		const scheduler = fsrs({ request_retention: 0.9, maximum_interval: 36500 });
-		const cramNow = new Date();
 		const cramCards = (cards.results as Record<string, unknown>[]).map((c) => ({
 			...c,
-			intervals: computeIntervals(c, scheduler, cramNow)
+			intervals: computeIntervals(c, scheduler, intervalNow, learningSteps, relearningSteps)
 		}));
 		return json({ cards: cramCards, deckName: deck.name, mode: 'cram' });
 	}
@@ -248,18 +315,6 @@ export const GET: RequestHandler = async ({ url, platform, locals }) => {
 		)
 		.all();
 
-	// Load deck settings for FSRS scheduler
-	const fsrsSettings = await db
-		.prepare('SELECT desired_retention, max_interval FROM deck_settings WHERE deck_id = ?')
-		.bind(deckId)
-		.first<{ desired_retention: number; max_interval: number }>();
-
-	const scheduler = fsrs({
-		request_retention: fsrsSettings?.desired_retention ?? 0.9,
-		maximum_interval: fsrsSettings?.max_interval ?? 36500
-	});
-	const intervalNow = new Date();
-
 	const rawCards = cards.results as Record<string, unknown>[];
 
 	// Compute queue counts for the top bar (new / learning / review)
@@ -275,7 +330,7 @@ export const GET: RequestHandler = async ({ url, platform, locals }) => {
 
 	const results = rawCards.map((c) => ({
 		...c,
-		intervals: computeIntervals(c, scheduler, intervalNow)
+		intervals: computeIntervals(c, scheduler, intervalNow, learningSteps, relearningSteps)
 	}));
 
 	return json({

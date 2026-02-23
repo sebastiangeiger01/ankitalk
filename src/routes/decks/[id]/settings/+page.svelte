@@ -14,6 +14,8 @@
 	let desiredRetention = $state(0.9);
 	let maxInterval = $state(36500);
 	let leechThreshold = $state(8);
+	let learningSteps = $state('1,10');
+	let relearningSteps = $state('10');
 
 	let loc = $state('en');
 	locale.subscribe((v) => { loc = v; });
@@ -31,13 +33,15 @@
 			}
 
 			if (settingsRes.ok) {
-				const data = (await settingsRes.json()) as { settings: Record<string, number> };
+				const data = (await settingsRes.json()) as { settings: Record<string, number | string> };
 				const s = data.settings;
-				newCardsPerDay = s.new_cards_per_day;
-				maxReviewsPerDay = s.max_reviews_per_day;
-				desiredRetention = s.desired_retention;
-				maxInterval = s.max_interval;
-				leechThreshold = s.leech_threshold;
+				newCardsPerDay = s.new_cards_per_day as number;
+				maxReviewsPerDay = s.max_reviews_per_day as number;
+				desiredRetention = s.desired_retention as number;
+				maxInterval = s.max_interval as number;
+				leechThreshold = s.leech_threshold as number;
+				learningSteps = (s.learning_steps as string) ?? '1,10';
+				relearningSteps = (s.relearning_steps as string) ?? '10';
 			}
 		} catch {
 			saveStatus = t('settings.loadFailed');
@@ -58,7 +62,9 @@
 					max_reviews_per_day: maxReviewsPerDay,
 					desired_retention: desiredRetention,
 					max_interval: maxInterval,
-					leech_threshold: leechThreshold
+					leech_threshold: leechThreshold,
+				learning_steps: learningSteps,
+				relearning_steps: relearningSteps
 				})
 			});
 
@@ -72,6 +78,28 @@
 			saveStatus = t('settings.saveFailed');
 		}
 		saving = false;
+	}
+
+	let resetting = $state(false);
+
+	async function resetProgress() {
+		if (!confirm(t('settings.resetConfirm', { name: deckName }))) return;
+
+		resetting = true;
+		try {
+			const res = await fetch(`/api/decks/${deckId}`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ action: 'reset' })
+			});
+			if (res.ok) {
+				saveStatus = t('settings.resetDone');
+				setTimeout(() => { saveStatus = ''; }, 3000);
+			}
+		} catch {
+			saveStatus = t('settings.saveFailed');
+		}
+		resetting = false;
 	}
 
 	$effect(() => {
@@ -116,6 +144,18 @@
 				<span class="helper">{t('settings.leechHelper')}</span>
 			</div>
 
+			<div class="field">
+				<label for="learningSteps">{t('settings.learningSteps')}</label>
+				<input id="learningSteps" type="text" bind:value={learningSteps} placeholder="1, 10" />
+				<span class="helper">{t('settings.learningStepsHelper')}</span>
+			</div>
+
+			<div class="field">
+				<label for="relearningSteps">{t('settings.relearningSteps')}</label>
+				<input id="relearningSteps" type="text" bind:value={relearningSteps} placeholder="10" />
+				<span class="helper">{t('settings.relearningStepsHelper')}</span>
+			</div>
+
 			<button type="submit" class="save-btn" disabled={saving}>
 				{saving ? t('settings.saving') : t('settings.save')}
 			</button>
@@ -124,6 +164,19 @@
 				<span class="save-status" class:success={saveStatus === t('settings.saved')} class:error={saveStatus !== t('settings.saved')}>{saveStatus}</span>
 			{/if}
 		</form>
+
+		<div class="danger-zone">
+			<h2>{t('settings.dangerZone')}</h2>
+			<div class="danger-item">
+				<div>
+					<strong>{t('settings.resetTitle')}</strong>
+					<p class="helper">{t('settings.resetHelper')}</p>
+				</div>
+				<button class="reset-btn" disabled={resetting} onclick={resetProgress}>
+					{resetting ? t('common.loading') : t('settings.resetButton')}
+				</button>
+			</div>
+		</div>
 	{/if}
 </div>
 
@@ -171,7 +224,8 @@
 		color: #b0b0d0;
 	}
 
-	input[type="number"] {
+	input[type="number"],
+	input[type="text"] {
 		padding: 0.5rem 0.75rem;
 		background: #22223a;
 		border: 1px solid #3a3a5e;
@@ -181,7 +235,12 @@
 		width: 120px;
 	}
 
-	input[type="number"]:focus {
+	input[type="text"] {
+		width: 200px;
+	}
+
+	input[type="number"]:focus,
+	input[type="text"]:focus {
 		outline: none;
 		border-color: #5a5a8e;
 	}
@@ -227,5 +286,48 @@
 
 	.save-status.error {
 		color: #ff6666;
+	}
+
+	.danger-zone {
+		margin-top: 3rem;
+		padding-top: 1.5rem;
+		border-top: 1px solid #3a2020;
+	}
+
+	.danger-zone h2 {
+		font-size: 1rem;
+		color: #ff6666;
+		margin: 0 0 1rem;
+	}
+
+	.danger-item {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+	}
+
+	.danger-item p {
+		margin: 0.25rem 0 0;
+	}
+
+	.reset-btn {
+		padding: 0.5rem 1.2rem;
+		background: transparent;
+		color: #ff6666;
+		border: 1px solid #ff6666;
+		border-radius: 8px;
+		font-size: 0.9rem;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+
+	.reset-btn:hover {
+		background: #3a1515;
+	}
+
+	.reset-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 </style>

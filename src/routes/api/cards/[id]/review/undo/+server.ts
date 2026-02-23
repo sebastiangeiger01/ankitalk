@@ -12,7 +12,7 @@ export const POST: RequestHandler = async ({ params, platform, locals }) => {
 		.prepare(
 			`SELECT id, prev_due_at, prev_fsrs_state, prev_fsrs_stability, prev_fsrs_difficulty,
 				prev_fsrs_elapsed_days, prev_fsrs_scheduled_days, prev_fsrs_reps, prev_fsrs_lapses,
-				prev_fsrs_last_review
+				prev_fsrs_last_review, prev_learning_step_index
 			FROM reviews
 			WHERE card_id = ? AND user_id = ? AND prev_fsrs_state IS NOT NULL
 			ORDER BY created_at DESC
@@ -30,6 +30,7 @@ export const POST: RequestHandler = async ({ params, platform, locals }) => {
 			prev_fsrs_reps: number;
 			prev_fsrs_lapses: number;
 			prev_fsrs_last_review: string | null;
+			prev_learning_step_index: number | null;
 		}>();
 
 	if (!review) throw error(404, 'No undoable review found');
@@ -49,6 +50,7 @@ export const POST: RequestHandler = async ({ params, platform, locals }) => {
 					fsrs_reps = ?,
 					fsrs_lapses = ?,
 					fsrs_last_review = ?,
+					learning_step_index = ?,
 					suspended = 0,
 					updated_at = datetime('now')
 				WHERE id = ? AND user_id = ?`
@@ -63,6 +65,7 @@ export const POST: RequestHandler = async ({ params, platform, locals }) => {
 				review.prev_fsrs_reps,
 				review.prev_fsrs_lapses,
 				review.prev_fsrs_last_review,
+				review.prev_learning_step_index ?? 0,
 				params.id,
 				locals.userId
 			)
