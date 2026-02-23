@@ -11,7 +11,7 @@
 		mounted = true;
 
 		const cleanup = hanko.onSessionCreated(() => {
-			goto('/');
+			window.location.href = '/';
 		});
 
 		return cleanup;
@@ -44,7 +44,7 @@
 	}
 
 	.subtitle {
-		color: #888;
+		color: #a8a8b8;
 		margin-bottom: 2rem;
 	}
 </style>
