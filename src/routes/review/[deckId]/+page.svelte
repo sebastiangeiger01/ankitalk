@@ -601,6 +601,10 @@
 		opacity: 0.7;
 	}
 
+	@media (hover: none), (max-width: 640px) {
+		kbd { display: none; }
+	}
+
 	.undo-btn {
 		padding: 0.35rem 1rem;
 		background: #3a2a10;
