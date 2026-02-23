@@ -618,22 +618,56 @@ export function createReviewEngine(): ReviewEngine {
 		// 1. Unlock audio for iOS
 		await unlockAudio();
 
-		// 2. Fetch due cards
+		// 2. Fetch cards + start Deepgram in parallel (both are independent)
 		const params = new URLSearchParams({ deckId, limit: '50' });
 		if (options?.tags) params.set('tags', options.tags);
 		if (options?.mode) params.set('mode', options.mode);
 		if (options?.cramState) params.set('cramState', options.cramState);
-		const res = await fetch(`/api/cards/next?${params}`);
-		if (!res.ok) {
+
+		deepgram = createDeepgramClient();
+		deepgram.onTranscript((transcript, isFinal) => {
+			emit({ type: 'transcript', text: transcript, isFinal });
+
+			if (isFinal) {
+				const command = matchCommand(transcript, phase);
+				if (command) {
+					handleCommand(command);
+				}
+			}
+		});
+		deepgram.onError((err) => {
+			emit({ type: 'error', message: err.message });
+		});
+
+		const [cardsResult, deepgramResult] = await Promise.allSettled([
+			fetch(`/api/cards/next?${params}`).then(async (res) => {
+				if (!res.ok) throw new Error('Failed to fetch cards');
+				return (await res.json()) as {
+					cards: Record<string, unknown>[];
+					deckName: string;
+					counts?: QueueCounts;
+				};
+			}),
+			deepgram.start()
+		]);
+
+		// Handle Deepgram failure
+		if (deepgramResult.status === 'rejected') {
+			const err = deepgramResult.reason;
+			emit({
+				type: 'error',
+				message: `Microphone error: ${err instanceof Error ? err.message : 'Unknown'}`
+			});
+			return;
+		}
+
+		// Handle cards failure
+		if (cardsResult.status === 'rejected') {
 			emit({ type: 'error', message: 'Failed to fetch cards' });
 			return;
 		}
 
-		const data = (await res.json()) as {
-			cards: Record<string, unknown>[];
-			deckName: string;
-			counts?: QueueCounts;
-		};
+		const data = cardsResult.value;
 		if (data.deckName) {
 			emit({ type: 'deck_info', name: data.deckName });
 		}
@@ -670,33 +704,7 @@ export function createReviewEngine(): ReviewEngine {
 		currentCard = null;
 		cardsReviewedCount = 0;
 
-		// 3. Start Deepgram STT
-		deepgram = createDeepgramClient();
-		deepgram.onTranscript((transcript, isFinal) => {
-			emit({ type: 'transcript', text: transcript, isFinal });
-
-			if (isFinal) {
-				const command = matchCommand(transcript, phase);
-				if (command) {
-					handleCommand(command);
-				}
-			}
-		});
-		deepgram.onError((err) => {
-			emit({ type: 'error', message: err.message });
-		});
-
-		try {
-			await deepgram.start();
-		} catch (err) {
-			emit({
-				type: 'error',
-				message: `Microphone error: ${err instanceof Error ? err.message : 'Unknown'}`
-			});
-			return;
-		}
-
-		// 4. Present first card
+		// 3. Present first card immediately (Deepgram is already running)
 		presentCard();
 	}
 
