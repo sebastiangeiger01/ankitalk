@@ -120,6 +120,10 @@ export const de: Record<string, string> = {
 	'settings.resetButton': 'Zur\u00fccksetzen',
 	'settings.resetConfirm': 'Gesamten Fortschritt f\u00fcr "{name}" zur\u00fccksetzen? Dies kann nicht r\u00fcckg\u00e4ngig gemacht werden.',
 	'settings.resetDone': 'Fortschritt zur\u00fcckgesetzt',
+	'settings.deleteTitle': 'Stapel l\u00f6schen',
+	'settings.deleteHelper': 'Diesen Stapel und alle Karten dauerhaft l\u00f6schen.',
+	'settings.deleteButton': 'Stapel l\u00f6schen',
+	'settings.deleteConfirm': '"{name}" und alle Karten l\u00f6schen? Dies kann nicht r\u00fcckg\u00e4ngig gemacht werden.',
 
 	// App Settings
 	'appSettings.title': 'App-Einstellungen',

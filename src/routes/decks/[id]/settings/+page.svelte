@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 	import { locale, t } from '$lib/i18n';
 
 	const deckId = $derived($page.params.id);
@@ -81,6 +82,22 @@
 	}
 
 	let resetting = $state(false);
+	let deleting = $state(false);
+
+	async function deleteDeck() {
+		if (!confirm(t('settings.deleteConfirm', { name: deckName }))) return;
+
+		deleting = true;
+		try {
+			const res = await fetch(`/api/decks/${deckId}`, { method: 'DELETE' });
+			if (res.ok) {
+				goto('/');
+			}
+		} catch {
+			saveStatus = t('settings.saveFailed');
+		}
+		deleting = false;
+	}
 
 	async function resetProgress() {
 		if (!confirm(t('settings.resetConfirm', { name: deckName }))) return;
@@ -174,6 +191,15 @@
 				</div>
 				<button class="reset-btn" disabled={resetting} onclick={resetProgress}>
 					{resetting ? t('common.loading') : t('settings.resetButton')}
+				</button>
+			</div>
+			<div class="danger-item">
+				<div>
+					<strong>{t('settings.deleteTitle')}</strong>
+					<p class="helper">{t('settings.deleteHelper')}</p>
+				</div>
+				<button class="reset-btn" disabled={deleting} onclick={deleteDeck}>
+					{deleting ? t('common.loading') : t('settings.deleteButton')}
 				</button>
 			</div>
 		</div>

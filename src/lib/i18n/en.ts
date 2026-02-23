@@ -120,6 +120,10 @@ export const en: Record<string, string> = {
 	'settings.resetButton': 'Reset Progress',
 	'settings.resetConfirm': 'Reset all progress for "{name}"? This cannot be undone.',
 	'settings.resetDone': 'Progress reset',
+	'settings.deleteTitle': 'Delete deck',
+	'settings.deleteHelper': 'Permanently delete this deck and all its cards.',
+	'settings.deleteButton': 'Delete Deck',
+	'settings.deleteConfirm': 'Delete "{name}" and all its cards? This cannot be undone.',
 
 	// App Settings
 	'appSettings.title': 'App Settings',

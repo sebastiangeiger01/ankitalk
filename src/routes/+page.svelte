@@ -94,15 +94,6 @@
 		}
 	}
 
-	async function deleteDeck(deckId: string, deckName: string) {
-		if (!confirm(t('dashboard.deleteConfirm', { name: deckName }))) return;
-
-		const res = await fetch(`/api/decks/${deckId}`, { method: 'DELETE' });
-		if (res.ok) {
-			await loadDecks();
-		}
-	}
-
 	// Load decks on mount
 	$effect(() => {
 		loadDecks();
@@ -161,7 +152,6 @@
 					</button>
 					<a href="/decks/{deck.id}/settings" class="deck-action-btn" aria-label="{t('dashboard.settings')} {deck.name}" title={t('dashboard.settings')}>⚙️</a>
 					<a href="/decks/{deck.id}/stats" class="deck-action-btn" aria-label="{t('dashboard.stats')} {deck.name}" title={t('dashboard.stats')}>📊</a>
-					<button class="deck-action-btn delete" aria-label="{t('dashboard.delete')} {deck.name}" title={t('dashboard.delete')} onclick={() => deleteDeck(deck.id, deck.name)}>🗑️</button>
 				</div>
 			</li>
 		{/each}
@@ -339,7 +329,4 @@
 		cursor: not-allowed;
 	}
 
-	.deck-action-btn.delete:hover {
-		background: #3a1515;
-	}
 </style>
