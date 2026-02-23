@@ -130,9 +130,17 @@ export function createDeepgramClient(): DeepgramClient {
 		if (mediaRecorder && mediaRecorder.state === 'recording') {
 			mediaRecorder.pause();
 		}
+		// Disable audio tracks to remove browser mic indicator
+		if (stream) {
+			stream.getAudioTracks().forEach((track) => { track.enabled = false; });
+		}
 	}
 
 	function resume() {
+		// Re-enable audio tracks
+		if (stream) {
+			stream.getAudioTracks().forEach((track) => { track.enabled = true; });
+		}
 		if (mediaRecorder && mediaRecorder.state === 'paused') {
 			mediaRecorder.resume();
 		}

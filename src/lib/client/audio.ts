@@ -1,6 +1,7 @@
 let audioContext: AudioContext | null = null;
 let currentSource: AudioBufferSourceNode | null = null;
 let lastSpokenText: string = '';
+let currentAbort: AbortController | null = null;
 
 /**
  * Unlock AudioContext on iOS (must be called from a user gesture handler).
@@ -38,6 +39,13 @@ export async function speak(text: string, voice?: string, speed?: number): Promi
 
 	lastSpokenText = text;
 
+	// Abort any in-flight TTS fetch
+	if (currentAbort) {
+		currentAbort.abort();
+	}
+	const abort = new AbortController();
+	currentAbort = abort;
+
 	const params: Record<string, string> = { text };
 	if (voice) params.voice = voice;
 	if (speed) params.speed = String(speed);
@@ -45,15 +53,22 @@ export async function speak(text: string, voice?: string, speed?: number): Promi
 	const response = await fetch('/api/tts', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(params)
+		body: JSON.stringify(params),
+		signal: abort.signal
 	});
 
 	if (!response.ok) {
 		throw new Error(`TTS failed: ${response.status}`);
 	}
 
+	// Check if cancelled during fetch
+	if (abort.signal.aborted) return;
+
 	const arrayBuffer = await response.arrayBuffer();
 	const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+	// Check if cancelled during decode
+	if (abort.signal.aborted) return;
 
 	return new Promise<void>((resolve, reject) => {
 		const source = audioContext!.createBufferSource();
@@ -79,6 +94,12 @@ export async function speak(text: string, voice?: string, speed?: number): Promi
  * Stop the currently playing audio source.
  */
 export function stopPlayback(): void {
+	// Abort any in-flight TTS fetch
+	if (currentAbort) {
+		currentAbort.abort();
+		currentAbort = null;
+	}
+
 	if (currentSource) {
 		try {
 			currentSource.stop();

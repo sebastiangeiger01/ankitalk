@@ -107,6 +107,7 @@ export function createReviewEngine(): ReviewEngine {
 	let audioOn = true;
 	let micOn = true;
 	let isSpeaking = false;
+	let speakGen = 0;
 	let undoInfo: { index: number; rating: RatingName; cardId: string } | null = null;
 	let undoTimer: ReturnType<typeof setTimeout> | null = null;
 	const stats: SessionStats = {
@@ -124,6 +125,9 @@ export function createReviewEngine(): ReviewEngine {
 	 * Returns immediately. Any command execution will interrupt via stopPlayback().
 	 */
 	function speakText(text: string) {
+		speakGen++;
+		const gen = speakGen;
+
 		if (!audioOn) {
 			// Audio muted — skip TTS, stay in listening state
 			if (micOn) emit({ type: 'listening' });
@@ -135,22 +139,25 @@ export function createReviewEngine(): ReviewEngine {
 		emit({ type: 'speaking' });
 
 		speak(text)
-			.then(() => playSound('/listen.mp3').catch(() => {}))
+			.then(() => {
+				if (gen === speakGen) playSound('/listen.mp3').catch(() => {});
+			})
 			.catch(() => {})
 			.finally(() => {
-				isSpeaking = false;
-				if (!destroyed) {
-					if (micOn) emit({ type: 'listening' });
-					else emit({ type: 'idle' });
+				if (gen === speakGen) {
+					isSpeaking = false;
+					if (!destroyed) {
+						if (micOn) emit({ type: 'listening' });
+						else emit({ type: 'idle' });
+					}
 				}
 			});
 	}
 
 	function interruptTTS() {
-		if (isSpeaking) {
-			stopPlayback();
-			isSpeaking = false;
-		}
+		speakGen++; // Invalidate any in-flight speech callbacks
+		stopPlayback();
+		isSpeaking = false;
 	}
 
 	function presentCard() {
