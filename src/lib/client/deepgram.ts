@@ -20,6 +20,8 @@ export function createDeepgramClient(): DeepgramClient {
 	let stream: MediaStream | null = null;
 	let transcriptCb: TranscriptCallback | null = null;
 	let errorCb: ErrorCallback | null = null;
+	let paused = false;
+	let keepAliveInterval: ReturnType<typeof setInterval> | null = null;
 
 	async function start() {
 		// 1. Get short-lived token from our server
@@ -99,6 +101,8 @@ export function createDeepgramClient(): DeepgramClient {
 		};
 
 		socket.onclose = (event) => {
+			// Suppress timeout errors when mic is intentionally paused
+			if (paused) return;
 			if (event.code !== 1000 && event.code !== 1005) {
 				errorCb?.(new Error(`Deepgram connection closed: ${event.code} ${event.reason}`));
 			}
@@ -106,6 +110,14 @@ export function createDeepgramClient(): DeepgramClient {
 	}
 
 	function stop() {
+		paused = false;
+
+		// Clear keepalive
+		if (keepAliveInterval) {
+			clearInterval(keepAliveInterval);
+			keepAliveInterval = null;
+		}
+
 		// Stop MediaRecorder
 		if (mediaRecorder && mediaRecorder.state !== 'inactive') {
 			mediaRecorder.stop();
@@ -119,7 +131,7 @@ export function createDeepgramClient(): DeepgramClient {
 		}
 		socket = null;
 
-		// Stop all audio tracks
+		// Stop all audio tracks (removes browser mic indicator)
 		if (stream) {
 			stream.getTracks().forEach((track) => track.stop());
 		}
@@ -127,22 +139,58 @@ export function createDeepgramClient(): DeepgramClient {
 	}
 
 	function pause() {
-		if (mediaRecorder && mediaRecorder.state === 'recording') {
-			mediaRecorder.pause();
+		paused = true;
+
+		// Stop the MediaRecorder entirely (not just pause) so the browser
+		// releases the mic indicator on Safari
+		if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+			mediaRecorder.stop();
 		}
-		// Disable audio tracks to remove browser mic indicator
+
+		// Disable audio tracks to ensure browser drops mic indicator
 		if (stream) {
 			stream.getAudioTracks().forEach((track) => { track.enabled = false; });
+		}
+
+		// Send KeepAlive messages to Deepgram to prevent timeout while paused
+		if (!keepAliveInterval) {
+			keepAliveInterval = setInterval(() => {
+				if (socket?.readyState === WebSocket.OPEN) {
+					socket.send(JSON.stringify({ type: 'KeepAlive' }));
+				}
+			}, 8000);
 		}
 	}
 
 	function resume() {
+		paused = false;
+
+		// Stop keepalive
+		if (keepAliveInterval) {
+			clearInterval(keepAliveInterval);
+			keepAliveInterval = null;
+		}
+
 		// Re-enable audio tracks
 		if (stream) {
 			stream.getAudioTracks().forEach((track) => { track.enabled = true; });
 		}
-		if (mediaRecorder && mediaRecorder.state === 'paused') {
-			mediaRecorder.resume();
+
+		// Restart MediaRecorder (since we fully stopped it on pause)
+		if (stream && socket?.readyState === WebSocket.OPEN) {
+			const mimeType = MediaRecorder.isTypeSupported('audio/webm')
+				? 'audio/webm'
+				: MediaRecorder.isTypeSupported('audio/mp4')
+					? 'audio/mp4'
+					: undefined;
+
+			mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+			mediaRecorder.ondataavailable = (event) => {
+				if (event.data.size > 0 && socket?.readyState === WebSocket.OPEN) {
+					socket.send(event.data);
+				}
+			};
+			mediaRecorder.start(250);
 		}
 	}
 
