@@ -12,6 +12,8 @@
 	let cardsReviewed = $state(0);
 	let frontText = $state('');
 	let backText = $state('');
+	let frontHtml = $state('');
+	let backHtml = $state('');
 	let errorMsg = $state('');
 	let errorTimer: ReturnType<typeof setTimeout> | null = null;
 	let sessionEnded = $state(false);
@@ -52,6 +54,8 @@
 				cardsReviewed = event.index + 1;
 				frontText = event.front;
 				backText = event.back;
+				frontHtml = event.frontHtml;
+				backHtml = event.backHtml;
 				isLearning = event.isLearning;
 				intervals = event.intervals;
 				status = 'idle';
@@ -336,10 +340,10 @@
 			<p class="waiting-text">Card returning in {learningCountdown}s...</p>
 		{:else}
 			<div class="card-content" role="region" aria-label="Flashcard">
-				<p class="question-text">{frontText}</p>
+				<div class="question-text">{@html frontHtml}</div>
 				{#if phase === 'rating'}
 					<hr class="card-divider" />
-					<p class="answer-text">{backText}</p>
+					<div class="answer-text">{@html backHtml}</div>
 				{/if}
 			</div>
 		{/if}
@@ -716,6 +720,60 @@
 		margin: 0;
 		color: #aaddaa;
 		line-height: 1.5;
+	}
+
+	/* Anki HTML card content: support bold, italic, underline, colors, images, etc. */
+	.question-text :global(b),
+	.question-text :global(strong),
+	.answer-text :global(b),
+	.answer-text :global(strong) {
+		font-weight: 700;
+	}
+
+	.question-text :global(i),
+	.question-text :global(em),
+	.answer-text :global(i),
+	.answer-text :global(em) {
+		font-style: italic;
+	}
+
+	.question-text :global(u),
+	.answer-text :global(u) {
+		text-decoration: underline;
+	}
+
+	.question-text :global(img),
+	.answer-text :global(img) {
+		max-width: 100%;
+		height: auto;
+		border-radius: 6px;
+		margin: 0.5rem 0;
+	}
+
+	.question-text :global(br),
+	.answer-text :global(br) {
+		display: block;
+		content: '';
+		margin-top: 0.3rem;
+	}
+
+	.question-text :global(ul),
+	.question-text :global(ol),
+	.answer-text :global(ul),
+	.answer-text :global(ol) {
+		text-align: left;
+		margin: 0.5rem 0;
+		padding-left: 1.5rem;
+	}
+
+	.question-text :global(.cloze-blank) {
+		color: #6699ff;
+		font-weight: 600;
+	}
+
+	.answer-text :global(.cloze-answer) {
+		color: #66ddaa;
+		font-weight: 700;
 	}
 
 	.waiting-text {

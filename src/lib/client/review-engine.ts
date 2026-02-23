@@ -24,6 +24,8 @@ export type ReviewEvent =
 			total: number;
 			front: string;
 			back: string;
+			frontHtml: string;
+			backHtml: string;
 			isLearning: boolean;
 			intervals: IntervalLabels;
 	  }
@@ -59,6 +61,8 @@ interface CardData {
 	tags: string;
 	front: string;
 	back: string;
+	frontHtml: string;
+	backHtml: string;
 	intervals: IntervalLabels;
 }
 
@@ -112,32 +116,49 @@ function processCloze(text: string, showAnswer: boolean): string {
 }
 
 /**
- * Parse card fields and extract front/back text for TTS.
+ * Process cloze HTML: wrap cloze answers in a styled span for display.
  */
-function renderCard(fieldsJson: string, cardType: string): { front: string; back: string } {
+function processClozeHtml(text: string, showAnswer: boolean): string {
+	return text.replace(/\{\{c\d+::(.*?)(?:::(.*?))?\}\}/g, (_match, answer, hint) => {
+		if (showAnswer) return `<span class="cloze-answer">${answer}</span>`;
+		return `<span class="cloze-blank">[${hint || '...'}]</span>`;
+	});
+}
+
+/**
+ * Parse card fields and extract front/back as both HTML (display) and plain text (TTS).
+ */
+function renderCard(fieldsJson: string, cardType: string): { front: string; back: string; frontHtml: string; backHtml: string } {
 	let fields: NoteField[];
 	try {
 		fields = JSON.parse(fieldsJson);
 	} catch {
-		return { front: 'Error reading card', back: '' };
+		return { front: 'Error reading card', back: '', frontHtml: 'Error reading card', backHtml: '' };
 	}
 
 	if (fields.length === 0) {
-		return { front: 'Empty card', back: '' };
+		return { front: 'Empty card', back: '', frontHtml: 'Empty card', backHtml: '' };
 	}
 
 	if (cardType === 'cloze') {
 		const text = fields[0]?.value ?? '';
 		return {
 			front: stripHtml(processCloze(text, false)),
-			back: stripHtml(processCloze(text, true))
+			back: stripHtml(processCloze(text, true)),
+			frontHtml: processClozeHtml(text, false),
+			backHtml: processClozeHtml(text, true)
 		};
 	}
 
 	// Basic card: first field = front, second field = back
-	const front = stripHtml(fields[0]?.value ?? '');
-	const back = stripHtml(fields[1]?.value ?? front);
-	return { front, back };
+	const rawFront = fields[0]?.value ?? '';
+	const rawBack = fields[1]?.value ?? rawFront;
+	return {
+		front: stripHtml(rawFront),
+		back: stripHtml(rawBack),
+		frontHtml: rawFront,
+		backHtml: rawBack
+	};
 }
 
 /** FSRS states */
@@ -296,6 +317,8 @@ export function createReviewEngine(): ReviewEngine {
 			total: cardsReviewedCount,
 			front: currentCard.front,
 			back: currentCard.back,
+			frontHtml: currentCard.frontHtml,
+			backHtml: currentCard.backHtml,
 			isLearning,
 			intervals: currentCard.intervals
 		});
@@ -520,6 +543,8 @@ export function createReviewEngine(): ReviewEngine {
 			total: cardsReviewedCount,
 			front: card.front,
 			back: card.back,
+			frontHtml: card.frontHtml,
+			backHtml: card.backHtml,
 			isLearning,
 			intervals: card.intervals
 		});
@@ -601,7 +626,7 @@ export function createReviewEngine(): ReviewEngine {
 		// Parse card fronts/backs into review queue
 		const defaultIntervals: IntervalLabels = { again: '', hard: '', good: '', easy: '' };
 		reviewQueue = data.cards.map((c) => {
-			const { front, back } = renderCard(c.fields as string, c.card_type as string);
+			const { front, back, frontHtml, backHtml } = renderCard(c.fields as string, c.card_type as string);
 			const intervals = (c.intervals as IntervalLabels) ?? defaultIntervals;
 			return {
 				id: c.id as string,
@@ -613,6 +638,8 @@ export function createReviewEngine(): ReviewEngine {
 				tags: c.tags as string,
 				front,
 				back,
+				frontHtml,
+				backHtml,
 				intervals
 			};
 		});
