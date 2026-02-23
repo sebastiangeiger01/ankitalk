@@ -28,6 +28,8 @@
 	{@render children()}
 </main>
 
+<footer class="version">v{__COMMIT_HASH__}</footer>
+
 <style>
 	:global(body) {
 		margin: 0;
@@ -79,5 +81,14 @@
 		max-width: 800px;
 		margin: 0 auto;
 		padding: 1.5rem;
+	}
+
+	.version {
+		position: fixed;
+		bottom: 0.5rem;
+		right: 0.75rem;
+		font-size: 0.65rem;
+		color: #555;
+		pointer-events: none;
 	}
 </style>
