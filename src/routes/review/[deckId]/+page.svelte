@@ -38,6 +38,8 @@
 	let loc = $state('en');
 	locale.subscribe((v) => { loc = v; });
 	let prefetchedCards = $state<PrefetchedCards | null>(null);
+	let highlightRating = $state<string>('');
+	let highlightTimer: ReturnType<typeof setTimeout> | null = null;
 
 	const engine = createReviewEngine();
 
@@ -83,6 +85,11 @@
 			case 'transcript':
 				break;
 			case 'command':
+				if (['again', 'hard', 'good', 'easy'].includes(event.command)) {
+					highlightRating = event.command;
+					if (highlightTimer) clearTimeout(highlightTimer);
+					highlightTimer = setTimeout(() => { highlightRating = ''; }, 400);
+				}
 				break;
 			case 'session_end':
 				clearCountdown();
@@ -239,6 +246,7 @@
 		clearCountdown();
 		if (suspendedTimer) clearTimeout(suspendedTimer);
 		if (errorTimer) clearTimeout(errorTimer);
+		if (highlightTimer) clearTimeout(highlightTimer);
 		document.body.classList.remove('review-active');
 		engine.destroy();
 	});
@@ -407,10 +415,10 @@
 				<span class="interval">{intervals.easy}</span>
 			</div>
 			<div class="rating-buttons">
-				<button class="rate-btn again" onclick={() => engine.executeCommand('again')}>{t('rating.again')}</button>
-				<button class="rate-btn hard" onclick={() => engine.executeCommand('hard')}>{t('rating.hard')}</button>
-				<button class="rate-btn good" onclick={() => engine.executeCommand('good')}>{t('rating.good')}</button>
-				<button class="rate-btn easy" onclick={() => engine.executeCommand('easy')}>{t('rating.easy')}</button>
+				<button class="rate-btn again" class:voice-picked={highlightRating === 'again'} onclick={() => engine.executeCommand('again')}>{t('rating.again')}</button>
+				<button class="rate-btn hard" class:voice-picked={highlightRating === 'hard'} onclick={() => engine.executeCommand('hard')}>{t('rating.hard')}</button>
+				<button class="rate-btn good" class:voice-picked={highlightRating === 'good'} onclick={() => engine.executeCommand('good')}>{t('rating.good')}</button>
+				<button class="rate-btn easy" class:voice-picked={highlightRating === 'easy'} onclick={() => engine.executeCommand('easy')}>{t('rating.easy')}</button>
 			</div>
 		{/if}
 	</div>
@@ -929,6 +937,11 @@
 	.rate-btn.hard { background: #4a3a20; color: #ffbb88; }
 	.rate-btn.good { background: #204a20; color: #88ff88; }
 	.rate-btn.easy { background: #20204a; color: #88bbff; }
+
+	.rate-btn.voice-picked {
+		filter: brightness(1.8);
+		transition: filter 0.05s;
+	}
 
 	@keyframes fade-in {
 		from { opacity: 0; transform: translateY(-4px); }
