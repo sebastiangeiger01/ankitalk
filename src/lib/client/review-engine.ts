@@ -370,8 +370,18 @@ export function createReviewEngine(): ReviewEngine {
 
 	function handleCommand(command: VoiceCommand) {
 		interruptTTS();
-		clearUndo();
 		clearLearningTimer();
+
+		// Undo must be handled before clearUndo() wipes the undo info
+		if (command === 'undo') {
+			if (undoInfo) {
+				emit({ type: 'command', command });
+				performUndo();
+			}
+			return;
+		}
+
+		clearUndo();
 
 		emit({ type: 'command', command });
 

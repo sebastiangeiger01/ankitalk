@@ -65,6 +65,11 @@ const COMMANDS: CommandDef[] = [
 		phases: ['question', 'rating']
 	},
 	{
+		command: 'undo',
+		aliases: ['undo', 'rückgängig', 'zurück'],
+		phases: ['question']
+	},
+	{
 		command: 'stop',
 		aliases: [
 			'stop', 'quit', 'end', 'finish', 'done', 'end session',

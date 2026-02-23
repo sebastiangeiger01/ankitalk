@@ -100,7 +100,8 @@ export type VoiceCommand =
 	| 'easy'
 	| 'stop'
 	| 'explain'
-	| 'suspend';
+	| 'suspend'
+	| 'undo';
 
 export type RatingName = 'again' | 'hard' | 'good' | 'easy';
 
