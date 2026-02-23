@@ -1,0 +1,33 @@
+{
+  "name": "ankitalk",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241230.0",
+    "@sveltejs/adapter-cloudflare": "^4.0.0",
+    "@sveltejs/kit": "^2.16.0",
+    "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "svelte": "^5.0.0",
+    "svelte-check": "^4.0.0",
+    "typescript": "^5.0.0",
+    "vite": "^6.0.0",
+    "vite-plugin-static-copy": "^2.2.0",
+    "wrangler": "^4.67.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@teamhanko/hanko-elements": "^1.0.0",
+    "fflate": "^0.8.0",
+    "jose": "^5.0.0",
+    "openai": "^4.0.0",
+    "sql.js": "^1.11.0",
+    "ts-fsrs": "^4.0.0"
+  },
+  "type": "module"
+}

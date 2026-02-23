@@ -1,0 +1,37 @@
+{
+  "name": "ankitalk",
+  "compatibility_date": "2024-12-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "pages_build_output_dir": ".svelte-kit/cloudflare",
+
+  // Public env vars (available client-side via $env/dynamic/public)
+  "vars": {
+    "PUBLIC_HANKO_API_URL": "https://d69d0f77-1b44-41e2-afe2-dd11340803f8.hanko.io"
+  },
+
+  // D1 Database
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ankitalk-db",
+      "database_id": "74180f05-017f-495e-8520-6b1396aae0e1",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // KV Namespace (for session/token caching if needed)
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      "id": "cd01dd21951f432a9c70057b2a02f433"
+    }
+  ],
+
+  // R2 Bucket for media files
+  "r2_buckets": [
+    {
+      "binding": "MEDIA",
+      "bucket_name": "ankitalk-media"
+    }
+  ]
+}
