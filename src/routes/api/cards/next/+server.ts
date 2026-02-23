@@ -1,6 +1,68 @@
 import { json, error } from '@sveltejs/kit';
 import { getDb } from '$lib/server/db';
+import { fsrs, createEmptyCard, Rating, State } from 'ts-fsrs';
+import type { Card as FSRSCard } from 'ts-fsrs';
 import type { RequestHandler } from './$types';
+
+/**
+ * Format a scheduled interval into a human-readable string like AnkiWeb.
+ */
+function formatInterval(scheduledDays: number, dueDate: Date, now: Date): string {
+	const diffMs = dueDate.getTime() - now.getTime();
+	const diffMinutes = diffMs / (1000 * 60);
+	const diffHours = diffMs / (1000 * 60 * 60);
+	const diffDays = diffMs / (1000 * 60 * 60 * 24);
+
+	if (diffMinutes < 1) return '<1m';
+	if (diffHours < 1) return `${Math.round(diffMinutes)}m`;
+	if (diffDays < 1) return `${Math.round(diffHours)}h`;
+	if (diffDays < 30) return `${Math.round(diffDays)}d`;
+	if (diffDays < 365) {
+		const months = diffDays / 30;
+		return months >= 10 ? `${Math.round(months)}mo` : `${months.toFixed(1).replace(/\.0$/, '')}mo`;
+	}
+	const years = diffDays / 365;
+	return years >= 10 ? `${Math.round(years)}y` : `${years.toFixed(1).replace(/\.0$/, '')}y`;
+}
+
+/**
+ * Convert a DB card row to an FSRS card for scheduling preview.
+ */
+function rowToFsrsCard(row: Record<string, unknown>): FSRSCard {
+	const reps = (row.fsrs_reps as number) ?? 0;
+	if (reps === 0) {
+		return createEmptyCard(new Date((row.due_at as string) ?? new Date().toISOString()));
+	}
+	return {
+		due: new Date((row.due_at as string) ?? new Date().toISOString()),
+		stability: (row.fsrs_stability as number) ?? 0,
+		difficulty: (row.fsrs_difficulty as number) ?? 0,
+		elapsed_days: (row.fsrs_elapsed_days as number) ?? 0,
+		scheduled_days: (row.fsrs_scheduled_days as number) ?? 0,
+		reps,
+		lapses: (row.fsrs_lapses as number) ?? 0,
+		state: ((row.fsrs_state as number) ?? 0) as State,
+		last_review: row.fsrs_last_review ? new Date(row.fsrs_last_review as string) : undefined
+	};
+}
+
+/**
+ * Compute preview intervals for all 4 ratings on a card.
+ */
+function computeIntervals(
+	row: Record<string, unknown>,
+	scheduler: ReturnType<typeof fsrs>,
+	now: Date
+): { again: string; hard: string; good: string; easy: string } {
+	const fsrsCard = rowToFsrsCard(row);
+	const result = scheduler.repeat(fsrsCard, now);
+	return {
+		again: formatInterval(result[Rating.Again].card.scheduled_days, result[Rating.Again].card.due, now),
+		hard: formatInterval(result[Rating.Hard].card.scheduled_days, result[Rating.Hard].card.due, now),
+		good: formatInterval(result[Rating.Good].card.scheduled_days, result[Rating.Good].card.due, now),
+		easy: formatInterval(result[Rating.Easy].card.scheduled_days, result[Rating.Easy].card.due, now)
+	};
+}
 
 /** Day boundary: 4 AM UTC (matches Anki's default rollover) */
 function todayStart(): string {
@@ -78,7 +140,13 @@ export const GET: RequestHandler = async ({ url, platform, locals }) => {
 			.bind(deckId, locals.userId, now, ...stateBinds, ...tagBinds, limit)
 			.all();
 
-		return json({ cards: cards.results, deckName: deck.name, mode: 'cram' });
+		const scheduler = fsrs({ request_retention: 0.9, maximum_interval: 36500 });
+		const cramNow = new Date();
+		const cramCards = (cards.results as Record<string, unknown>[]).map((c) => ({
+			...c,
+			intervals: computeIntervals(c, scheduler, cramNow)
+		}));
+		return json({ cards: cramCards, deckName: deck.name, mode: 'cram' });
 	}
 
 	// Normal mode
@@ -180,5 +248,40 @@ export const GET: RequestHandler = async ({ url, platform, locals }) => {
 		)
 		.all();
 
-	return json({ cards: cards.results, deckName: deck.name, mode: 'normal' });
+	// Load deck settings for FSRS scheduler
+	const fsrsSettings = await db
+		.prepare('SELECT desired_retention, max_interval FROM deck_settings WHERE deck_id = ?')
+		.bind(deckId)
+		.first<{ desired_retention: number; max_interval: number }>();
+
+	const scheduler = fsrs({
+		request_retention: fsrsSettings?.desired_retention ?? 0.9,
+		maximum_interval: fsrsSettings?.max_interval ?? 36500
+	});
+	const intervalNow = new Date();
+
+	const rawCards = cards.results as Record<string, unknown>[];
+
+	// Compute queue counts for the top bar (new / learning / review)
+	let newCount = 0;
+	let learningCount = 0;
+	let reviewCount = 0;
+	for (const c of rawCards) {
+		const state = (c.fsrs_state as number) ?? 0;
+		if (state === 0) newCount++;
+		else if (state === 1 || state === 3) learningCount++;
+		else if (state === 2) reviewCount++;
+	}
+
+	const results = rawCards.map((c) => ({
+		...c,
+		intervals: computeIntervals(c, scheduler, intervalNow)
+	}));
+
+	return json({
+		cards: results,
+		deckName: deck.name,
+		mode: 'normal',
+		counts: { new: newCount, learning: learningCount, review: reviewCount }
+	});
 };

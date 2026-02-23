@@ -83,6 +83,11 @@
 		padding: 1.5rem;
 	}
 
+	:global(body.review-active) main {
+		max-width: none;
+		padding: 0;
+	}
+
 	.version {
 		position: fixed;
 		bottom: 0.5rem;
@@ -90,5 +95,10 @@
 		font-size: 0.65rem;
 		color: #555;
 		pointer-events: none;
+	}
+
+	:global(body.review-active) nav,
+	:global(body.review-active) .version {
+		display: none;
 	}
 </style>

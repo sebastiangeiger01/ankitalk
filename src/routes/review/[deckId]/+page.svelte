@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { onDestroy, onMount } from 'svelte';
-	import { createReviewEngine, type ReviewEvent, type SessionStats, type StartOptions } from '$lib/client/review-engine';
+	import { createReviewEngine, type ReviewEvent, type SessionStats, type StartOptions, type IntervalLabels, type QueueCounts } from '$lib/client/review-engine';
 	import type { ReviewPhase } from '$lib/types';
 
 	const deckId = $derived($page.params.deckId);
@@ -12,9 +12,8 @@
 	let cardsReviewed = $state(0);
 	let frontText = $state('');
 	let backText = $state('');
-	let transcript = $state('');
-	let lastCommand = $state('');
 	let errorMsg = $state('');
+	let errorTimer: ReturnType<typeof setTimeout> | null = null;
 	let sessionEnded = $state(false);
 	let stats = $state<SessionStats | null>(null);
 	let deckName = $state('');
@@ -29,6 +28,9 @@
 	let tagFilter = $state('');
 	let cramMode = $state(false);
 	let cramState = $state<'' | 'new' | 'learning' | 'review'>('');
+	let intervals = $state<IntervalLabels>({ again: '', hard: '', good: '', easy: '' });
+	let counts = $state<QueueCounts>({ new: 0, learning: 0, review: 0 });
+	let helpOpen = $state(false);
 
 	const engine = createReviewEngine();
 
@@ -51,7 +53,7 @@
 				frontText = event.front;
 				backText = event.back;
 				isLearning = event.isLearning;
-				lastCommand = '';
+				intervals = event.intervals;
 				status = 'idle';
 				break;
 			case 'speaking':
@@ -67,19 +69,20 @@
 				status = 'explaining';
 				break;
 			case 'transcript':
-				transcript = event.text;
 				break;
 			case 'command':
-				lastCommand = event.command;
 				break;
 			case 'session_end':
 				clearCountdown();
 				sessionEnded = true;
 				stats = event.stats;
 				status = 'idle';
+				document.body.classList.remove('review-active');
 				break;
 			case 'error':
 				errorMsg = event.message;
+				if (errorTimer) clearTimeout(errorTimer);
+				errorTimer = setTimeout(() => { errorMsg = ''; }, 4000);
 				break;
 			case 'deck_info':
 				deckName = event.name;
@@ -92,6 +95,9 @@
 				break;
 			case 'audio_change':
 				audioOn = event.audioOn;
+				break;
+			case 'counts':
+				counts = event.counts;
 				break;
 			case 'learning_due': {
 				status = 'waiting';
@@ -117,6 +123,7 @@
 	async function startReview() {
 		started = true;
 		errorMsg = '';
+		document.body.classList.add('review-active');
 		const options: StartOptions = {};
 		if (tagFilter.trim()) options.tags = tagFilter.trim();
 		if (cramMode) {
@@ -186,17 +193,19 @@
 	onDestroy(() => {
 		clearCountdown();
 		if (suspendedTimer) clearTimeout(suspendedTimer);
+		if (errorTimer) clearTimeout(errorTimer);
+		document.body.classList.remove('review-active');
 		engine.destroy();
 	});
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="review-container">
-	{#if !started}
+{#if !started}
+	<div class="review-container">
 		<div class="start-screen">
 			<h1>Ready to Review{deckName ? ` — ${deckName}` : ''}</h1>
-			<p>Tap the button below to start your voice-controlled review session.</p>
+			<p>Tap the button below to start your review session.</p>
 
 			<button class="start-btn" onclick={startReview}>{cramMode ? 'Start Cram' : 'Start Review'}</button>
 
@@ -223,19 +232,26 @@
 					</label>
 				{/if}
 			</div>
-			<div class="commands-help">
-				<h3>Voice Commands & Keyboard Shortcuts</h3>
-				<ul>
-					<li><strong>answer / show</strong> — reveal the answer <kbd>Space</kbd></li>
-					<li><strong>hint</strong> — hear first few words <kbd>H</kbd></li>
-					<li><strong>again / hard / good / easy</strong> — rate <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></li>
-					<li><strong>repeat</strong> — hear it again <kbd>R</kbd></li>
-					<li><strong>explain</strong> — ask AI to explain <kbd>E</kbd></li>
-					<li><strong>stop</strong> — end session <kbd>Esc</kbd></li>
-				</ul>
-			</div>
+
+			<button class="help-toggle" onclick={() => helpOpen = !helpOpen}>
+				{helpOpen ? 'Hide' : 'Show'} voice commands & shortcuts
+			</button>
+			{#if helpOpen}
+				<div class="commands-help">
+					<ul>
+						<li><strong>answer / show</strong> — reveal the answer <kbd>Space</kbd></li>
+						<li><strong>hint</strong> — hear first few words <kbd>H</kbd></li>
+						<li><strong>again / hard / good / easy</strong> — rate <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></li>
+						<li><strong>repeat</strong> — hear it again <kbd>R</kbd></li>
+						<li><strong>explain</strong> — ask AI to explain <kbd>E</kbd></li>
+						<li><strong>stop</strong> — end session <kbd>Esc</kbd></li>
+					</ul>
+				</div>
+			{/if}
 		</div>
-	{:else if sessionEnded && stats}
+	</div>
+{:else if sessionEnded && stats}
+	<div class="review-container">
 		<div class="summary">
 			<h1>Session Complete{deckName ? ` — ${deckName}` : ''}</h1>
 			<div class="stat-grid">
@@ -256,154 +272,107 @@
 			</div>
 			<a href="/" class="back-link">Back to Dashboard</a>
 		</div>
-	{:else if status === 'waiting'}
-		<div class="active-review">
-			<div class="review-header">
-				{#if deckName}
-					<h2 class="deck-title">{deckName}</h2>
-				{/if}
-				<div class="toggles">
-					<button class="toggle-btn" class:off={!audioOn} onclick={() => engine.toggleAudio()} aria-label={audioOn ? 'Mute audio' : 'Unmute audio'} title={audioOn ? 'Mute audio' : 'Unmute audio'}>
-						{#if audioOn}
-							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
-						{:else}
-							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
-						{/if}
-					</button>
-					<button class="toggle-btn" class:off={!micOn} onclick={() => engine.toggleMic()} aria-label={micOn ? 'Mute microphone' : 'Unmute microphone'} title={micOn ? 'Mute microphone' : 'Unmute microphone'}>
-						{#if micOn}
-							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-						{:else}
-							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.5-.36 2.18"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-						{/if}
-					</button>
-				</div>
-			</div>
+	</div>
+{:else}
+	<!-- Active review: AnkiWeb-style fullscreen layout -->
 
-			<div class="waiting-card">
-				<p class="waiting-text">Card returning in {learningCountdown}s...</p>
-				<span class="reviewed-count">{cardsReviewed} reviewed</span>
-			</div>
-
-			<button class="stop-btn" onclick={() => engine.executeCommand('stop')}>Stop Session <kbd>Esc</kbd></button>
-		</div>
-	{:else}
-		<div class="active-review">
-			<div class="review-header">
-				{#if deckName}
-					<h2 class="deck-title">{deckName}</h2>
-				{/if}
-				<div class="toggles">
-					<button class="toggle-btn" class:off={!audioOn} onclick={() => engine.toggleAudio()} aria-label={audioOn ? 'Mute audio' : 'Unmute audio'} title={audioOn ? 'Mute audio' : 'Unmute audio'}>
-						{#if audioOn}
-							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
-						{:else}
-							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
-						{/if}
-					</button>
-					<button class="toggle-btn" class:off={!micOn} onclick={() => engine.toggleMic()} aria-label={micOn ? 'Mute microphone' : 'Unmute microphone'} title={micOn ? 'Mute microphone' : 'Unmute microphone'}>
-						{#if micOn}
-							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-						{:else}
-							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.5-.36 2.18"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-						{/if}
-					</button>
-				</div>
-			</div>
-
-			<div class="progress-bar-container" aria-live="polite" aria-label="{cardsReviewed} reviewed">
-				<span class="progress-text">{cardsReviewed} reviewed</span>
-			</div>
-
-			<div class="card-display" role="region" aria-label="Flashcard">
-				{#if isLearning}
-					<span class="learning-badge">Learning</span>
-				{/if}
-				<div class="front" aria-label="Question">
-					<p>{frontText}</p>
-				</div>
-				{#if phase === 'rating'}
-					<div class="back" aria-label="Answer">
-						<p>{backText}</p>
-					</div>
-				{/if}
-			</div>
-
-			<div class="status-bar">
-				<span class="phase-badge" aria-label="Current phase: {phase === 'question' ? 'Question' : 'Rating'}" class:question={phase === 'question'} class:rating={phase === 'rating'}>
-					{phase === 'question' ? 'Question' : 'Rate It'}
-				</span>
-				<span class="status-indicator" aria-label="Status: {status}"
-					class:speaking={status === 'speaking'}
-					class:listening={status === 'listening'}
-					class:explaining={status === 'explaining'}>
-					{#if status === 'speaking'}
-						<span class="viz viz-speaking"><span></span><span></span><span></span></span>
-						Speaking...
-					{:else if status === 'listening'}
-						<span class="viz viz-listening"><span></span><span></span></span>
-						Listening...
-					{:else if status === 'explaining'}
-						Thinking...
-					{:else}
-						...
-					{/if}
-				</span>
-			</div>
-
-			{#if transcript}
-				<p class="transcript">"{transcript}"</p>
-			{/if}
-
-			{#if lastCommand}
-				<p class="last-command">Command: {lastCommand}</p>
-			{/if}
-
-			{#if errorMsg}
-				<p class="error">{errorMsg}</p>
-			{/if}
-
-			{#if suspendedNotice}
-				<p class="suspended-notice">{suspendedNotice}</p>
-			{/if}
-
-			<div class="action-buttons" role="group" aria-label={phase === 'question' ? 'Question actions' : 'Rating actions'}>
-				{#if phase === 'question'}
-					<button class="action-btn show-answer" onclick={() => engine.executeCommand('answer')}>Show Answer <kbd>Space</kbd></button>
-					<button class="action-btn hint" onclick={() => engine.executeCommand('hint')}>Hint <kbd>H</kbd></button>
-					<button class="action-btn suspend" onclick={() => engine.executeCommand('suspend')}>Suspend <kbd>S</kbd></button>
-				{:else}
-					<button class="action-btn again" aria-label="Rate: Again (1)" onclick={() => engine.executeCommand('again')}>Again <kbd>1</kbd></button>
-					<button class="action-btn hard" aria-label="Rate: Hard (2)" onclick={() => engine.executeCommand('hard')}>Hard <kbd>2</kbd></button>
-					<button class="action-btn good" aria-label="Rate: Good (3)" onclick={() => engine.executeCommand('good')}>Good <kbd>3</kbd></button>
-					<button class="action-btn easy" aria-label="Rate: Easy (4)" onclick={() => engine.executeCommand('easy')}>Easy <kbd>4</kbd></button>
-					<button class="action-btn explain" onclick={() => engine.executeCommand('explain')}>Explain <kbd>E</kbd></button>
-					<button class="action-btn suspend" onclick={() => engine.executeCommand('suspend')}>Suspend <kbd>S</kbd></button>
-				{/if}
-			</div>
-
-			{#if undoAvailable}
-				<button class="undo-btn" onclick={() => engine.undo()}>Undo <kbd>Z</kbd></button>
-			{/if}
-
-			<div class="voice-hints" aria-label="Available voice commands">
-				{#if micOn}
-					{#if phase === 'question'}
-						<span class="voice-hint-label">Say:</span> answer, hint, again, hard, good, easy, stop
-					{:else}
-						<span class="voice-hint-label">Say:</span> explain, again, hard, good, easy, repeat, stop
-					{/if}
-				{:else}
-					<span class="mic-off-hint">Mic off — use buttons or keyboard</span>
-				{/if}
-			</div>
-
-			<button class="stop-btn" onclick={() => engine.executeCommand('stop')}>Stop Session <kbd>Esc</kbd></button>
-		</div>
+	<!-- Toast errors at top -->
+	{#if errorMsg}
+		<div class="toast-error">{errorMsg}</div>
 	{/if}
-</div>
+
+	{#if suspendedNotice}
+		<div class="toast-notice">{suspendedNotice}</div>
+	{/if}
+
+	<!-- Top bar -->
+	<div class="top-bar">
+		<div class="top-left">
+			<button class="toolbar-btn" class:off={!audioOn} onclick={() => engine.toggleAudio()} aria-label={audioOn ? 'Mute audio' : 'Unmute audio'} title={audioOn ? 'Mute audio (speaker)' : 'Unmute audio'}>
+				{#if audioOn}
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+				{:else}
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+				{/if}
+			</button>
+			<button class="toolbar-btn" class:off={!micOn} onclick={() => engine.toggleMic()} aria-label={micOn ? 'Mute microphone' : 'Unmute microphone'} title={micOn ? 'Mute microphone' : 'Unmute microphone'}>
+				{#if micOn}
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+				{:else}
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.5-.36 2.18"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+				{/if}
+			</button>
+			<button class="toolbar-btn" onclick={() => engine.executeCommand('hint')} title="Hint (H)" aria-label="Hint">
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/></svg>
+			</button>
+			<button class="toolbar-btn" onclick={() => engine.executeCommand('explain')} title="Explain (E)" aria-label="Explain">
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+			</button>
+			<button class="toolbar-btn" onclick={() => engine.executeCommand('suspend')} title="Suspend (S)" aria-label="Suspend">
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+			</button>
+			<button class="toolbar-btn stop" onclick={() => engine.executeCommand('stop')} title="Stop (Esc)" aria-label="Stop session">
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+			</button>
+			{#if status === 'speaking' || status === 'listening' || status === 'explaining'}
+				<span class="voice-dot" class:speaking={status === 'speaking'} class:listening={status === 'listening'} class:explaining={status === 'explaining'}></span>
+			{/if}
+		</div>
+		<div class="top-right">
+			{#if isLearning}
+				<span class="learning-badge">L</span>
+			{/if}
+			<span class="count count-new">{counts.new}</span>
+			<span class="count-sep">+</span>
+			<span class="count count-learning">{counts.learning}</span>
+			<span class="count-sep">+</span>
+			<span class="count count-review">{counts.review}</span>
+		</div>
+	</div>
+
+	<!-- Card content area -->
+	<div class="card-area">
+		{#if status === 'waiting'}
+			<p class="waiting-text">Card returning in {learningCountdown}s...</p>
+		{:else}
+			<div class="card-content" role="region" aria-label="Flashcard">
+				<p class="question-text">{frontText}</p>
+				{#if phase === 'rating'}
+					<hr class="card-divider" />
+					<p class="answer-text">{backText}</p>
+				{/if}
+			</div>
+		{/if}
+	</div>
+
+	<!-- Fixed bottom actions -->
+	<div class="bottom-bar">
+		{#if undoAvailable}
+			<button class="undo-link" onclick={() => engine.undo()}>undo <kbd>Z</kbd></button>
+		{/if}
+		{#if phase === 'question' && status !== 'waiting'}
+			<div class="bottom-actions">
+				<button class="show-answer-btn" onclick={() => engine.executeCommand('answer')}>Show Answer</button>
+			</div>
+		{:else if phase === 'rating'}
+			<div class="interval-labels">
+				<span class="interval">{intervals.again}</span>
+				<span class="interval">{intervals.hard}</span>
+				<span class="interval">{intervals.good}</span>
+				<span class="interval">{intervals.easy}</span>
+			</div>
+			<div class="rating-buttons">
+				<button class="rate-btn again" onclick={() => engine.executeCommand('again')}>Again</button>
+				<button class="rate-btn hard" onclick={() => engine.executeCommand('hard')}>Hard</button>
+				<button class="rate-btn good" onclick={() => engine.executeCommand('good')}>Good</button>
+				<button class="rate-btn easy" onclick={() => engine.executeCommand('easy')}>Easy</button>
+			</div>
+		{/if}
+	</div>
+{/if}
 
 <style>
+	/* ========== Start Screen ========== */
 	.review-container {
 		min-height: 80dvh;
 		display: flex;
@@ -479,16 +448,26 @@
 		font-size: 0.8rem;
 	}
 
+	.help-toggle {
+		background: none;
+		border: none;
+		color: #8080a0;
+		cursor: pointer;
+		font-size: 0.85rem;
+		margin-top: 1rem;
+		text-decoration: underline;
+	}
+
+	.help-toggle:hover {
+		color: #a8a8b8;
+	}
+
 	.commands-help {
 		text-align: left;
 		max-width: 400px;
-		margin: 2rem auto 0;
+		margin: 0.5rem auto 0;
 		color: #a8a8b8;
 		font-size: 0.9rem;
-	}
-
-	.commands-help h3 {
-		color: #bbb;
 	}
 
 	.commands-help ul {
@@ -503,6 +482,7 @@
 		gap: 0.5rem;
 	}
 
+	/* ========== Session Complete ========== */
 	.summary {
 		text-align: center;
 		padding-top: 3rem;
@@ -564,206 +544,286 @@
 		color: #ddd;
 	}
 
-	.active-review {
-		width: 100%;
-		max-width: 600px;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 1rem;
-		padding-top: 1rem;
+	/* ========== Toast Notifications ========== */
+	.toast-error {
+		position: fixed;
+		top: 0.75rem;
+		left: 50%;
+		transform: translateX(-50%);
+		background: #4a2020;
+		color: #ff8888;
+		padding: 0.5rem 1.2rem;
+		border-radius: 8px;
+		font-size: 0.85rem;
+		font-weight: 600;
+		z-index: 100;
+		animation: slide-down 0.2s ease;
 	}
 
-	.review-header {
-		width: 100%;
+	.toast-notice {
+		position: fixed;
+		top: 0.75rem;
+		left: 50%;
+		transform: translateX(-50%);
+		background: #3a2a10;
+		color: #ffcc88;
+		padding: 0.5rem 1.2rem;
+		border-radius: 8px;
+		font-size: 0.85rem;
+		font-weight: 600;
+		z-index: 100;
+		animation: slide-down 0.2s ease;
+	}
+
+	@keyframes slide-down {
+		from { opacity: 0; transform: translateX(-50%) translateY(-10px); }
+		to { opacity: 1; transform: translateX(-50%) translateY(0); }
+	}
+
+	/* ========== Top Bar ========== */
+	.top-bar {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		height: 48px;
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
+		padding: 0 0.75rem;
+		z-index: 50;
+		background: #1a1a2e;
 	}
 
-	.deck-title {
-		margin: 0;
-		font-size: 1rem;
-		font-weight: 600;
-		color: #b0b0d0;
-	}
-
-	.toggles {
+	.top-left {
 		display: flex;
-		gap: 0.4rem;
+		align-items: center;
+		gap: 0.3rem;
 	}
 
-	.toggle-btn {
+	.top-right {
+		display: flex;
+		align-items: center;
+		gap: 0.2rem;
+		font-size: 0.9rem;
+		font-weight: 600;
+	}
+
+	.toolbar-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 36px;
-		height: 36px;
-		border-radius: 8px;
-		border: 1px solid #3a3a5e;
-		background: #22223a;
-		color: #a8a8b8;
+		width: 32px;
+		height: 32px;
+		border-radius: 6px;
+		border: none;
+		background: transparent;
+		color: #8080a0;
 		cursor: pointer;
 		transition: all 0.15s;
 	}
 
-	.toggle-btn:hover {
-		border-color: #5a5a8e;
+	.toolbar-btn:hover {
+		background: #2a2a4e;
 		color: #e0e0ff;
 	}
 
-	.toggle-btn.off {
-		border-color: #4a2020;
+	.toolbar-btn.off {
 		color: #ff8888;
-		background: #2a1515;
 	}
 
-	/* Progress bar */
-	.progress-bar-container {
-		width: 100%;
-		position: relative;
-		height: 24px;
-		background: #22223a;
-		border-radius: 12px;
-		overflow: hidden;
+	.toolbar-btn.stop:hover {
+		color: #ff6666;
 	}
 
-	.progress-text {
-		position: absolute;
-		inset: 0;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-size: 0.75rem;
-		color: #e0e0ff;
-		font-weight: 600;
+	.voice-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		margin-left: 0.3rem;
+		flex-shrink: 0;
 	}
 
-	.card-display {
-		width: 100%;
-		background: #22223a;
-		border-radius: 12px;
-		padding: 2rem;
-		min-height: 150px;
-		position: relative;
+	.voice-dot.speaking {
+		background: #ffbb88;
+		animation: pulse-dot 1s ease-in-out infinite;
+	}
+
+	.voice-dot.listening {
+		background: #88ff88;
+		animation: pulse-dot 1.4s ease-in-out infinite;
+	}
+
+	.voice-dot.explaining {
+		background: #bbaaff;
+		animation: pulse-dot 0.8s ease-in-out infinite;
+	}
+
+	@keyframes pulse-dot {
+		0%, 100% { opacity: 1; transform: scale(1); }
+		50% { opacity: 0.4; transform: scale(1.3); }
 	}
 
 	.learning-badge {
-		position: absolute;
-		top: 0.5rem;
-		right: 0.5rem;
-		padding: 0.15rem 0.5rem;
-		font-size: 0.7rem;
-		font-weight: 600;
-		border-radius: 4px;
+		padding: 0.1rem 0.35rem;
+		font-size: 0.65rem;
+		font-weight: 700;
+		border-radius: 3px;
 		background: #3a2a5e;
 		color: #ccaaff;
+		margin-right: 0.4rem;
 	}
 
-	.front p {
-		font-size: 1.3rem;
+	.count-new { color: #66cc66; }
+	.count-learning { color: #ffaa44; }
+	.count-review { color: #6699ff; }
+	.count-sep { color: #555; font-size: 0.75rem; }
+
+	/* ========== Card Area ========== */
+	.card-area {
+		position: fixed;
+		top: 48px;
+		bottom: 120px;
+		left: 0;
+		right: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 1.5rem;
+		overflow-y: auto;
+	}
+
+	.card-content {
+		max-width: 600px;
+		width: 100%;
+		text-align: center;
+	}
+
+	.question-text {
+		font-size: 1.4rem;
 		margin: 0;
+		line-height: 1.5;
 	}
 
-	.back {
-		margin-top: 1.5rem;
-		padding-top: 1.5rem;
+	.card-divider {
+		border: none;
 		border-top: 1px solid #3a3a5e;
+		margin: 1.5rem 0;
 	}
 
-	.back p {
-		font-size: 1.1rem;
+	.answer-text {
+		font-size: 1.2rem;
 		margin: 0;
 		color: #aaddaa;
+		line-height: 1.5;
 	}
 
-	.status-bar {
+	.waiting-text {
+		font-size: 1.2rem;
+		color: #ccaaff;
+		text-align: center;
+	}
+
+	/* ========== Bottom Bar ========== */
+	.bottom-bar {
+		position: fixed;
+		bottom: 0;
+		left: 0;
+		right: 0;
 		display: flex;
-		gap: 1rem;
+		flex-direction: column;
 		align-items: center;
+		padding: 0.5rem 1rem;
+		padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+		background: #1a1a2e;
+		border-top: 1px solid #2a2a4e;
+		z-index: 50;
 	}
 
-	.phase-badge {
-		padding: 0.3rem 0.8rem;
-		border-radius: 6px;
-		font-size: 0.8rem;
-		font-weight: 600;
-	}
-
-	.phase-badge.question { background: #2a2a5e; color: #aabbff; }
-	.phase-badge.rating { background: #2a4a2a; color: #aaffaa; }
-
-	.status-indicator {
-		font-size: 0.85rem;
-		color: #a8a8b8;
+	.undo-link {
+		background: none;
+		border: none;
+		color: #8080a0;
+		cursor: pointer;
+		font-size: 0.75rem;
+		margin-bottom: 0.3rem;
 		display: flex;
 		align-items: center;
-		gap: 0.4rem;
-	}
-
-	.status-indicator.speaking { color: #ffbb88; }
-	.status-indicator.listening { color: #88ff88; }
-	.status-indicator.explaining { color: #bbaaff; }
-
-	.transcript {
-		color: #9090a0;
-		font-style: italic;
-		font-size: 0.85rem;
-	}
-
-	.last-command {
-		color: #6ecb63;
-		font-size: 0.85rem;
-		font-weight: 600;
-	}
-
-	.error {
-		color: #ff6666;
-		font-size: 0.85rem;
-	}
-
-	.suspended-notice {
-		background: #4a2a20;
-		color: #ff9988;
-		padding: 0.4rem 1rem;
-		border-radius: 6px;
-		font-size: 0.85rem;
-		font-weight: 600;
+		gap: 0.3rem;
 		animation: fade-in 0.2s ease;
 	}
 
-	.action-buttons {
-		display: flex;
-		gap: 0.5rem;
-		flex-wrap: wrap;
-		justify-content: center;
+	.undo-link:hover {
+		color: #ffcc66;
 	}
 
-	.action-btn {
-		padding: 0.5rem 1.2rem;
+	.bottom-actions {
+		width: 100%;
+		max-width: 400px;
+	}
+
+	.show-answer-btn {
+		width: 100%;
+		padding: 0.9rem;
+		font-size: 1.05rem;
+		font-weight: 600;
+		background: #3a3a7e;
+		color: #d0d0ff;
+		border: none;
+		border-radius: 10px;
+		cursor: pointer;
+		transition: filter 0.15s;
+	}
+
+	.show-answer-btn:hover {
+		filter: brightness(1.15);
+	}
+
+	.interval-labels {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		width: 100%;
+		max-width: 400px;
+		text-align: center;
+		margin-bottom: 0.2rem;
+	}
+
+	.interval {
+		font-size: 0.7rem;
+		color: #8080a0;
+	}
+
+	.rating-buttons {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 0.4rem;
+		width: 100%;
+		max-width: 400px;
+	}
+
+	.rate-btn {
+		padding: 0.75rem 0;
 		border: none;
 		border-radius: 8px;
 		font-size: 0.9rem;
 		font-weight: 600;
 		cursor: pointer;
 		transition: filter 0.15s;
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
 	}
 
-	.action-btn:hover {
+	.rate-btn:hover {
 		filter: brightness(1.2);
 	}
 
-	.action-btn.show-answer { background: #3a3a7e; color: #c0c0ff; }
-	.action-btn.hint { background: #2a2a4e; color: #a8a8b8; }
-	.action-btn.again { background: #4a2020; color: #ff8888; }
-	.action-btn.hard { background: #4a3a20; color: #ffbb88; }
-	.action-btn.good { background: #204a20; color: #88ff88; }
-	.action-btn.easy { background: #20204a; color: #88bbff; }
-	.action-btn.explain { background: #2a2a4e; color: #bbaaff; }
-	.action-btn.suspend { background: #4a2a20; color: #ff9988; }
+	.rate-btn.again { background: #4a2020; color: #ff8888; }
+	.rate-btn.hard { background: #4a3a20; color: #ffbb88; }
+	.rate-btn.good { background: #204a20; color: #88ff88; }
+	.rate-btn.easy { background: #20204a; color: #88bbff; }
+
+	@keyframes fade-in {
+		from { opacity: 0; transform: translateY(-4px); }
+		to { opacity: 1; transform: translateY(0); }
+	}
 
 	kbd {
 		font-size: 0.65rem;
@@ -778,135 +838,5 @@
 
 	@media (hover: none), (max-width: 640px) {
 		kbd { display: none; }
-	}
-
-	.undo-btn {
-		padding: 0.35rem 1rem;
-		background: #3a2a10;
-		border: 1px solid #6a5a30;
-		color: #ffcc66;
-		border-radius: 6px;
-		cursor: pointer;
-		font-size: 0.8rem;
-		font-weight: 600;
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-		animation: fade-in 0.2s ease;
-	}
-
-	.undo-btn:hover {
-		background: #4a3a20;
-		border-color: #8a7a40;
-	}
-
-	@keyframes fade-in {
-		from { opacity: 0; transform: translateY(-4px); }
-		to { opacity: 1; transform: translateY(0); }
-	}
-
-	.voice-hints {
-		font-size: 0.75rem;
-		color: #8080a0;
-		text-align: center;
-	}
-
-	.voice-hint-label {
-		font-weight: 600;
-		color: #a8a8b8;
-	}
-
-	.mic-off-hint {
-		color: #ff8888;
-		font-style: italic;
-	}
-
-	.stop-btn {
-		padding: 0.35rem 1rem;
-		background: none;
-		border: 1px solid #444;
-		color: #a8a8b8;
-		border-radius: 6px;
-		cursor: pointer;
-		font-size: 0.8rem;
-		margin-top: 0.5rem;
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-	}
-
-	.stop-btn:hover {
-		border-color: #e53e3e;
-		color: #e53e3e;
-	}
-
-	/* Waiting state */
-	.waiting-card {
-		width: 100%;
-		background: #22223a;
-		border-radius: 12px;
-		padding: 2rem;
-		text-align: center;
-	}
-
-	.waiting-text {
-		font-size: 1.1rem;
-		color: #ccaaff;
-		margin: 0 0 0.5rem;
-	}
-
-	.reviewed-count {
-		font-size: 0.85rem;
-		color: #a8a8b8;
-	}
-
-	/* Mic/audio visualization */
-	.viz {
-		display: inline-flex;
-		align-items: center;
-		gap: 2px;
-	}
-
-	.viz-listening span {
-		display: inline-block;
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		background: #88ff88;
-		animation: pulse-mic 1.4s ease-in-out infinite;
-	}
-
-	.viz-listening span:nth-child(2) {
-		animation-delay: 0.2s;
-		opacity: 0.6;
-	}
-
-	.viz-speaking span {
-		display: inline-block;
-		width: 3px;
-		height: 12px;
-		border-radius: 2px;
-		background: #ffbb88;
-		animation: bar-wave 0.8s ease-in-out infinite;
-	}
-
-	.viz-speaking span:nth-child(2) {
-		animation-delay: 0.15s;
-		height: 16px;
-	}
-
-	.viz-speaking span:nth-child(3) {
-		animation-delay: 0.3s;
-		height: 10px;
-	}
-
-	@keyframes pulse-mic {
-		0%, 100% { transform: scale(1); opacity: 1; }
-		50% { transform: scale(1.4); opacity: 0.5; }
-	}
-
-	@keyframes bar-wave {
-		0%, 100% { transform: scaleY(0.5); }
-		50% { transform: scaleY(1.2); }
 	}
 </style>

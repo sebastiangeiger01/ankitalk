@@ -3,6 +3,19 @@ import { createDeepgramClient, type DeepgramClient } from './deepgram';
 import { matchCommand } from '../commands';
 import type { ReviewPhase, VoiceCommand, RatingName, NoteField } from '../types';
 
+export interface IntervalLabels {
+	again: string;
+	hard: string;
+	good: string;
+	easy: string;
+}
+
+export interface QueueCounts {
+	new: number;
+	learning: number;
+	review: number;
+}
+
 export type ReviewEvent =
 	| { type: 'phase_change'; phase: ReviewPhase }
 	| {
@@ -12,6 +25,7 @@ export type ReviewEvent =
 			front: string;
 			back: string;
 			isLearning: boolean;
+			intervals: IntervalLabels;
 	  }
 	| { type: 'speaking' }
 	| { type: 'listening' }
@@ -26,7 +40,8 @@ export type ReviewEvent =
 	| { type: 'mic_change'; micOn: boolean }
 	| { type: 'audio_change'; audioOn: boolean }
 	| { type: 'learning_due'; waitMs: number }
-	| { type: 'card_suspended'; cardId: string };
+	| { type: 'card_suspended'; cardId: string }
+	| { type: 'counts'; counts: QueueCounts };
 
 export interface SessionStats {
 	cardsReviewed: number;
@@ -44,6 +59,7 @@ interface CardData {
 	tags: string;
 	front: string;
 	back: string;
+	intervals: IntervalLabels;
 }
 
 interface LearningEntry {
@@ -280,7 +296,8 @@ export function createReviewEngine(): ReviewEngine {
 			total: cardsReviewedCount,
 			front: currentCard.front,
 			back: currentCard.back,
-			isLearning
+			isLearning,
+			intervals: currentCard.intervals
 		});
 		emit({ type: 'phase_change', phase: 'question' });
 
@@ -503,7 +520,8 @@ export function createReviewEngine(): ReviewEngine {
 			total: cardsReviewedCount,
 			front: card.front,
 			back: card.back,
-			isLearning
+			isLearning,
+			intervals: card.intervals
 		});
 		emit({ type: 'phase_change', phase: 'rating' });
 
@@ -564,9 +582,16 @@ export function createReviewEngine(): ReviewEngine {
 			return;
 		}
 
-		const data = (await res.json()) as { cards: Record<string, unknown>[]; deckName: string };
+		const data = (await res.json()) as {
+			cards: Record<string, unknown>[];
+			deckName: string;
+			counts?: QueueCounts;
+		};
 		if (data.deckName) {
 			emit({ type: 'deck_info', name: data.deckName });
+		}
+		if (data.counts) {
+			emit({ type: 'counts', counts: data.counts });
 		}
 		if (!data.cards || data.cards.length === 0) {
 			emit({ type: 'session_end', stats });
@@ -574,8 +599,10 @@ export function createReviewEngine(): ReviewEngine {
 		}
 
 		// Parse card fronts/backs into review queue
+		const defaultIntervals: IntervalLabels = { again: '', hard: '', good: '', easy: '' };
 		reviewQueue = data.cards.map((c) => {
 			const { front, back } = renderCard(c.fields as string, c.card_type as string);
+			const intervals = (c.intervals as IntervalLabels) ?? defaultIntervals;
 			return {
 				id: c.id as string,
 				note_id: c.note_id as string,
@@ -585,7 +612,8 @@ export function createReviewEngine(): ReviewEngine {
 				fields: c.fields as string,
 				tags: c.tags as string,
 				front,
-				back
+				back,
+				intervals
 			};
 		});
 		learningQueue = [];

@@ -152,15 +152,13 @@
 					</div>
 				</a>
 				<div class="deck-actions">
-					<a href="/decks/{deck.id}/cards" class="deck-action-link" aria-label="Browse cards in {deck.name}">Browse</a>
-					<button class="deck-action-link" aria-label="Export {deck.name}" disabled={exportingDeckId === deck.id} onclick={() => exportDeck(deck.id, deck.name)}>
-						{exportingDeckId === deck.id ? 'Exporting...' : 'Export'}
+					<a href="/decks/{deck.id}/cards" class="deck-action-btn" aria-label="Browse cards in {deck.name}" title="Browse">📇</a>
+					<button class="deck-action-btn" aria-label="Export {deck.name}" title="Export" disabled={exportingDeckId === deck.id} onclick={() => exportDeck(deck.id, deck.name)}>
+						{exportingDeckId === deck.id ? '⏳' : '📤'}
 					</button>
-					<a href="/decks/{deck.id}/settings" class="deck-action-link" aria-label="Settings for {deck.name}">Settings</a>
-					<a href="/decks/{deck.id}/stats" class="deck-action-link" aria-label="Statistics for {deck.name}">Stats</a>
-					<button class="delete-btn" aria-label="Delete {deck.name} deck" onclick={() => deleteDeck(deck.id, deck.name)}>
-						Delete
-					</button>
+					<a href="/decks/{deck.id}/settings" class="deck-action-btn" aria-label="Settings for {deck.name}" title="Settings">⚙️</a>
+					<a href="/decks/{deck.id}/stats" class="deck-action-btn" aria-label="Statistics for {deck.name}" title="Stats">📊</a>
+					<button class="deck-action-btn delete" aria-label="Delete {deck.name} deck" title="Delete" onclick={() => deleteDeck(deck.id, deck.name)}>🗑️</button>
 				</div>
 			</li>
 		{/each}
@@ -294,9 +292,8 @@
 	.deck-actions {
 		display: flex;
 		align-items: center;
-		gap: 0.5rem;
-		padding: 0 0.75rem;
-		flex-wrap: wrap;
+		gap: 0.25rem;
+		padding: 0 0.5rem;
 	}
 
 	@media (max-width: 600px) {
@@ -311,44 +308,35 @@
 
 		.deck-actions {
 			padding: 0 1rem 0.75rem;
-			gap: 0.4rem;
+			gap: 0.25rem;
 		}
 	}
 
-	.deck-action-link {
-		padding: 0.5rem 0.75rem;
-		color: #a8a8b8;
-		text-decoration: none;
-		border: 1px solid #444;
+	.deck-action-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		height: 36px;
 		border-radius: 6px;
-		font-size: 0.8rem;
+		border: none;
 		background: none;
 		cursor: pointer;
-		font-family: inherit;
+		font-size: 1.1rem;
+		text-decoration: none;
+		transition: background 0.15s;
 	}
 
-	.deck-action-link:hover {
-		border-color: #5a5a8e;
-		color: #e0e0ff;
+	.deck-action-btn:hover {
+		background: #2a2a4e;
 	}
 
-	.deck-action-link:disabled {
+	.deck-action-btn:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
 	}
 
-	.delete-btn {
-		padding: 0.5rem 1rem;
-		background: none;
-		border: 1px solid #444;
-		color: #a8a8b8;
-		border-radius: 6px;
-		cursor: pointer;
-		font-size: 0.8rem;
-	}
-
-	.delete-btn:hover {
-		border-color: #e53e3e;
-		color: #e53e3e;
+	.deck-action-btn.delete:hover {
+		background: #3a1515;
 	}
 </style>
