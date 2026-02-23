@@ -6,7 +6,8 @@
 
   // Public env vars (available client-side via $env/dynamic/public)
   "vars": {
-    "PUBLIC_HANKO_API_URL": "https://d69d0f77-1b44-41e2-afe2-dd11340803f8.hanko.io"
+    "PUBLIC_HANKO_API_URL": "https://d69d0f77-1b44-41e2-afe2-dd11340803f8.hanko.io",
+    "HANKO_API_URL": "https://d69d0f77-1b44-41e2-afe2-dd11340803f8.hanko.io"
   },
 
   // D1 Database
