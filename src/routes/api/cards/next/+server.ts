@@ -14,9 +14,9 @@ export const GET: RequestHandler = async ({ url, platform, locals }) => {
 
 	// Verify deck ownership
 	const deck = await db
-		.prepare('SELECT id FROM decks WHERE id = ? AND user_id = ?')
+		.prepare('SELECT id, name FROM decks WHERE id = ? AND user_id = ?')
 		.bind(deckId, locals.userId)
-		.first();
+		.first<{ id: string; name: string }>();
 
 	if (!deck) throw error(404, 'Deck not found');
 
@@ -32,5 +32,5 @@ export const GET: RequestHandler = async ({ url, platform, locals }) => {
 		.bind(deckId, limit)
 		.all();
 
-	return json({ cards: cards.results });
+	return json({ cards: cards.results, deckName: deck.name });
 };

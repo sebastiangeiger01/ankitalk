@@ -82,7 +82,7 @@
 <h1>Your Decks</h1>
 
 <section class="upload">
-	<label class="upload-btn" class:disabled={importing}>
+	<label class="upload-btn" class:disabled={importing} aria-label={importing ? 'Importing deck' : 'Import Anki .apkg file'}>
 		{importing ? 'Importing...' : 'Import .apkg File'}
 		<input type="file" accept=".apkg" onchange={handleFileUpload} disabled={importing} hidden />
 	</label>
@@ -94,11 +94,27 @@
 {#if loading}
 	<p class="loading">Loading decks...</p>
 {:else if decks.length === 0}
-	<p class="empty">No decks yet. Import an .apkg file from Anki to get started.</p>
+	<div class="onboarding">
+		<div class="onboarding-icon">
+			<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+				<rect x="8" y="12" width="48" height="40" rx="6" stroke="#4a4a8e" stroke-width="2.5" fill="none"/>
+				<path d="M24 32 L30 38 L40 26" stroke="#6ecb63" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+				<circle cx="48" cy="16" r="8" fill="#4a4a8e"/>
+				<path d="M48 12 L48 20 M44 16 L52 16" stroke="#e0e0ff" stroke-width="2" stroke-linecap="round"/>
+			</svg>
+		</div>
+		<h2>Welcome to AnkiTalk</h2>
+		<p class="onboarding-desc">Review your Anki flashcards hands-free using voice commands. Just speak to rate cards, hear answers, and get AI explanations.</p>
+		<p class="onboarding-steps">To get started, export a deck from <strong>Anki</strong> as an <strong>.apkg file</strong> (File &rarr; Export), then import it here.</p>
+		<label class="upload-btn primary-cta" class:disabled={importing} aria-label={importing ? 'Importing deck' : 'Import Anki .apkg file'}>
+			{importing ? 'Importing...' : 'Import .apkg File'}
+			<input type="file" accept=".apkg" onchange={handleFileUpload} disabled={importing} hidden />
+		</label>
+	</div>
 {:else}
 	<ul class="deck-list">
 		{#each decks as deck (deck.id)}
-			<li class="deck-card">
+			<li class="deck-card" aria-label="{deck.name} deck, {deck.card_count} cards, {deck.due_count} due">
 				<a href="/review/{deck.id}" class="deck-link">
 					<h2>{deck.name}</h2>
 					<div class="deck-stats">
@@ -108,7 +124,7 @@
 						</span>
 					</div>
 				</a>
-				<button class="delete-btn" onclick={() => deleteDeck(deck.id, deck.name)}>
+				<button class="delete-btn" aria-label="Delete {deck.name} deck" onclick={() => deleteDeck(deck.id, deck.name)}>
 					Delete
 				</button>
 			</li>
@@ -151,9 +167,47 @@
 		font-size: 0.9rem;
 	}
 
-	.loading,
-	.empty {
-		color: #888;
+	.loading {
+		color: #a8a8b8;
+	}
+
+	.onboarding {
+		text-align: center;
+		padding: 3rem 1rem;
+		max-width: 420px;
+		margin: 0 auto;
+	}
+
+	.onboarding-icon {
+		margin-bottom: 1.5rem;
+	}
+
+	.onboarding h2 {
+		margin: 0 0 0.75rem;
+	}
+
+	.onboarding-desc {
+		color: #b0b0c0;
+		font-size: 0.95rem;
+		line-height: 1.5;
+		margin-bottom: 1rem;
+	}
+
+	.onboarding-steps {
+		color: #a8a8b8;
+		font-size: 0.85rem;
+		line-height: 1.5;
+		margin-bottom: 1.5rem;
+	}
+
+	.primary-cta {
+		padding: 0.9rem 2rem !important;
+		font-size: 1.1rem !important;
+		background: #4a4a8e !important;
+	}
+
+	.primary-cta:hover {
+		background: #5a5aae !important;
 	}
 
 	.deck-list {
@@ -192,7 +246,7 @@
 		display: flex;
 		gap: 1rem;
 		font-size: 0.85rem;
-		color: #888;
+		color: #a8a8b8;
 	}
 
 	.due.has-due {
@@ -205,7 +259,7 @@
 		margin-right: 0.75rem;
 		background: none;
 		border: 1px solid #444;
-		color: #888;
+		color: #a8a8b8;
 		border-radius: 6px;
 		cursor: pointer;
 		font-size: 0.8rem;

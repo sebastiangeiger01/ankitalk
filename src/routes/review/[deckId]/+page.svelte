@@ -18,6 +18,7 @@
 	let errorMsg = $state('');
 	let sessionEnded = $state(false);
 	let stats = $state<SessionStats | null>(null);
+	let deckName = $state('');
 
 	const engine = createReviewEngine();
 
@@ -56,6 +57,9 @@
 			case 'error':
 				errorMsg = event.message;
 				break;
+			case 'deck_info':
+				deckName = event.name;
+				break;
 		}
 	});
 
@@ -72,6 +76,14 @@
 		return `${minutes}m ${secs}s`;
 	}
 
+	// Fetch deck name on mount for the start screen
+	$effect(() => {
+		fetch(`/api/decks/${deckId}`)
+			.then((r) => r.json())
+			.then((data) => { deckName = (data as { deck: { name: string } }).deck.name; })
+			.catch(() => {});
+	});
+
 	onDestroy(() => {
 		engine.destroy();
 	});
@@ -80,7 +92,7 @@
 <div class="review-container">
 	{#if !started}
 		<div class="start-screen">
-			<h1>Ready to Review</h1>
+			<h1>Ready to Review{deckName ? ` — ${deckName}` : ''}</h1>
 			<p>Tap the button below to start your voice-controlled review session.</p>
 			<button class="start-btn" onclick={startReview}>Start Review</button>
 			<div class="commands-help">
@@ -97,7 +109,7 @@
 		</div>
 	{:else if sessionEnded && stats}
 		<div class="summary">
-			<h1>Session Complete</h1>
+			<h1>Session Complete{deckName ? ` — ${deckName}` : ''}</h1>
 			<div class="stat-grid">
 				<div class="stat">
 					<span class="stat-value">{stats.cardsReviewed}</span>
@@ -118,32 +130,37 @@
 		</div>
 	{:else}
 		<div class="active-review">
-			<div class="progress">
+			{#if deckName}
+				<h2 class="deck-title">{deckName}</h2>
+			{/if}
+			<div class="progress" aria-live="polite" aria-label="Card {cardIndex + 1} of {cardTotal}">
 				{cardIndex + 1} / {cardTotal}
 			</div>
 
-			<div class="card-display">
-				<div class="front">
+			<div class="card-display" role="region" aria-label="Flashcard">
+				<div class="front" aria-label="Question">
 					<p>{frontText}</p>
 				</div>
 				{#if phase === 'rating'}
-					<div class="back">
+					<div class="back" aria-label="Answer">
 						<p>{backText}</p>
 					</div>
 				{/if}
 			</div>
 
 			<div class="status-bar">
-				<span class="phase-badge" class:question={phase === 'question'} class:rating={phase === 'rating'}>
+				<span class="phase-badge" aria-label="Current phase: {phase === 'question' ? 'Question' : 'Rating'}" class:question={phase === 'question'} class:rating={phase === 'rating'}>
 					{phase === 'question' ? 'Question' : 'Rate It'}
 				</span>
-				<span class="status-indicator"
+				<span class="status-indicator" aria-label="Status: {status}"
 					class:speaking={status === 'speaking'}
 					class:listening={status === 'listening'}
 					class:explaining={status === 'explaining'}>
 					{#if status === 'speaking'}
+						<span class="viz viz-speaking"><span></span><span></span><span></span></span>
 						Speaking...
 					{:else if status === 'listening'}
+						<span class="viz viz-listening"><span></span><span></span></span>
 						Listening...
 					{:else if status === 'explaining'}
 						Thinking...
@@ -165,25 +182,28 @@
 				<p class="error">{errorMsg}</p>
 			{/if}
 
-			<div class="available-commands">
+			<div class="action-buttons" role="group" aria-label={phase === 'question' ? 'Question actions' : 'Rating actions'}>
 				{#if phase === 'question'}
-					<span>answer</span>
-					<span>hint</span>
-					<span>again</span>
-					<span>hard</span>
-					<span>good</span>
-					<span>easy</span>
-					<span>stop</span>
+					<button class="action-btn show-answer" onclick={() => engine.executeCommand('answer')}>Show Answer</button>
+					<button class="action-btn hint" onclick={() => engine.executeCommand('hint')}>Hint</button>
 				{:else}
-					<span>explain</span>
-					<span>again</span>
-					<span>hard</span>
-					<span>good</span>
-					<span>easy</span>
-					<span>repeat</span>
-					<span>stop</span>
+					<button class="action-btn again" aria-label="Rate: Again" onclick={() => engine.executeCommand('again')}>Again</button>
+					<button class="action-btn hard" aria-label="Rate: Hard" onclick={() => engine.executeCommand('hard')}>Hard</button>
+					<button class="action-btn good" aria-label="Rate: Good" onclick={() => engine.executeCommand('good')}>Good</button>
+					<button class="action-btn easy" aria-label="Rate: Easy" onclick={() => engine.executeCommand('easy')}>Easy</button>
+					<button class="action-btn explain" onclick={() => engine.executeCommand('explain')}>Explain</button>
 				{/if}
 			</div>
+
+			<div class="voice-hints" aria-label="Available voice commands">
+				{#if phase === 'question'}
+					<span class="voice-hint-label">Say:</span> answer, hint, again, hard, good, easy, stop
+				{:else}
+					<span class="voice-hint-label">Say:</span> explain, again, hard, good, easy, repeat, stop
+				{/if}
+			</div>
+
+			<button class="stop-btn" onclick={() => engine.executeCommand('stop')}>Stop Session</button>
 		</div>
 	{/if}
 </div>
@@ -220,12 +240,12 @@
 		text-align: left;
 		max-width: 350px;
 		margin: 2rem auto 0;
-		color: #888;
+		color: #a8a8b8;
 		font-size: 0.9rem;
 	}
 
 	.commands-help h3 {
-		color: #aaa;
+		color: #bbb;
 	}
 
 	.commands-help ul {
@@ -260,7 +280,7 @@
 	}
 
 	.stat-label {
-		color: #888;
+		color: #a8a8b8;
 		font-size: 0.85rem;
 	}
 
@@ -307,8 +327,15 @@
 		padding-top: 1rem;
 	}
 
+	.deck-title {
+		margin: 0;
+		font-size: 1rem;
+		font-weight: 600;
+		color: #b0b0d0;
+	}
+
 	.progress {
-		color: #888;
+		color: #a8a8b8;
 		font-size: 0.9rem;
 	}
 
@@ -355,7 +382,10 @@
 
 	.status-indicator {
 		font-size: 0.85rem;
-		color: #888;
+		color: #a8a8b8;
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
 	}
 
 	.status-indicator.speaking { color: #ffbb88; }
@@ -363,7 +393,7 @@
 	.status-indicator.explaining { color: #bbaaff; }
 
 	.transcript {
-		color: #666;
+		color: #9090a0;
 		font-style: italic;
 		font-size: 0.85rem;
 	}
@@ -379,18 +409,109 @@
 		font-size: 0.85rem;
 	}
 
-	.available-commands {
+	.action-buttons {
 		display: flex;
 		gap: 0.5rem;
 		flex-wrap: wrap;
 		justify-content: center;
 	}
 
-	.available-commands span {
-		padding: 0.25rem 0.6rem;
-		background: #2a2a4e;
-		border-radius: 6px;
+	.action-btn {
+		padding: 0.5rem 1.2rem;
+		border: none;
+		border-radius: 8px;
+		font-size: 0.9rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: filter 0.15s;
+	}
+
+	.action-btn:hover {
+		filter: brightness(1.2);
+	}
+
+	.action-btn.show-answer { background: #3a3a7e; color: #c0c0ff; }
+	.action-btn.hint { background: #2a2a4e; color: #a8a8b8; }
+	.action-btn.again { background: #4a2020; color: #ff8888; }
+	.action-btn.hard { background: #4a3a20; color: #ffbb88; }
+	.action-btn.good { background: #204a20; color: #88ff88; }
+	.action-btn.easy { background: #20204a; color: #88bbff; }
+	.action-btn.explain { background: #2a2a4e; color: #bbaaff; }
+
+	.voice-hints {
 		font-size: 0.75rem;
-		color: #888;
+		color: #8080a0;
+		text-align: center;
+	}
+
+	.voice-hint-label {
+		font-weight: 600;
+		color: #a8a8b8;
+	}
+
+	.stop-btn {
+		padding: 0.35rem 1rem;
+		background: none;
+		border: 1px solid #444;
+		color: #a8a8b8;
+		border-radius: 6px;
+		cursor: pointer;
+		font-size: 0.8rem;
+		margin-top: 0.5rem;
+	}
+
+	.stop-btn:hover {
+		border-color: #e53e3e;
+		color: #e53e3e;
+	}
+
+	/* Mic/audio visualization */
+	.viz {
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+	}
+
+	.viz-listening span {
+		display: inline-block;
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: #88ff88;
+		animation: pulse-mic 1.4s ease-in-out infinite;
+	}
+
+	.viz-listening span:nth-child(2) {
+		animation-delay: 0.2s;
+		opacity: 0.6;
+	}
+
+	.viz-speaking span {
+		display: inline-block;
+		width: 3px;
+		height: 12px;
+		border-radius: 2px;
+		background: #ffbb88;
+		animation: bar-wave 0.8s ease-in-out infinite;
+	}
+
+	.viz-speaking span:nth-child(2) {
+		animation-delay: 0.15s;
+		height: 16px;
+	}
+
+	.viz-speaking span:nth-child(3) {
+		animation-delay: 0.3s;
+		height: 10px;
+	}
+
+	@keyframes pulse-mic {
+		0%, 100% { transform: scale(1); opacity: 1; }
+		50% { transform: scale(1.4); opacity: 0.5; }
+	}
+
+	@keyframes bar-wave {
+		0%, 100% { transform: scaleY(0.5); }
+		50% { transform: scaleY(1.2); }
 	}
 </style>

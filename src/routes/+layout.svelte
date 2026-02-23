@@ -37,6 +37,15 @@
 		min-height: 100dvh;
 	}
 
+	:global(*:focus-visible) {
+		outline: 2px solid #6ecb63;
+		outline-offset: 2px;
+	}
+
+	:global(*:focus:not(:focus-visible)) {
+		outline: none;
+	}
+
 	nav {
 		display: flex;
 		justify-content: space-between;
@@ -55,7 +64,7 @@
 	nav button {
 		background: none;
 		border: 1px solid #444;
-		color: #aaa;
+		color: #b0b0c0;
 		padding: 0.4rem 0.8rem;
 		border-radius: 6px;
 		cursor: pointer;

@@ -12,7 +12,8 @@ export type ReviewEvent =
 	| { type: 'transcript'; text: string; isFinal: boolean }
 	| { type: 'session_end'; stats: SessionStats }
 	| { type: 'error'; message: string }
-	| { type: 'explaining' };
+	| { type: 'explaining' }
+	| { type: 'deck_info'; name: string };
 
 export interface SessionStats {
 	cardsReviewed: number;
@@ -36,6 +37,7 @@ export interface ReviewEngine {
 	start(deckId: string): Promise<void>;
 	destroy(): void;
 	onEvent(cb: EventCallback): void;
+	executeCommand(command: VoiceCommand): void;
 }
 
 /**
@@ -256,7 +258,10 @@ export function createReviewEngine(): ReviewEngine {
 			return;
 		}
 
-		const data = (await res.json()) as { cards: Record<string, unknown>[] };
+		const data = (await res.json()) as { cards: Record<string, unknown>[]; deckName: string };
+		if (data.deckName) {
+			emit({ type: 'deck_info', name: data.deckName });
+		}
 		if (!data.cards || data.cards.length === 0) {
 			emit({ type: 'session_end', stats });
 			return;
@@ -310,6 +315,9 @@ export function createReviewEngine(): ReviewEngine {
 		destroy,
 		onEvent(cb: EventCallback) {
 			eventCb = cb;
+		},
+		executeCommand(command: VoiceCommand) {
+			handleCommand(command);
 		}
 	};
 }
