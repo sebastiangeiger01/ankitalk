@@ -61,6 +61,9 @@
 		justify-content: space-between;
 		align-items: center;
 		padding: 1rem 1.5rem;
+		padding-top: max(1rem, env(safe-area-inset-top));
+		padding-left: max(1.5rem, env(safe-area-inset-left));
+		padding-right: max(1.5rem, env(safe-area-inset-right));
 		border-bottom: 1px solid #2a2a4e;
 	}
 
@@ -109,6 +112,8 @@
 		max-width: 800px;
 		margin: 0 auto;
 		padding: 1.5rem;
+		padding-left: max(1.5rem, env(safe-area-inset-left));
+		padding-right: max(1.5rem, env(safe-area-inset-right));
 	}
 
 	:global(body.review-active) main {
@@ -118,8 +123,8 @@
 
 	.version {
 		position: fixed;
-		bottom: 0.5rem;
-		right: 0.75rem;
+		bottom: max(0.5rem, env(safe-area-inset-bottom));
+		right: max(0.75rem, env(safe-area-inset-right));
 		font-size: 0.65rem;
 		color: #555;
 		pointer-events: none;

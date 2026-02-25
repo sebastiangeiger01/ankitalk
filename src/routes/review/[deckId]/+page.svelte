@@ -600,7 +600,7 @@
 	/* ========== Toast Notifications ========== */
 	.toast-error {
 		position: fixed;
-		top: 0.75rem;
+		top: calc(env(safe-area-inset-top) + 0.75rem);
 		left: 50%;
 		transform: translateX(-50%);
 		background: #4a2020;
@@ -615,7 +615,7 @@
 
 	.toast-notice {
 		position: fixed;
-		top: 0.75rem;
+		top: calc(env(safe-area-inset-top) + 0.75rem);
 		left: 50%;
 		transform: translateX(-50%);
 		background: #3a2a10;
@@ -643,7 +643,8 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		padding: 0 0.75rem;
+		padding: 0 max(0.75rem, env(safe-area-inset-right)) 0 max(0.75rem, env(safe-area-inset-left));
+		padding-top: env(safe-area-inset-top);
 		z-index: 50;
 		background: #1a1a2e;
 	}
@@ -745,7 +746,7 @@
 	/* ========== Card Area ========== */
 	.card-area {
 		position: fixed;
-		top: 48px;
+		top: calc(48px + env(safe-area-inset-top));
 		bottom: 0;
 		left: 0;
 		right: 0;
@@ -753,6 +754,8 @@
 		align-items: flex-start;
 		justify-content: center;
 		padding: 1.5rem;
+		padding-left: max(1.5rem, env(safe-area-inset-left));
+		padding-right: max(1.5rem, env(safe-area-inset-right));
 		padding-bottom: 140px;
 		overflow-y: auto;
 	}
@@ -851,7 +854,7 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		padding: 0.5rem 1rem;
+		padding: 0.5rem max(1rem, env(safe-area-inset-right)) 0 max(1rem, env(safe-area-inset-left));
 		padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
 		background: #1a1a2e;
 		border-top: 1px solid #2a2a4e;
