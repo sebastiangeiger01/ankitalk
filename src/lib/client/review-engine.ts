@@ -161,13 +161,15 @@ function renderCard(fieldsJson: string, cardType: string): { front: string; back
 		return { front: 'Empty card', back: '', frontHtml: 'Empty card', backHtml: '' };
 	}
 
-	if (cardType === 'cloze') {
-		const text = fields[0]?.value ?? '';
+	const firstValue = fields[0]?.value ?? '';
+	const isCloze = cardType === 'cloze' || /\{\{c\d+::/.test(firstValue);
+
+	if (isCloze) {
 		return {
-			front: stripHtml(processCloze(text, false)),
-			back: stripHtml(processCloze(text, true)),
-			frontHtml: rewriteMediaUrls(processClozeHtml(text, false)),
-			backHtml: rewriteMediaUrls(processClozeHtml(text, true))
+			front: stripHtml(processCloze(firstValue, false)),
+			back: stripHtml(processCloze(firstValue, true)),
+			frontHtml: rewriteMediaUrls(processClozeHtml(firstValue, false)),
+			backHtml: rewriteMediaUrls(processClozeHtml(firstValue, true))
 		};
 	}
 

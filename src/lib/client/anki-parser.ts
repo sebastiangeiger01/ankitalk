@@ -146,7 +146,10 @@ export async function parseApkg(file: File): Promise<ParsedApkg> {
 
 			const modelId = noteModelMap.get(noteAnkiId);
 			const model = modelId ? modelMap.get(modelId) : undefined;
-			const isCloze = model?.type === 1 || cardTypeRaw === 1;
+			// model.type 1 = cloze note type; also detect cloze syntax in fields as fallback
+			const note = notes.find((n) => n.ankiId === noteAnkiId);
+			const hasClozeFields = note?.fields.some((f) => /\{\{c\d+::/.test(f.value)) ?? false;
+			const isCloze = model?.type === 1 || hasClozeFields;
 
 			cards.push({
 				ankiId: cardId,

@@ -228,7 +228,7 @@
 					const fields = JSON.parse(card.fields) as { value: string }[];
 					if (!fields.length) return;
 					let text: string;
-					if (card.card_type === 'cloze') {
+					if (card.card_type === 'cloze' || /\{\{c\d+::/.test(fields[0].value)) {
 						text = fields[0].value.replace(/\{\{c\d+::(.*?)(?:::(.*?))?\}\}/g, (_m, _a, hint) => hint || 'blank');
 					} else {
 						text = fields[0].value;
