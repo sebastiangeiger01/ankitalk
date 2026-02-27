@@ -61,6 +61,7 @@
 		justify-content: space-between;
 		align-items: center;
 		padding: 1rem 1.5rem;
+		padding-top: max(1rem, env(safe-area-inset-top));
 		border-bottom: 1px solid #2a2a4e;
 	}
 

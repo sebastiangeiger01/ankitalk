@@ -600,7 +600,7 @@
 	/* ========== Toast Notifications ========== */
 	.toast-error {
 		position: fixed;
-		top: 0.75rem;
+		top: max(0.75rem, env(safe-area-inset-top));
 		left: 50%;
 		transform: translateX(-50%);
 		background: #4a2020;
@@ -615,7 +615,7 @@
 
 	.toast-notice {
 		position: fixed;
-		top: 0.75rem;
+		top: max(0.75rem, env(safe-area-inset-top));
 		left: 50%;
 		transform: translateX(-50%);
 		background: #3a2a10;
@@ -643,7 +643,7 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		padding: 0 0.75rem;
+		padding: env(safe-area-inset-top) 0.75rem 0;
 		z-index: 50;
 		background: #1a1a2e;
 	}
@@ -745,7 +745,7 @@
 	/* ========== Card Area ========== */
 	.card-area {
 		position: fixed;
-		top: 48px;
+		top: calc(48px + env(safe-area-inset-top));
 		bottom: 0;
 		left: 0;
 		right: 0;
