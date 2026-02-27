@@ -852,7 +852,7 @@
 		flex-direction: column;
 		align-items: center;
 		padding: 0.5rem 1rem;
-		padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+		padding-bottom: 0.75rem;
 		background: #1a1a2e;
 		border-top: 1px solid #2a2a4e;
 		z-index: 50;
