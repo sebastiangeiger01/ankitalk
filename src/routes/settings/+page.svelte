@@ -161,6 +161,7 @@
 	}
 </script>
 
+{#key current}
 <div class="settings-page">
 	<a href="/" class="back-link">&larr; {t('appSettings.dashboard')}</a>
 
@@ -354,6 +355,7 @@
 		{/if}
 	</section>
 </div>
+{/key}
 
 
 <style>
