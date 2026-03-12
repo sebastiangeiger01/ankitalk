@@ -108,7 +108,10 @@
 				expanded[service] = false;
 				messages[service] = { text: t('settings.apiKeys.saved'), ok: true };
 			} else {
-				messages[service] = { text: t('settings.apiKeys.invalid'), ok: false };
+				const errKey = res.status === 403 && service === 'deepgram'
+					? 'settings.apiKeys.deepgramPermissions'
+					: 'settings.apiKeys.invalid';
+				messages[service] = { text: t(errKey), ok: false };
 			}
 		} catch {
 			messages[service] = { text: t('settings.apiKeys.invalid'), ok: false };

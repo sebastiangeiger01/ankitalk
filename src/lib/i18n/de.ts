@@ -167,6 +167,7 @@ export const de: Record<string, string> = {
 	'settings.apiKeys.getKey': 'Schlüssel erhältlich unter',
 	'settings.apiKeys.validating': 'Schlüssel wird überprüft...',
 	'settings.apiKeys.invalid': 'Ungültiger API-Schlüssel — bitte überprüfen und erneut versuchen',
+	'settings.apiKeys.deepgramPermissions': 'Schlüssel benötigt Member-Berechtigung — erstelle den Schlüssel in der Deepgram Console mit der Rolle „Member"',
 
 	// Usage & Costs
 	'settings.usage.title': 'Nutzung & Kosten',
