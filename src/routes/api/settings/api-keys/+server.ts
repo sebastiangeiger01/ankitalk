@@ -31,8 +31,13 @@ async function testApiKey(service: ServiceName, key: string): Promise<void> {
 				headers: { Authorization: 'Bearer ' + key }
 			});
 		} else if (service === 'deepgram') {
-			response = await fetch('https://api.deepgram.com/v1/projects', {
-				headers: { Authorization: 'Token ' + key }
+			response = await fetch('https://api.deepgram.com/v1/auth/grant', {
+				method: 'POST',
+				headers: {
+					Authorization: 'Token ' + key,
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify({ time_to_live_in_seconds: 10 })
 			});
 		} else {
 			// anthropic
@@ -60,7 +65,7 @@ async function testApiKey(service: ServiceName, key: string): Promise<void> {
 		case 401:
 			throw error(400, 'Invalid API key');
 		case 403:
-			throw error(400, 'Insufficient permissions');
+			throw error(403, 'Insufficient permissions');
 		case 429:
 			throw error(400, 'Rate limited');
 		default:

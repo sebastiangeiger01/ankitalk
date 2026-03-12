@@ -64,7 +64,7 @@ export function createDeepgramClient(options?: DeepgramOptions): DeepgramClient 
 			'wss://api.deepgram.com/v1/listen?' +
 			new URLSearchParams(params).toString();
 
-		socket = new WebSocket(url, ['token', token]);
+		socket = new WebSocket(url, ['bearer', token]);
 
 		socket.onopen = () => {
 			// 4. Start recording and sending audio chunks

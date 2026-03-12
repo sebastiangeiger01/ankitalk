@@ -167,6 +167,7 @@ export const en: Record<string, string> = {
 	'settings.apiKeys.getKey': 'Get your key at',
 	'settings.apiKeys.validating': 'Validating key...',
 	'settings.apiKeys.invalid': 'Invalid API key — please check and try again',
+	'settings.apiKeys.deepgramPermissions': 'Key needs Member-level permissions — in the Deepgram Console, create your key with the "Member" role',
 
 	// Usage & Costs
 	'settings.usage.title': 'Usage & Costs',
