@@ -73,16 +73,34 @@ The master key is a 256-bit key stored as a Cloudflare secret (`ENCRYPTION_KEY`)
 - `GET` — Returns which services have keys configured (NOT the keys themselves)
   - Response: `{ openai: boolean, deepgram: boolean, anthropic: boolean }`
 
-- `PUT` — Upsert an API key for a service
+- `PUT` — Validate, then upsert an API key for a service
   - Body: `{ service: 'openai' | 'deepgram' | 'anthropic', key: string }`
   - Validates key format (basic prefix check: `sk-` for OpenAI, `sk-ant-` for Anthropic, etc.)
-  - Encrypts and stores in D1
+  - **Makes a test API call to verify the key works** (see Step 4b)
+  - If test fails → return error with specific reason, do NOT store
+  - If test passes → encrypt and store in D1
   - Response: `{ success: true }`
 
 - `DELETE` — Remove an API key
   - Body: `{ service: 'openai' | 'deepgram' | 'anthropic' }`
   - Deletes from D1
   - Response: `{ success: true }`
+
+### Step 4b: API Key Validation (test calls on save)
+
+Before encrypting and storing a key, the PUT endpoint makes a lightweight test call:
+
+| Service | Test Call | Cost | Why |
+|---------|-----------|------|-----|
+| **OpenAI** | `GET /v1/models` | Free | Lists available models, confirms key is valid and active |
+| **Deepgram** | `POST /v1/auth/grant` (60s TTL token) | Free | Already have this logic, confirms key works |
+| **Anthropic** | `POST /v1/messages` with `max_tokens: 1`, prompt "Hi" | ~$0.00001 | Cheapest possible call, confirms key + model access |
+
+Error handling returns specific messages:
+- 401 → "Invalid API key — please check and try again"
+- 403 → "API key lacks required permissions"
+- 429 → "API key is rate-limited — try again in a moment"
+- Network error → "Could not reach {service} — check your key and try again"
 
 ### Step 5: Helper to Load User Keys (`src/lib/server/user-keys.ts`)
 
@@ -149,28 +167,123 @@ Add translation keys for:
 - `settings.apiKeys.getKey` — "Get your key at"
 - `settings.apiKeys.placeholder` — "Paste your API key here"
 
-### Step 10: Update Dashboard / Review Flow
+### Step 10: Onboarding Checklist on Dashboard
 
-When a user tries to start a review session without any keys configured:
-- Show a clear message directing them to Settings
-- Don't let them enter the review flow with missing keys (check on the review page load or via a layout data loader)
+When a new user lands on the dashboard (no keys, no decks), show a friendly onboarding checklist instead of an empty state:
+
+**Component:** `src/lib/components/OnboardingChecklist.svelte`
+
+```
+Welcome to AnkiTalk! Let's get you set up:
+
+  [✓] Create account                        ← always done
+  [ ] Add API keys (2 required, 1 optional) ← links to Settings
+  [ ] Import your first Anki deck           ← links to import flow
+  [ ] Start your first review session       ← enabled once above are done
+```
+
+- Loaded via the dashboard's `+page.server.ts` or `+layout.server.ts` — query `user_api_keys` and `decks` count
+- Each step shows ✓ when complete, links to the relevant page when not
+- **Required vs optional is clear:** OpenAI + Deepgram marked as "Required", Anthropic marked as "Optional — for AI explanations"
+- Checklist disappears once all required steps are done (user has keys + at least one deck)
+- Can be dismissed manually (store dismissal in a cookie or D1)
+
+### Step 11: Required vs Optional Key Distinction
+
+In the Settings page API key section, clearly separate:
+
+**Required for voice review:**
+- OpenAI (Text-to-Speech) — "Reads your cards aloud"
+- Deepgram (Speech-to-Text) — "Listens to your voice commands"
+
+**Optional:**
+- Anthropic (AI Explanations) — "Explains cards when you say 'explain'. You can review without this."
+
+The review flow should:
+- Block entry if OpenAI or Deepgram keys are missing → show banner with link to Settings
+- Allow entry without Anthropic key → the "explain" command just returns a friendly message ("Add your Anthropic key in Settings to use explanations")
+
+### Step 12: Cost Transparency in Settings
+
+Next to each API key input, show estimated costs:
+
+- **OpenAI TTS:** "~$0.003 per card read aloud (front + back avg 500 chars)"
+- **Deepgram STT:** "~$0.01–0.03 per review session"
+- **Anthropic:** "~$0.02 per explanation (only when you ask)"
+
+### Step 13: Live Cost Tracking
+
+Track API usage costs per user in real time so users can see what they're spending.
+
+**New table** (`migrations/0005_user_api_keys.sql` — same migration):
+
+```sql
+CREATE TABLE api_usage (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  service TEXT NOT NULL,           -- 'openai' | 'deepgram' | 'anthropic'
+  operation TEXT NOT NULL,         -- 'tts' | 'stt_token' | 'explain'
+  units INTEGER NOT NULL,          -- characters (TTS), seconds (STT), tokens (Anthropic)
+  estimated_cost_usd REAL NOT NULL,-- calculated cost in USD
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE INDEX idx_api_usage_user_date ON api_usage(user_id, created_at);
+```
+
+**Cost calculation** (server-side, logged after each successful API call):
+
+| Service | Unit | Rate | Tracking |
+|---------|------|------|----------|
+| OpenAI TTS | characters | $0.60 / 1M chars | `text.length` from TTS request |
+| Deepgram STT | seconds | ~$0.0043 / sec (Nova-3) | Estimated from session duration |
+| Anthropic | input+output tokens | $1.00/$5.00 per 1M tokens (Haiku) | From API response `usage` field |
+
+**New endpoint:** `GET /api/settings/usage`
+- Returns usage summary: today, this week, this month, all time
+- Response: `{ today: { openai: 0.02, deepgram: 0.01, anthropic: 0.00, total: 0.03 }, week: {...}, month: {...} }`
+
+**Settings page UI addition:**
+- "Usage & Costs" section below API keys
+- Simple breakdown: per-service cost for today / this week / this month
+- Total across all services
+- Note: "Costs are estimated based on published API pricing and may differ slightly from your provider's invoice"
+
+**API endpoint changes** — each service endpoint logs usage after a successful call:
+- TTS: log `text.length` characters → calculate cost
+- Deepgram token: log token grant (actual STT duration tracked client-side, sent back on session end)
+- Explain: log input/output tokens from Anthropic response `usage` object
+
+### Step 14: Missing Key Banner in Review Flow
+
+If a user reaches `/review/[deckId]` without required keys:
+- Show a clear banner: "You need OpenAI and Deepgram API keys to start reviewing. [Go to Settings]"
+- Don't initialize the microphone or TTS — just show the banner
+- Check via a server-side load function or client-side fetch to `/api/settings/api-keys`
 
 ## File Changes Summary
 
 | File | Action |
 |------|--------|
-| `migrations/0005_user_api_keys.sql` | **New** — create table |
+| `migrations/0005_user_api_keys.sql` | **New** — `user_api_keys` + `api_usage` tables |
 | `src/lib/server/crypto.ts` | **New** — encrypt/decrypt functions |
 | `src/lib/server/user-keys.ts` | **New** — helper to load+decrypt user keys |
-| `src/routes/api/settings/api-keys/+server.ts` | **New** — GET/PUT/DELETE endpoints |
+| `src/lib/server/usage.ts` | **New** — cost tracking/logging helper |
+| `src/routes/api/settings/api-keys/+server.ts` | **New** — GET/PUT/DELETE endpoints with key validation |
+| `src/routes/api/settings/usage/+server.ts` | **New** — GET usage/cost summary |
+| `src/lib/components/OnboardingChecklist.svelte` | **New** — onboarding checklist component |
 | `src/app.d.ts` | **Edit** — add `ENCRYPTION_KEY`, remove 3 API key vars |
 | `src/hooks.server.ts` | **Edit** — remove deepgram-token from public paths |
-| `src/routes/api/tts/+server.ts` | **Edit** — use user key |
-| `src/routes/api/explain/+server.ts` | **Edit** — use user key |
-| `src/routes/api/deepgram-token/+server.ts` | **Edit** — use user key, require auth |
-| `src/routes/settings/+page.svelte` | **Edit** — add API key management UI |
-| `src/lib/i18n/en.ts` | **Edit** — add BYOK strings |
-| `src/lib/i18n/de.ts` | **Edit** — add BYOK strings (German) |
+| `src/routes/api/tts/+server.ts` | **Edit** — use user key, log usage |
+| `src/routes/api/explain/+server.ts` | **Edit** — use user key, log usage |
+| `src/routes/api/deepgram-token/+server.ts` | **Edit** — use user key, require auth, log usage |
+| `src/routes/settings/+page.svelte` | **Edit** — API key management + usage display UI |
+| `src/routes/+page.svelte` | **Edit** — add onboarding checklist |
+| `src/routes/+page.server.ts` (or `+layout.server.ts`) | **Edit** — load onboarding state |
+| `src/routes/review/[deckId]/+page.svelte` | **Edit** — missing key banner |
+| `src/lib/i18n/en.ts` | **Edit** — add BYOK + onboarding + usage strings |
+| `src/lib/i18n/de.ts` | **Edit** — add BYOK + onboarding + usage strings (German) |
 | `wrangler.jsonc` | **Edit** — remove API key vars from config |
 
 ## Security Considerations
@@ -185,7 +298,8 @@ When a user tries to start a review session without any keys configured:
 
 ## Out of Scope (Future)
 
-- Key validation by making a test API call (could add later as "test key" button)
-- Usage tracking / rate limiting per user
 - Payment tiers / subscription gating
 - Key rotation reminders
+- Usage alerts (e.g., "you've spent $5 this month")
+- Detailed per-card cost breakdown
+- STT duration tracking from client (for now, estimate from token grants)
