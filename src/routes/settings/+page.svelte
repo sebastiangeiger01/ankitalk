@@ -248,8 +248,8 @@
 				{:else}
 					<span class="badge badge--not-configured">{t('settings.apiKeys.notConfigured')}</span>
 				{/if}
-				<button class="action-btn" onclick={() => toggleExpanded(service)}>
-					{expanded[service] ? '×' : keyStatus[service] ? t('settings.apiKeys.remove') !== t('settings.apiKeys.save') ? '✎' : '✎' : '+'}
+				<button class="action-btn" type="button" onclick={() => toggleExpanded(service)}>
+					{expanded[service] ? '×' : keyStatus[service] ? '✎' : '+'}
 				</button>
 			</div>
 		</div>
