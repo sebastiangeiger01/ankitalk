@@ -290,6 +290,7 @@
 		font-size: 1rem;
 		cursor: pointer;
 		align-self: flex-start;
+		touch-action: manipulation;
 	}
 
 	.save-btn:hover {
@@ -346,6 +347,7 @@
 		font-size: 0.9rem;
 		cursor: pointer;
 		white-space: nowrap;
+		touch-action: manipulation;
 	}
 
 	.reset-btn:hover {
