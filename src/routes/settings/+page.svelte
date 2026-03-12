@@ -200,33 +200,35 @@
 		{:else if !usageData || allZero(usageData)}
 			<p class="muted">{t('settings.usage.noUsage')}</p>
 		{:else}
-			<div class="usage-table">
-				<div class="usage-head">
-					<span></span>
-					<span>{t('settings.usage.today')}</span>
-					<span>{t('settings.usage.week')}</span>
-					<span>{t('settings.usage.month')}</span>
-					<span>{t('settings.usage.total')}</span>
-				</div>
-				{#each ['openai', 'deepgram', 'anthropic'] as s}
-					{@const row = usageData[s as Service]}
-					<div class="usage-row">
-						<span class="usage-service">{serviceLabel(s as Service)}</span>
-						<span>{formatCost(row.today)}</span>
-						<span>{formatCost(row.week)}</span>
-						<span>{formatCost(row.month)}</span>
-						<span>{formatCost(row.total)}</span>
+			<div class="usage-table-wrap">
+				<div class="usage-table">
+					<div class="usage-head">
+						<span></span>
+						<span>{t('settings.usage.today')}</span>
+						<span>{t('settings.usage.week')}</span>
+						<span>{t('settings.usage.month')}</span>
+						<span>{t('settings.usage.total')}</span>
 					</div>
-				{/each}
-				<div class="usage-row usage-row--total">
-					<span>{t('settings.usage.total')}</span>
-					{#each ['today', 'week', 'month', 'total'] as period}
-						{@const sum = (['openai', 'deepgram', 'anthropic'] as Service[]).reduce(
-							(acc, s) => acc + (usageData![s][period as keyof ServiceUsage] as number),
-							0
-						)}
-						<span>{formatCost(sum)}</span>
+					{#each ['openai', 'deepgram', 'anthropic'] as s}
+						{@const row = usageData[s as Service]}
+						<div class="usage-row">
+							<span class="usage-service">{serviceLabel(s as Service)}</span>
+							<span>{formatCost(row.today)}</span>
+							<span>{formatCost(row.week)}</span>
+							<span>{formatCost(row.month)}</span>
+							<span>{formatCost(row.total)}</span>
+						</div>
 					{/each}
+					<div class="usage-row usage-row--total">
+						<span>{t('settings.usage.total')}</span>
+						{#each ['today', 'week', 'month', 'total'] as period}
+							{@const sum = (['openai', 'deepgram', 'anthropic'] as Service[]).reduce(
+								(acc, s) => acc + (usageData![s][period as keyof ServiceUsage] as number),
+								0
+							)}
+							<span>{formatCost(sum)}</span>
+						{/each}
+					</div>
 				</div>
 			</div>
 			<p class="usage-note">{t('settings.usage.note')}</p>
@@ -588,11 +590,18 @@
 	}
 
 	/* Usage table */
+	.usage-table-wrap {
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
+		margin-bottom: 0.75rem;
+		border-radius: 10px;
+	}
+
 	.usage-table {
 		border: 1px solid #2a2a4a;
 		border-radius: 10px;
 		overflow: hidden;
-		margin-bottom: 0.75rem;
+		min-width: 440px;
 	}
 
 	.usage-head,
