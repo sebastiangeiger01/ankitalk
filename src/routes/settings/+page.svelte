@@ -367,6 +367,7 @@
 		cursor: pointer;
 		font-size: 1rem;
 		transition: all 0.15s;
+		touch-action: manipulation;
 	}
 
 	.lang-btn:hover {
@@ -462,6 +463,7 @@
 		transition: all 0.15s;
 		padding: 0;
 		-webkit-tap-highlight-color: rgba(90, 90, 142, 0.3);
+		touch-action: manipulation;
 	}
 
 	.action-btn:hover {
@@ -548,6 +550,7 @@
 		font-weight: 600;
 		transition: all 0.15s;
 		white-space: nowrap;
+		touch-action: manipulation;
 	}
 
 	.btn-primary:hover:not(:disabled) {
@@ -570,6 +573,7 @@
 		font-size: 0.82rem;
 		font-weight: 600;
 		transition: all 0.15s;
+		touch-action: manipulation;
 	}
 
 	.btn-danger:hover:not(:disabled) {
