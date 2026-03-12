@@ -18,7 +18,7 @@ function validateKeyFormat(service: ServiceName, key: string): boolean {
 		case 'anthropic':
 			return key.startsWith('sk-ant-');
 		case 'deepgram':
-			return /^[a-zA-Z0-9]+$/.test(key);
+			return /^[a-zA-Z0-9_-]+$/.test(key);
 	}
 }
 
@@ -31,13 +31,8 @@ async function testApiKey(service: ServiceName, key: string): Promise<void> {
 				headers: { Authorization: 'Bearer ' + key }
 			});
 		} else if (service === 'deepgram') {
-			response = await fetch('https://api.deepgram.com/v1/auth/grant', {
-				method: 'POST',
-				headers: {
-					Authorization: 'Token ' + key,
-					'content-type': 'application/json'
-				},
-				body: JSON.stringify({ time_to_live_in_seconds: 10 })
+			response = await fetch('https://api.deepgram.com/v1/projects', {
+				headers: { Authorization: 'Token ' + key }
 			});
 		} else {
 			// anthropic
