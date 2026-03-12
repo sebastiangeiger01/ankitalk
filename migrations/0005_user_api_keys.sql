@@ -1,7 +1,7 @@
 CREATE TABLE user_api_keys (
   user_id TEXT NOT NULL,
-  service TEXT NOT NULL,          -- 'openai' | 'deepgram' | 'anthropic'
-  encrypted_key TEXT NOT NULL,    -- base64(iv + ciphertext + tag)
+  service TEXT NOT NULL,
+  encrypted_key TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (user_id, service),
@@ -11,10 +11,10 @@ CREATE TABLE user_api_keys (
 CREATE TABLE api_usage (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
-  service TEXT NOT NULL,           -- 'openai' | 'deepgram' | 'anthropic'
-  operation TEXT NOT NULL,         -- 'tts' | 'stt_token' | 'explain'
-  units INTEGER NOT NULL,          -- characters (TTS), seconds (STT), tokens (Anthropic)
-  estimated_cost_usd REAL NOT NULL,-- calculated cost in USD
+  service TEXT NOT NULL,
+  operation TEXT NOT NULL,
+  units INTEGER NOT NULL,
+  estimated_cost_usd REAL NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
