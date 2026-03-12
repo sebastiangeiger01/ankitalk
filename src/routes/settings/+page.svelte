@@ -6,9 +6,6 @@
 		locale.set(l);
 	}
 
-	let current = $state<Locale>('en');
-	locale.subscribe((v) => { current = v; });
-
 	// --- API key state ---
 	type Service = 'openai' | 'deepgram' | 'anthropic';
 
@@ -169,10 +166,10 @@
 	<section class="section">
 		<h2>{t('appSettings.language')}</h2>
 		<div class="lang-options">
-			<button class="lang-btn" class:active={current === 'en'} onclick={() => setLocale('en')}>
+			<button class="lang-btn" type="button" class:active={$locale === 'en'} onclick={() => setLocale('en')}>
 				English
 			</button>
-			<button class="lang-btn" class:active={current === 'de'} onclick={() => setLocale('de')}>
+			<button class="lang-btn" type="button" class:active={$locale === 'de'} onclick={() => setLocale('de')}>
 				Deutsch
 			</button>
 		</div>

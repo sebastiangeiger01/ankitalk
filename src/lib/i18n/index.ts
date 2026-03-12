@@ -8,8 +8,12 @@ const locales: Record<Locale, Record<string, string>> = { en, de };
 
 function detectLocale(): Locale {
 	if (typeof window === 'undefined') return 'en';
-	const saved = localStorage.getItem('locale');
-	if (saved === 'en' || saved === 'de') return saved;
+	try {
+		const saved = localStorage.getItem('locale');
+		if (saved === 'en' || saved === 'de') return saved;
+	} catch {
+		// localStorage unavailable (e.g. iOS private browsing)
+	}
 	return navigator.language.startsWith('de') ? 'de' : 'en';
 }
 
@@ -17,7 +21,11 @@ export const locale = writable<Locale>(detectLocale());
 
 locale.subscribe((val) => {
 	if (typeof window !== 'undefined') {
-		localStorage.setItem('locale', val);
+		try {
+			localStorage.setItem('locale', val);
+		} catch {
+			// localStorage unavailable (e.g. iOS private browsing)
+		}
 	}
 });
 

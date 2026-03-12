@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { locale, t } from '$lib/i18n';
+	import { t } from '$lib/i18n';
 
 	const deckId = $derived($page.params.id);
 
@@ -17,9 +17,6 @@
 	let leechThreshold = $state(8);
 	let learningSteps = $state('1,10');
 	let relearningSteps = $state('10');
-
-	let loc = $state('en');
-	locale.subscribe((v) => { loc = v; });
 
 	async function loadSettings() {
 		try {
