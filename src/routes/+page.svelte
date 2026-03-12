@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { browser } from '$app/environment';
 	import { parseApkg } from '$lib/client/anki-parser';
 	import { buildApkg } from '$lib/client/apkg-export';
 	import OnboardingChecklist from '$lib/components/OnboardingChecklist.svelte';
@@ -15,7 +16,7 @@
 	// Onboarding state
 	let hasRequiredKeys = $state(false);
 	let hasReviewed = $state(false);
-	let onboardingDismissed = $state(document.cookie.includes('onboarding_dismissed=1'));
+	let onboardingDismissed = $state(browser && document.cookie.includes('onboarding_dismissed=1'));
 
 	let showOnboarding = $derived(
 		!onboardingDismissed && !(hasRequiredKeys && decks.length > 0 && hasReviewed)
