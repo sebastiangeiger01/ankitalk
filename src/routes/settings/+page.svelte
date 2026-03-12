@@ -20,17 +20,17 @@
 		anthropic: boolean;
 	}
 
-	interface ServiceUsage {
-		today: number;
-		week: number;
-		month: number;
+	interface UsagePeriod {
+		openai: number;
+		deepgram: number;
+		anthropic: number;
 		total: number;
 	}
 
 	interface UsageData {
-		openai: ServiceUsage;
-		deepgram: ServiceUsage;
-		anthropic: ServiceUsage;
+		today: UsagePeriod;
+		week: UsagePeriod;
+		month: UsagePeriod;
 	}
 
 	let keyStatus = $state<KeyStatus>({ openai: false, deepgram: false, anthropic: false });
@@ -144,9 +144,7 @@
 	}
 
 	function allZero(usage: UsageData): boolean {
-		return (['openai', 'deepgram', 'anthropic'] as Service[]).every(
-			(s) => usage[s].today === 0 && usage[s].week === 0 && usage[s].month === 0 && usage[s].total === 0
-		);
+		return usage.today.total === 0 && usage.week.total === 0 && usage.month.total === 0;
 	}
 
 	const requiredServices: Service[] = ['openai', 'deepgram'];
@@ -335,27 +333,20 @@
 						<span>{t('settings.usage.today')}</span>
 						<span>{t('settings.usage.week')}</span>
 						<span>{t('settings.usage.month')}</span>
-						<span>{t('settings.usage.total')}</span>
 					</div>
 					{#each ['openai', 'deepgram', 'anthropic'] as s}
-						{@const row = usageData[s as Service]}
 						<div class="usage-row">
 							<span class="usage-service">{serviceLabel(s as Service)}</span>
-							<span>{formatCost(row.today)}</span>
-							<span>{formatCost(row.week)}</span>
-							<span>{formatCost(row.month)}</span>
-							<span>{formatCost(row.total)}</span>
+							<span>{formatCost(usageData!.today[s as Service])}</span>
+							<span>{formatCost(usageData!.week[s as Service])}</span>
+							<span>{formatCost(usageData!.month[s as Service])}</span>
 						</div>
 					{/each}
 					<div class="usage-row usage-row--total">
 						<span>{t('settings.usage.total')}</span>
-						{#each ['today', 'week', 'month', 'total'] as period}
-							{@const sum = (['openai', 'deepgram', 'anthropic'] as Service[]).reduce(
-								(acc, s) => acc + (usageData![s][period as keyof ServiceUsage] as number),
-								0
-							)}
-							<span>{formatCost(sum)}</span>
-						{/each}
+						<span>{formatCost(usageData!.today.total)}</span>
+						<span>{formatCost(usageData!.week.total)}</span>
+						<span>{formatCost(usageData!.month.total)}</span>
 					</div>
 				</div>
 			</div>
@@ -663,13 +654,13 @@
 		border: 1px solid #2a2a4a;
 		border-radius: 10px;
 		overflow: hidden;
-		min-width: 440px;
+		min-width: 340px;
 	}
 
 	.usage-head,
 	.usage-row {
 		display: grid;
-		grid-template-columns: 1fr repeat(4, 80px);
+		grid-template-columns: 1fr repeat(3, 80px);
 		gap: 0;
 	}
 
