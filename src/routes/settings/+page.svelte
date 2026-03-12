@@ -7,7 +7,9 @@
 	}
 
 	let current = $state<Locale>('en');
-	locale.subscribe((v) => { current = v; });
+	$effect(() => {
+		return locale.subscribe((v) => { current = v; });
+	});
 
 	// --- API key state ---
 	type Service = 'openai' | 'deepgram' | 'anthropic';
@@ -184,12 +186,138 @@
 
 		<h3 class="subsection-label">{t('settings.apiKeys.requiredSection')}</h3>
 		{#each requiredServices as service}
-			{@render keyRow(service)}
+			<div class="key-row">
+				<div class="key-row-header">
+					<div class="key-row-info">
+						<span class="key-service-name">{serviceLabel(service)}</span>
+						<span class="key-service-desc">{serviceDesc(service)}</span>
+						<span class="key-service-cost">{serviceCost(service)}</span>
+					</div>
+					<div class="key-row-actions">
+						{#if keyStatus[service]}
+							<span class="badge badge--configured">{t('settings.apiKeys.configured')}</span>
+						{:else}
+							<span class="badge badge--not-configured">{t('settings.apiKeys.notConfigured')}</span>
+						{/if}
+						<button class="action-btn" type="button" onclick={() => toggleExpanded(service)}>
+							{expanded[service] ? '×' : keyStatus[service] ? '✎' : '+'}
+						</button>
+					</div>
+				</div>
+
+				{#if messages[service]}
+					<p class="key-message" class:key-message--ok={messages[service]!.ok} class:key-message--err={!messages[service]!.ok}>
+						{messages[service]!.text}
+					</p>
+				{/if}
+
+				{#if keyStatus[service] && !expanded[service]}
+					<div class="key-remove-row">
+						<button
+							class="btn-danger"
+							disabled={removing[service]}
+							onclick={() => removeKey(service)}
+						>
+							{removing[service] ? '...' : t('settings.apiKeys.remove')}
+						</button>
+					</div>
+				{/if}
+
+				{#if expanded[service]}
+					<div class="key-input-area">
+						<input
+							class="key-input"
+							type="password"
+							placeholder={t('settings.apiKeys.placeholder')}
+							bind:value={keyInputs[service]}
+							onkeydown={(e) => { if (e.key === 'Enter') saveKey(service); }}
+						/>
+						<div class="key-input-footer">
+							<span class="key-link-hint">
+								{t('settings.apiKeys.getKey')}
+								<a href={serviceHrefs[service]} target="_blank" rel="noopener noreferrer">
+									{serviceLinks[service]}
+								</a>
+							</span>
+							<button
+								class="btn-primary"
+								disabled={saving[service] || !keyInputs[service].trim()}
+								onclick={() => saveKey(service)}
+							>
+								{saving[service] ? t('settings.apiKeys.validating') : t('settings.apiKeys.save')}
+							</button>
+						</div>
+					</div>
+				{/if}
+			</div>
 		{/each}
 
 		<h3 class="subsection-label subsection-label--optional">{t('settings.apiKeys.optionalSection')}</h3>
 		{#each optionalServices as service}
-			{@render keyRow(service)}
+			<div class="key-row">
+				<div class="key-row-header">
+					<div class="key-row-info">
+						<span class="key-service-name">{serviceLabel(service)}</span>
+						<span class="key-service-desc">{serviceDesc(service)}</span>
+						<span class="key-service-cost">{serviceCost(service)}</span>
+					</div>
+					<div class="key-row-actions">
+						{#if keyStatus[service]}
+							<span class="badge badge--configured">{t('settings.apiKeys.configured')}</span>
+						{:else}
+							<span class="badge badge--not-configured">{t('settings.apiKeys.notConfigured')}</span>
+						{/if}
+						<button class="action-btn" type="button" onclick={() => toggleExpanded(service)}>
+							{expanded[service] ? '×' : keyStatus[service] ? '✎' : '+'}
+						</button>
+					</div>
+				</div>
+
+				{#if messages[service]}
+					<p class="key-message" class:key-message--ok={messages[service]!.ok} class:key-message--err={!messages[service]!.ok}>
+						{messages[service]!.text}
+					</p>
+				{/if}
+
+				{#if keyStatus[service] && !expanded[service]}
+					<div class="key-remove-row">
+						<button
+							class="btn-danger"
+							disabled={removing[service]}
+							onclick={() => removeKey(service)}
+						>
+							{removing[service] ? '...' : t('settings.apiKeys.remove')}
+						</button>
+					</div>
+				{/if}
+
+				{#if expanded[service]}
+					<div class="key-input-area">
+						<input
+							class="key-input"
+							type="password"
+							placeholder={t('settings.apiKeys.placeholder')}
+							bind:value={keyInputs[service]}
+							onkeydown={(e) => { if (e.key === 'Enter') saveKey(service); }}
+						/>
+						<div class="key-input-footer">
+							<span class="key-link-hint">
+								{t('settings.apiKeys.getKey')}
+								<a href={serviceHrefs[service]} target="_blank" rel="noopener noreferrer">
+									{serviceLinks[service]}
+								</a>
+							</span>
+							<button
+								class="btn-primary"
+								disabled={saving[service] || !keyInputs[service].trim()}
+								onclick={() => saveKey(service)}
+							>
+								{saving[service] ? t('settings.apiKeys.validating') : t('settings.apiKeys.save')}
+							</button>
+						</div>
+					</div>
+				{/if}
+			</div>
 		{/each}
 	</section>
 
@@ -236,72 +364,6 @@
 	</section>
 </div>
 
-{#snippet keyRow(service: Service)}
-	<div class="key-row">
-		<div class="key-row-header">
-			<div class="key-row-info">
-				<span class="key-service-name">{serviceLabel(service)}</span>
-				<span class="key-service-desc">{serviceDesc(service)}</span>
-				<span class="key-service-cost">{serviceCost(service)}</span>
-			</div>
-			<div class="key-row-actions">
-				{#if keyStatus[service]}
-					<span class="badge badge--configured">{t('settings.apiKeys.configured')}</span>
-				{:else}
-					<span class="badge badge--not-configured">{t('settings.apiKeys.notConfigured')}</span>
-				{/if}
-				<button class="action-btn" type="button" onclick={() => toggleExpanded(service)}>
-					{expanded[service] ? '×' : keyStatus[service] ? '✎' : '+'}
-				</button>
-			</div>
-		</div>
-
-		{#if messages[service]}
-			<p class="key-message" class:key-message--ok={messages[service]!.ok} class:key-message--err={!messages[service]!.ok}>
-				{messages[service]!.text}
-			</p>
-		{/if}
-
-		{#if keyStatus[service] && !expanded[service]}
-			<div class="key-remove-row">
-				<button
-					class="btn-danger"
-					disabled={removing[service]}
-					onclick={() => removeKey(service)}
-				>
-					{removing[service] ? '...' : t('settings.apiKeys.remove')}
-				</button>
-			</div>
-		{/if}
-
-		{#if expanded[service]}
-			<div class="key-input-area">
-				<input
-					class="key-input"
-					type="password"
-					placeholder={t('settings.apiKeys.placeholder')}
-					bind:value={keyInputs[service]}
-					onkeydown={(e) => { if (e.key === 'Enter') saveKey(service); }}
-				/>
-				<div class="key-input-footer">
-					<span class="key-link-hint">
-						{t('settings.apiKeys.getKey')}
-						<a href={serviceHrefs[service]} target="_blank" rel="noopener noreferrer">
-							{serviceLinks[service]}
-						</a>
-					</span>
-					<button
-						class="btn-primary"
-						disabled={saving[service] || !keyInputs[service].trim()}
-						onclick={() => saveKey(service)}
-					>
-						{saving[service] ? t('settings.apiKeys.validating') : t('settings.apiKeys.save')}
-					</button>
-				</div>
-			</div>
-		{/if}
-	</div>
-{/snippet}
 
 <style>
 	.settings-page {
