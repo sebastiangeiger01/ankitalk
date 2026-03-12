@@ -45,6 +45,7 @@
 		background: #1a1a2e;
 		color: #e0e0ff;
 		min-height: 100dvh;
+		overflow-x: hidden;
 	}
 
 	:global(*:focus-visible) {
