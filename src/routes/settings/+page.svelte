@@ -453,14 +453,15 @@
 		color: #a8a8b8;
 		border-radius: 6px;
 		cursor: pointer;
-		font-size: 1rem;
-		width: 2rem;
-		height: 2rem;
+		font-size: 1.1rem;
+		width: 2.5rem;
+		height: 2.5rem;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		transition: all 0.15s;
 		padding: 0;
+		-webkit-tap-highlight-color: rgba(90, 90, 142, 0.3);
 	}
 
 	.action-btn:hover {

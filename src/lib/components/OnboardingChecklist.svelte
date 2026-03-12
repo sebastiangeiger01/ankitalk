@@ -57,8 +57,9 @@
 				<span class="step-label">{t('onboarding.addApiKeys')}</span>
 			{:else}
 				<a href="/settings" class="step-link">
-					<span class="step-label">{t('onboarding.addApiKeys')}</span>
+					<span class="step-label step-label--action">{t('onboarding.addApiKeys')}</span>
 					<span class="step-desc">{t('onboarding.addApiKeysDesc')}</span>
+					<span class="step-arrow" aria-hidden="true">&rsaquo;</span>
 				</a>
 			{/if}
 		</li>
@@ -80,9 +81,7 @@
 			{#if hasDecks}
 				<span class="step-label">{t('onboarding.importDeck')}</span>
 			{:else}
-				<a href="/" class="step-link">
-					<span class="step-label">{t('onboarding.importDeck')}</span>
-				</a>
+				<span class="step-label">{t('onboarding.importDeck')}</span>
 			{/if}
 		</li>
 
@@ -100,13 +99,7 @@
 					</svg>
 				{/if}
 			</span>
-			{#if hasReviewed || !canStartReview}
-				<span class="step-label">{t('onboarding.startReview')}</span>
-			{:else}
-				<a href="/" class="step-link">
-					<span class="step-label">{t('onboarding.startReview')}</span>
-				</a>
-			{/if}
+			<span class="step-label">{t('onboarding.startReview')}</span>
 		</li>
 	</ul>
 </div>
@@ -194,6 +187,13 @@
 		color: #c8c8e8;
 	}
 
+	.step-label--action {
+		color: #a0a0e0;
+		text-decoration: underline;
+		text-decoration-color: #5a5a8e;
+		text-underline-offset: 2px;
+	}
+
 	.step.done .step-label {
 		color: #a0a0c8;
 		text-decoration: line-through;
@@ -206,20 +206,36 @@
 
 	.step-link {
 		display: flex;
-		align-items: baseline;
+		align-items: center;
 		gap: 0.5rem;
 		text-decoration: none;
 		color: inherit;
+		flex: 1;
+		min-width: 0;
+		padding: 0.3rem 0;
+		-webkit-tap-highlight-color: rgba(90, 90, 142, 0.2);
 	}
 
-	.step-link:hover .step-label {
-		color: #e0e0ff;
-		text-decoration: underline;
-		text-decoration-color: #5a5aae;
+	.step-link:hover .step-label--action,
+	.step-link:active .step-label--action {
+		color: #c0c0ff;
+		text-decoration-color: #8080c0;
 	}
 
 	.step-desc {
 		font-size: 0.78rem;
 		color: #6a6a9a;
+	}
+
+	.step-arrow {
+		margin-left: auto;
+		font-size: 1.2rem;
+		color: #5a5a8e;
+		flex-shrink: 0;
+	}
+
+	.step-link:hover .step-arrow,
+	.step-link:active .step-arrow {
+		color: #a0a0e0;
 	}
 </style>
