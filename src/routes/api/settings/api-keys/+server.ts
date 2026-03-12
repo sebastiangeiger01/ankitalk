@@ -18,7 +18,7 @@ function validateKeyFormat(service: ServiceName, key: string): boolean {
 		case 'anthropic':
 			return key.startsWith('sk-ant-');
 		case 'deepgram':
-			return /^[a-zA-Z0-9]+$/.test(key);
+			return /^[a-zA-Z0-9_-]+$/.test(key);
 	}
 }
 
