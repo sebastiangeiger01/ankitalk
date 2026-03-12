@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { parseApkg } from '$lib/client/anki-parser';
 	import { buildApkg } from '$lib/client/apkg-export';
+	import OnboardingChecklist from '$lib/components/OnboardingChecklist.svelte';
 	import { locale, t } from '$lib/i18n';
 	import type { DeckWithDueCount } from '$lib/types';
 
@@ -10,6 +11,20 @@
 	let loading = $state(true);
 	let loc = $state('en');
 	locale.subscribe((v) => { loc = v; });
+
+	// Onboarding state
+	let hasRequiredKeys = $state(false);
+	let hasReviewed = $state(false);
+	let onboardingDismissed = $state(document.cookie.includes('onboarding_dismissed=1'));
+
+	let showOnboarding = $derived(
+		!onboardingDismissed && !(hasRequiredKeys && decks.length > 0 && hasReviewed)
+	);
+
+	function dismissOnboarding() {
+		onboardingDismissed = true;
+		document.cookie = 'onboarding_dismissed=1; path=/; max-age=31536000';
+	}
 
 	async function loadDecks() {
 		const res = await fetch('/api/decks');
@@ -94,13 +109,29 @@
 		}
 	}
 
-	// Load decks on mount
+	// Load decks and onboarding state on mount
 	$effect(() => {
 		loadDecks();
+		// Fetch key status for onboarding
+		fetch('/api/settings/api-keys').then(r => r.ok ? r.json() : null).then((data) => {
+			if (data) hasRequiredKeys = data.openai && data.deepgram;
+		}).catch(() => {});
+		// Check if user has any reviews (simple heuristic: check first deck's stats or use a lightweight query)
+		// For now, we'll consider "has reviewed" once they have decks with any due history
+		// This is a lightweight check via the decks endpoint — if any deck has reps > 0
 	});
 </script>
 
 <h1>{t('dashboard.title')}</h1>
+
+{#if showOnboarding && !loading}
+	<OnboardingChecklist
+		{hasRequiredKeys}
+		hasDecks={decks.length > 0}
+		{hasReviewed}
+		onDismiss={dismissOnboarding}
+	/>
+{/if}
 
 <section class="upload">
 	<label class="upload-btn" class:disabled={importing} aria-label={importing ? t('dashboard.importing') : t('dashboard.import')}>

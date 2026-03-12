@@ -35,6 +35,16 @@ export const en: Record<string, string> = {
 	'onboarding.desc': 'Review your Anki flashcards hands-free using voice commands. Just speak to rate cards, hear answers, and get AI explanations.',
 	'onboarding.steps': 'To get started, export a deck from <strong>Anki</strong> as an <strong>.apkg file</strong> (File \u2192 Export), then import it here.',
 
+	// Onboarding Checklist
+	'onboarding.title': 'Welcome to AnkiTalk!',
+	'onboarding.subtitle': 'Let\'s get you set up:',
+	'onboarding.createAccount': 'Create account',
+	'onboarding.addApiKeys': 'Add API keys',
+	'onboarding.addApiKeysDesc': '2 required, 1 optional',
+	'onboarding.importDeck': 'Import your first Anki deck',
+	'onboarding.startReview': 'Start your first review session',
+	'onboarding.dismiss': 'Dismiss',
+
 	// Review - Start screen
 	'review.readyTitle': 'Ready to Review',
 	'review.startHint': 'Tap the button below to start your review session.',
@@ -51,6 +61,9 @@ export const en: Record<string, string> = {
 	'review.reviewOnly': 'Review only',
 	'review.showHelp': 'Show voice commands & shortcuts',
 	'review.hideHelp': 'Hide voice commands & shortcuts',
+	'review.missingKeys': 'You need API keys to start reviewing.',
+	'review.missingKeysDetail': 'Add your OpenAI and Deepgram API keys in Settings to use voice review.',
+	'review.goToSettings': 'Go to Settings',
 
 	// Review - Help commands
 	'help.answer': 'answer / show',
@@ -129,6 +142,40 @@ export const en: Record<string, string> = {
 	'appSettings.title': 'App Settings',
 	'appSettings.language': 'Language',
 	'appSettings.dashboard': 'Dashboard',
+
+	// API Keys
+	'settings.apiKeys.title': 'API Keys',
+	'settings.apiKeys.description': 'Add your own API keys to use AnkiTalk. Your keys are encrypted and stored securely.',
+	'settings.apiKeys.requiredSection': 'Required for voice review',
+	'settings.apiKeys.optionalSection': 'Optional',
+	'settings.apiKeys.openai': 'OpenAI (Text-to-Speech)',
+	'settings.apiKeys.openaiDesc': 'Reads your cards aloud',
+	'settings.apiKeys.openaiCost': '~$0.003 per card read aloud',
+	'settings.apiKeys.deepgram': 'Deepgram (Speech-to-Text)',
+	'settings.apiKeys.deepgramDesc': 'Listens to your voice commands',
+	'settings.apiKeys.deepgramCost': '~$0.01–0.03 per review session',
+	'settings.apiKeys.anthropic': 'Anthropic (AI Explanations)',
+	'settings.apiKeys.anthropicDesc': 'Explains cards when you say "explain". You can review without this.',
+	'settings.apiKeys.anthropicCost': '~$0.02 per explanation',
+	'settings.apiKeys.configured': 'Configured',
+	'settings.apiKeys.notConfigured': 'Not configured',
+	'settings.apiKeys.save': 'Save',
+	'settings.apiKeys.remove': 'Remove',
+	'settings.apiKeys.saved': 'Key saved and verified successfully',
+	'settings.apiKeys.removed': 'Key removed',
+	'settings.apiKeys.placeholder': 'Paste your API key here',
+	'settings.apiKeys.getKey': 'Get your key at',
+	'settings.apiKeys.validating': 'Validating key...',
+	'settings.apiKeys.invalid': 'Invalid API key — please check and try again',
+
+	// Usage & Costs
+	'settings.usage.title': 'Usage & Costs',
+	'settings.usage.today': 'Today',
+	'settings.usage.week': 'This week',
+	'settings.usage.month': 'This month',
+	'settings.usage.total': 'Total',
+	'settings.usage.note': 'Costs are estimated and may differ slightly from your provider\'s invoice.',
+	'settings.usage.noUsage': 'No usage recorded yet',
 
 	// Card Browser
 	'cards.title': 'Cards',

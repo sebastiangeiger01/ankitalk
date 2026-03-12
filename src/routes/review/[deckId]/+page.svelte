@@ -40,6 +40,12 @@
 	let prefetchedCards = $state<PrefetchedCards | null>(null);
 	let highlightRating = $state<string>('');
 	let highlightTimer: ReturnType<typeof setTimeout> | null = null;
+	let keyStatus = $state<{ openai: boolean; deepgram: boolean; anthropic: boolean } | null>(null);
+	let keyStatusLoading = $state(true);
+
+	const missingRequiredKeys = $derived(
+		keyStatus !== null && (!keyStatus.openai || !keyStatus.deepgram)
+	);
 
 	const engine = createReviewEngine();
 
@@ -209,6 +215,15 @@
 
 	// Prefetch cards + deck name on mount so engine.start() is instant
 	$effect(() => {
+		// Check API key status first
+		fetch('/api/settings/api-keys')
+			.then((r) => r.ok ? r.json() : null)
+			.then((data) => {
+				if (data) keyStatus = data as { openai: boolean; deepgram: boolean; anthropic: boolean };
+			})
+			.catch(() => {})
+			.finally(() => { keyStatusLoading = false; });
+
 		fetch(`/api/decks/${deckId}`)
 			.then((r) => r.json())
 			.then((data) => { deckName = (data as { deck: { name: string } }).deck.name; })
@@ -220,7 +235,8 @@
 			.then((data) => {
 				if (!data) return;
 				prefetchedCards = data as PrefetchedCards;
-				// Preload first card's TTS
+				// Preload first card's TTS only if required keys are present
+				if (keyStatus && (!keyStatus.openai || !keyStatus.deepgram)) return;
 				const cards = (data as { cards: { fields: string; card_type: string }[] }).cards;
 				if (!cards?.length) return;
 				const card = cards[0];
@@ -254,7 +270,18 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-{#if !started}
+{#if !keyStatusLoading && missingRequiredKeys}
+	<div class="review-container">
+		<div class="missing-keys-banner">
+			<div class="missing-keys-icon">
+				<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><circle cx="12" cy="16" r="0.5" fill="currentColor" stroke="none"/></svg>
+			</div>
+			<h2>{t('review.missingKeys')}</h2>
+			<p>{t('review.missingKeysDetail')}</p>
+			<a href="/settings" class="settings-btn">{t('review.goToSettings')}</a>
+		</div>
+	</div>
+{:else if !started}
 	<div class="review-container">
 		<div class="start-screen">
 			<h1>{t('review.readyTitle')}{deckName ? ` — ${deckName}` : ''}</h1>
@@ -425,6 +452,56 @@
 {/if}
 
 <style>
+	/* ========== Missing Keys Banner ========== */
+	.missing-keys-banner {
+		text-align: center;
+		padding: 3rem 2rem;
+		max-width: 480px;
+		margin: 0 auto;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 1rem;
+	}
+
+	.missing-keys-icon {
+		color: #8899cc;
+		opacity: 0.85;
+	}
+
+	.missing-keys-banner h2 {
+		font-size: 1.25rem;
+		font-weight: 600;
+		color: #d0d8ff;
+		margin: 0;
+	}
+
+	.missing-keys-banner p {
+		font-size: 0.95rem;
+		color: #8899bb;
+		line-height: 1.6;
+		margin: 0;
+		max-width: 360px;
+	}
+
+	.settings-btn {
+		display: inline-block;
+		margin-top: 0.5rem;
+		padding: 0.75rem 1.75rem;
+		background: #3a3a7e;
+		color: #d0d0ff;
+		border: none;
+		border-radius: 10px;
+		font-size: 1rem;
+		font-weight: 600;
+		text-decoration: none;
+		transition: filter 0.15s;
+	}
+
+	.settings-btn:hover {
+		filter: brightness(1.2);
+	}
+
 	/* ========== Start Screen ========== */
 	.review-container {
 		min-height: 80dvh;
