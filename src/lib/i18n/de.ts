@@ -35,6 +35,16 @@ export const de: Record<string, string> = {
 	'onboarding.desc': '\u00dcberpr\u00fcfe deine Anki-Karteikarten freih\u00e4ndig mit Sprachbefehlen. Sprich einfach, um Karten zu bewerten, Antworten zu h\u00f6ren und KI-Erkl\u00e4rungen zu erhalten.',
 	'onboarding.steps': 'Exportiere zuerst einen Stapel aus <strong>Anki</strong> als <strong>.apkg-Datei</strong> (Datei \u2192 Exportieren), dann importiere ihn hier.',
 
+	// Onboarding Checklist
+	'onboarding.title': 'Willkommen bei AnkiTalk!',
+	'onboarding.subtitle': 'Lass uns dich einrichten:',
+	'onboarding.createAccount': 'Konto erstellen',
+	'onboarding.addApiKeys': 'API-Schl\u00fcssel hinzuf\u00fcgen',
+	'onboarding.addApiKeysDesc': '2 erforderlich, 1 optional',
+	'onboarding.importDeck': 'Erstes Anki-Deck importieren',
+	'onboarding.startReview': 'Erste Wiederholungssitzung starten',
+	'onboarding.dismiss': 'Ausblenden',
+
 	// Review - Start screen
 	'review.readyTitle': 'Bereit zur Abfrage',
 	'review.startHint': 'Tippe auf den Button, um deine Abfragesitzung zu starten.',
@@ -51,6 +61,9 @@ export const de: Record<string, string> = {
 	'review.reviewOnly': 'Nur wiederholende',
 	'review.showHelp': 'Sprachbefehle & Tastenkombinationen anzeigen',
 	'review.hideHelp': 'Sprachbefehle & Tastenkombinationen ausblenden',
+	'review.missingKeys': 'Du benötigst API-Schlüssel, um mit der Wiederholung zu beginnen.',
+	'review.missingKeysDetail': 'Füge deine OpenAI- und Deepgram-API-Schlüssel in den Einstellungen hinzu.',
+	'review.goToSettings': 'Zu den Einstellungen',
 
 	// Review - Help commands
 	'help.answer': 'antwort / zeig',
@@ -129,6 +142,40 @@ export const de: Record<string, string> = {
 	'appSettings.title': 'App-Einstellungen',
 	'appSettings.language': 'Sprache',
 	'appSettings.dashboard': '\u00dcbersicht',
+
+	// API Keys
+	'settings.apiKeys.title': 'API-Schlüssel',
+	'settings.apiKeys.description': 'Füge deine eigenen API-Schlüssel hinzu, um AnkiTalk zu nutzen. Deine Schlüssel werden verschlüsselt und sicher gespeichert.',
+	'settings.apiKeys.requiredSection': 'Erforderlich für Sprachwiederholung',
+	'settings.apiKeys.optionalSection': 'Optional',
+	'settings.apiKeys.openai': 'OpenAI (Text-zu-Sprache)',
+	'settings.apiKeys.openaiDesc': 'Liest deine Karten laut vor',
+	'settings.apiKeys.openaiCost': '~$0,003 pro vorgelesener Karte',
+	'settings.apiKeys.deepgram': 'Deepgram (Sprache-zu-Text)',
+	'settings.apiKeys.deepgramDesc': 'Hört auf deine Sprachbefehle',
+	'settings.apiKeys.deepgramCost': '~$0,01–0,03 pro Wiederholungssitzung',
+	'settings.apiKeys.anthropic': 'Anthropic (KI-Erklärungen)',
+	'settings.apiKeys.anthropicDesc': 'Erklärt Karten, wenn du „explain" sagst. Wiederholung funktioniert auch ohne.',
+	'settings.apiKeys.anthropicCost': '~$0,02 pro Erklärung',
+	'settings.apiKeys.configured': 'Konfiguriert',
+	'settings.apiKeys.notConfigured': 'Nicht konfiguriert',
+	'settings.apiKeys.save': 'Speichern',
+	'settings.apiKeys.remove': 'Entfernen',
+	'settings.apiKeys.saved': 'Schlüssel gespeichert und verifiziert',
+	'settings.apiKeys.removed': 'Schlüssel entfernt',
+	'settings.apiKeys.placeholder': 'API-Schlüssel hier einfügen',
+	'settings.apiKeys.getKey': 'Schlüssel erhältlich unter',
+	'settings.apiKeys.validating': 'Schlüssel wird überprüft...',
+	'settings.apiKeys.invalid': 'Ungültiger API-Schlüssel — bitte überprüfen und erneut versuchen',
+
+	// Usage & Costs
+	'settings.usage.title': 'Nutzung & Kosten',
+	'settings.usage.today': 'Heute',
+	'settings.usage.week': 'Diese Woche',
+	'settings.usage.month': 'Diesen Monat',
+	'settings.usage.total': 'Gesamt',
+	'settings.usage.note': 'Kosten sind geschätzt und können von der Rechnung deines Anbieters abweichen.',
+	'settings.usage.noUsage': 'Noch keine Nutzung aufgezeichnet',
 
 	// Card Browser
 	'cards.title': 'Karten',

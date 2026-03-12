@@ -1,5 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk';
 
+export type ExplainResult = {
+	explanation: string;
+	inputTokens: number;
+	outputTokens: number;
+};
+
 /**
  * Get a concise explanation for a flashcard using Claude Haiku.
  */
@@ -7,7 +13,7 @@ export async function explainCard(
 	apiKey: string,
 	front: string,
 	back: string
-): Promise<string> {
+): Promise<ExplainResult> {
 	const client = new Anthropic({ apiKey });
 
 	const message = await client.messages.create({
@@ -29,5 +35,9 @@ export async function explainCard(
 	});
 
 	const textBlock = message.content.find((b) => b.type === 'text');
-	return textBlock?.text ?? 'Sorry, I could not generate an explanation.';
+	return {
+		explanation: textBlock?.text ?? 'Sorry, I could not generate an explanation.',
+		inputTokens: message.usage.input_tokens,
+		outputTokens: message.usage.output_tokens
+	};
 }

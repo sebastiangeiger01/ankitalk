@@ -2,7 +2,7 @@ import { redirect, type Handle } from '@sveltejs/kit';
 import { verifyHankoToken } from '$lib/server/auth';
 import { getDb, newId } from '$lib/server/db';
 
-const PUBLIC_PATHS = ['/login', '/api/deepgram-token'];
+const PUBLIC_PATHS = ['/login'];
 
 export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.userId = null;

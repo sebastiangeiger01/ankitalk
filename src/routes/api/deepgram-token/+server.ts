@@ -1,11 +1,17 @@
 import { json, error } from '@sveltejs/kit';
+import { getUserApiKey } from '$lib/server/user-keys';
+import { logUsage, calculateSttCost } from '$lib/server/usage';
+import { getDb } from '$lib/server/db';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ platform, locals }) => {
 	if (!locals.userId) throw error(401, 'Unauthorized');
 
-	const apiKey = platform?.env.DEEPGRAM_API_KEY;
-	if (!apiKey) throw error(500, 'Deepgram API key not configured');
+	const userId = locals.userId;
+	const db = getDb(platform!);
+
+	const apiKey = await getUserApiKey(db, userId, 'deepgram', platform!.env.ENCRYPTION_KEY);
+	if (!apiKey) return json({ error: 'Add your Deepgram API key in Settings to use voice input' }, { status: 400 });
 
 	// Request a short-lived token from Deepgram
 	const response = await fetch('https://api.deepgram.com/v1/auth/grant', {
@@ -25,6 +31,9 @@ export const GET: RequestHandler = async ({ platform, locals }) => {
 		console.error('Deepgram token error:', response.status, JSON.stringify(data));
 		throw error(502, `Failed to get Deepgram token: ${data.err_msg ?? response.statusText}`);
 	}
+
+	const usagePromise = logUsage(db, userId, 'deepgram', 'stt_token', 60, calculateSttCost(60));
+	platform?.context?.waitUntil(usagePromise);
 
 	return json({ token: data.access_token ?? data.key });
 };

@@ -10,9 +10,7 @@ declare global {
 				KV: KVNamespace;
 				MEDIA: R2Bucket;
 				HANKO_API_URL: string;
-				OPENAI_API_KEY: string;
-				DEEPGRAM_API_KEY: string;
-				ANTHROPIC_API_KEY: string;
+				ENCRYPTION_KEY: string;
 			};
 			context: ExecutionContext;
 		}
