@@ -392,12 +392,15 @@
 					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.5-.36 2.18"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
 				{/if}
 			</button>
-			<button class="toolbar-btn" onclick={() => engine.executeCommand('hint')} title="{t('review.hint')} (H)" aria-label={t('review.hint')}>
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/></svg>
-			</button>
-			<button class="toolbar-btn" onclick={() => engine.executeCommand('explain')} title="{t('review.explain')} (E)" aria-label={t('review.explain')}>
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor" stroke="none"/></svg>
-			</button>
+			{#if phase === 'question'}
+				<button class="toolbar-btn" onclick={() => engine.executeCommand('hint')} title="{t('review.hint')} (H)" aria-label={t('review.hint')}>
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/></svg>
+				</button>
+			{:else}
+				<button class="toolbar-btn" onclick={() => engine.executeCommand('explain')} title="{t('review.explain')} (E)" aria-label={t('review.explain')}>
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor" stroke="none"/></svg>
+				</button>
+			{/if}
 			<button class="toolbar-btn stop" onclick={() => engine.executeCommand('stop')} title="{t('review.stop')} (Esc)" aria-label={t('review.stop')}>
 				{t('review.stop')}
 			</button>
