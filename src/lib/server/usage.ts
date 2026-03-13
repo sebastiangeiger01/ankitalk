@@ -3,7 +3,7 @@ import { newId } from './db';
 // Rates (USD)
 const RATES = {
 	openai_tts: 0.6 / 1_000_000, // $0.60 per 1M characters
-	deepgram_stt: 0.0043, // $0.0043 per second
+	deepgram_stt: 0.0043 / 60, // $0.0043 per minute → per second
 	anthropic_input: 1.0 / 1_000_000, // $1.00 per 1M input tokens
 	anthropic_output: 5.0 / 1_000_000 // $5.00 per 1M output tokens
 };
