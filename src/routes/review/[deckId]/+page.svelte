@@ -24,7 +24,7 @@
 	let micOn = $state(true);
 	let audioOn = $state(true);
 	let undoAvailable = $state(false);
-	let isLearning = $state(false);
+	let cardState = $state<'new' | 'learning' | 'review' | null>(null);
 	let learningCountdown = $state(0);
 	let countdownInterval: ReturnType<typeof setInterval> | null = null;
 	let suspendedNotice = $state('');
@@ -69,7 +69,7 @@
 				backText = event.back;
 				frontHtml = event.frontHtml;
 				backHtml = event.backHtml;
-				isLearning = event.isLearning;
+				cardState = event.cardState;
 				intervals = event.intervals;
 				status = 'idle';
 				break;
@@ -406,14 +406,11 @@
 			{/if}
 		</div>
 		<div class="top-right">
-			{#if isLearning}
-				<span class="learning-badge">L</span>
-			{/if}
-			<span class="count count-new">{counts.new}</span>
+			<span class="count count-new" class:active={cardState === 'new'}>{counts.new}</span>
 			<span class="count-sep">+</span>
-			<span class="count count-learning">{counts.learning}</span>
+			<span class="count count-learning" class:active={cardState === 'learning'}>{counts.learning}</span>
 			<span class="count-sep">+</span>
-			<span class="count count-review">{counts.review}</span>
+			<span class="count count-review" class:active={cardState === 'review'}>{counts.review}</span>
 		</div>
 	</div>
 
@@ -819,20 +816,17 @@
 		50% { opacity: 1; transform: scale(1.2); }
 	}
 
-	.learning-badge {
-		padding: 0.1rem 0.35rem;
-		font-size: 0.65rem;
-		font-weight: 700;
-		border-radius: 3px;
-		background: #3a2a5e;
-		color: #ccaaff;
-		margin-right: 0.4rem;
-	}
 
 	.count-new { color: #66cc66; }
 	.count-learning { color: #ffaa44; }
 	.count-review { color: #6699ff; }
 	.count-sep { color: #555; font-size: 0.75rem; }
+
+	.count.active {
+		text-decoration: underline;
+		text-underline-offset: 3px;
+		font-weight: 600;
+	}
 
 	/* ========== Card Area ========== */
 	.card-area {
