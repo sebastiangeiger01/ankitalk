@@ -297,8 +297,15 @@
 {:else if !started}
 	<div class="review-container">
 		<div class="start-screen">
-			<h1>{t('review.readyTitle')}{deckName ? ` — ${deckName}` : ''}</h1>
-			<p>{t('review.startHint')}</p>
+			<div class="start-header">
+				<h1>{t('review.readyTitle')}</h1>
+				{#if deckName}
+					<p class="deck-name">{deckName}</p>
+				{:else}
+					<div class="deck-name-skeleton"></div>
+				{/if}
+			</div>
+			<p class="start-hint">{t('review.startHint')}</p>
 
 			<button class="start-btn" onclick={startReview}>{cramMode ? t('review.startCram') : t('review.startReview')}</button>
 
@@ -327,7 +334,9 @@
 			</div>
 
 			<button class="help-toggle" onclick={() => helpOpen = !helpOpen}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
 				{helpOpen ? t('review.hideHelp') : t('review.showHelp')}
+				<svg class="help-chevron" class:open={helpOpen} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
 			</button>
 			{#if helpOpen}
 				<div class="commands-help">
@@ -523,6 +532,53 @@
 	.start-screen {
 		text-align: center;
 		padding-top: 3rem;
+		max-width: 480px;
+		width: 100%;
+		padding-left: 1.5rem;
+		padding-right: 1.5rem;
+		animation: screen-fade-in 0.25s ease both;
+	}
+
+	@keyframes screen-fade-in {
+		from { opacity: 0; transform: translateY(8px); }
+		to { opacity: 1; transform: translateY(0); }
+	}
+
+	.start-header {
+		margin-bottom: 0.5rem;
+	}
+
+	.start-header h1 {
+		margin-bottom: 0.35rem;
+	}
+
+	.deck-name {
+		font-size: 1.1rem;
+		color: #8899cc;
+		font-weight: 500;
+		margin: 0;
+		animation: screen-fade-in 0.3s ease both;
+	}
+
+	.deck-name-skeleton {
+		height: 1.1rem;
+		width: 180px;
+		margin: 0 auto;
+		border-radius: 6px;
+		background: linear-gradient(90deg, #2a2a4e 25%, #33335a 50%, #2a2a4e 75%);
+		background-size: 200% 100%;
+		animation: shimmer 1.2s ease-in-out infinite;
+	}
+
+	@keyframes shimmer {
+		0% { background-position: 200% 0; }
+		100% { background-position: -200% 0; }
+	}
+
+	.start-hint {
+		color: #8080a0;
+		font-size: 0.95rem;
+		margin: 0.75rem 0 0;
 	}
 
 	.start-btn {
@@ -534,10 +590,15 @@
 		border-radius: 12px;
 		cursor: pointer;
 		margin: 1.5rem 0;
+		transition: background 0.15s, transform 0.1s;
 	}
 
 	.start-btn:hover {
 		background: #5a5aae;
+	}
+
+	.start-btn:active {
+		transform: scale(0.97);
 	}
 
 	.review-options {
@@ -589,37 +650,65 @@
 	}
 
 	.help-toggle {
-		background: none;
-		border: none;
-		color: #8080a0;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		background: transparent;
+		border: 1px solid #3a3a5e;
+		color: #a8a8cc;
 		cursor: pointer;
-		font-size: 0.85rem;
+		font-size: 0.875rem;
+		font-family: inherit;
+		font-weight: 500;
+		padding: 0.5rem 1rem;
+		border-radius: 8px;
 		margin-top: 1rem;
-		text-decoration: underline;
+		transition: border-color 0.15s, color 0.15s, background 0.15s;
 	}
 
 	.help-toggle:hover {
-		color: #a8a8b8;
+		border-color: #5a5a8e;
+		color: #d0d0ff;
+		background: #22223a;
+	}
+
+	.help-chevron {
+		transition: transform 0.2s ease;
+		opacity: 0.7;
+	}
+
+	.help-chevron.open {
+		transform: rotate(180deg);
 	}
 
 	.commands-help {
 		text-align: left;
 		max-width: 400px;
-		margin: 0.5rem auto 0;
+		margin: 0.75rem auto 0;
 		color: #a8a8b8;
 		font-size: 0.9rem;
+		background: #1e1e38;
+		border: 1px solid #2e2e50;
+		border-radius: 10px;
+		padding: 0.75rem 1rem;
 	}
 
 	.commands-help ul {
-		padding-left: 1.2rem;
+		padding-left: 0;
+		list-style: none;
+		margin: 0;
 	}
 
 	.commands-help li {
-		margin-bottom: 0.3rem;
+		margin-bottom: 0.4rem;
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
 		gap: 0.5rem;
+	}
+
+	.commands-help li:last-child {
+		margin-bottom: 0;
 	}
 
 	/* ========== Session Complete ========== */
