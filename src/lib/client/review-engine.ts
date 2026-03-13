@@ -1,6 +1,8 @@
 import { speak, stopPlayback, getLastSpokenText, unlockAudio, playSound, preloadTTS, clearAudioCache } from './audio';
 import { createDeepgramClient, type DeepgramClient } from './deepgram';
 import { matchCommand } from '../commands';
+import { get } from 'svelte/store';
+import { locale } from '../i18n';
 import type { ReviewPhase, VoiceCommand, RatingName, NoteField } from '../types';
 
 export interface IntervalLabels {
@@ -606,7 +608,7 @@ export function createReviewEngine(): ReviewEngine {
 			const res = await fetch('/api/explain', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ front: currentCard.front, back: currentCard.back })
+				body: JSON.stringify({ front: currentCard.front, back: currentCard.back, locale: get(locale) })
 			});
 
 			if (!res.ok) throw new Error('Explain API failed');
@@ -630,7 +632,7 @@ export function createReviewEngine(): ReviewEngine {
 			const res = await fetch('/api/hint', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ front: currentCard.front, back: currentCard.back })
+				body: JSON.stringify({ front: currentCard.front, back: currentCard.back, locale: get(locale) })
 			});
 
 			if (!res.ok) throw new Error('Hint API failed');

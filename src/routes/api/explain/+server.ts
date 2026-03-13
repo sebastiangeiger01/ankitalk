@@ -14,14 +14,14 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 	const apiKey = await getUserApiKey(db, userId, 'anthropic', platform!.env.ENCRYPTION_KEY);
 	if (!apiKey) return json({ error: 'Add your Anthropic API key in Settings to use AI explanations' }, { status: 400 });
 
-	const body = (await request.json()) as { front: string; back: string };
-	const { front, back } = body;
+	const body = (await request.json()) as { front: string; back: string; locale?: string };
+	const { front, back, locale } = body;
 
 	if (!front || !back) {
 		throw error(400, 'Missing front or back text');
 	}
 
-	const { explanation, inputTokens, outputTokens } = await explainCard(apiKey, front, back);
+	const { explanation, inputTokens, outputTokens } = await explainCard(apiKey, front, back, locale);
 
 	const cost = calculateExplainCost(inputTokens, outputTokens);
 	const usagePromise = logUsage(db, userId, 'anthropic', 'explain', inputTokens + outputTokens, cost);
