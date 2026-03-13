@@ -235,25 +235,35 @@
 			.then((data) => {
 				if (!data) return;
 				prefetchedCards = data as PrefetchedCards;
-				// Preload first card's TTS only if required keys are present
-				if (keyStatus && (!keyStatus.openai || !keyStatus.deepgram)) return;
 				const cards = (data as { cards: { fields: string; card_type: string }[] }).cards;
 				if (!cards?.length) return;
-				const card = cards[0];
-				try {
-					const fields = JSON.parse(card.fields) as { value: string }[];
-					if (!fields.length) return;
-					let text: string;
-					if (card.card_type === 'cloze' || /\{\{c\d+::/.test(fields[0].value)) {
-						text = fields[0].value.replace(/\{\{c\d+::(.*?)(?:::(.*?))?\}\}/g, (_m, _a, hint) => hint || 'blank');
-					} else {
-						text = fields[0].value;
-					}
+				// Preload first 3 fronts + first 2 backs in parallel so early cards play instantly.
+				// The TTS endpoint serves from Cloudflare edge cache after the first synthesis.
+				const seen = new Set<string>();
+				const tryPreload = (rawHtml: string) => {
 					const div = document.createElement('div');
-					div.innerHTML = text;
-					const plain = div.textContent ?? '';
-					if (plain) preloadTTS(plain);
-				} catch { /* ignore parse errors */ }
+					div.innerHTML = rawHtml;
+					const plain = (div.textContent ?? '').trim();
+					if (plain && !seen.has(plain)) { seen.add(plain); preloadTTS(plain); }
+				};
+				const limit = Math.min(3, cards.length);
+				for (let i = 0; i < limit; i++) {
+					try {
+						const card = cards[i];
+						const fields = JSON.parse(card.fields) as { value: string }[];
+						if (!fields.length) continue;
+						const firstValue = fields[0]?.value ?? '';
+						const isCloze = card.card_type === 'cloze' || /\{\{c\d+::/.test(firstValue);
+						if (isCloze) {
+							// front: replace answers with hints/blank; back: reveal answers
+							tryPreload(firstValue.replace(/\{\{c\d+::(.*?)(?:::(.*?))?\}\}/g, (_m, _a, hint) => hint || 'blank'));
+							if (i < 2) tryPreload(firstValue.replace(/\{\{c\d+::(.*?)(?:::(.*?))?\}\}/g, (_m, a) => a));
+						} else {
+							tryPreload(firstValue);
+							if (i < 2 && fields[1]?.value) tryPreload(fields[1].value);
+						}
+					} catch { /* ignore parse errors */ }
+				}
 			})
 			.catch(() => {});
 	});
