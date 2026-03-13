@@ -26,7 +26,7 @@ export type ReviewEvent =
 			back: string;
 			frontHtml: string;
 			backHtml: string;
-			isLearning: boolean;
+			cardState: 'new' | 'learning' | 'review';
 			intervals: IntervalLabels;
 	  }
 	| { type: 'tts_loading' }
@@ -330,9 +330,9 @@ export function createReviewEngine(): ReviewEngine {
 		}
 
 		currentCard = result;
-		const isLearning =
-			currentCard.fsrs_state === STATE_LEARNING ||
-			currentCard.fsrs_state === STATE_RELEARNING;
+		const cardState: 'new' | 'learning' | 'review' =
+			currentCard.fsrs_state === STATE_NEW ? 'new' :
+			currentCard.fsrs_state === STATE_REVIEW ? 'review' : 'learning';
 
 		phase = 'question';
 		cardStartTime = Date.now();
@@ -346,7 +346,7 @@ export function createReviewEngine(): ReviewEngine {
 			back: currentCard.back,
 			frontHtml: currentCard.frontHtml,
 			backHtml: currentCard.backHtml,
-			isLearning,
+			cardState,
 			intervals: currentCard.intervals
 		});
 		emit({ type: 'phase_change', phase: 'question' });
@@ -577,8 +577,9 @@ export function createReviewEngine(): ReviewEngine {
 		cardStartTime = Date.now();
 		cardsReviewedCount++;
 
-		const isLearning =
-			card.fsrs_state === STATE_LEARNING || card.fsrs_state === STATE_RELEARNING;
+		const cardState: 'new' | 'learning' | 'review' =
+			card.fsrs_state === STATE_NEW ? 'new' :
+			card.fsrs_state === STATE_REVIEW ? 'review' : 'learning';
 
 		emit({
 			type: 'card_change',
@@ -588,7 +589,7 @@ export function createReviewEngine(): ReviewEngine {
 			back: card.back,
 			frontHtml: card.frontHtml,
 			backHtml: card.backHtml,
-			isLearning,
+			cardState,
 			intervals: card.intervals
 		});
 		emit({ type: 'phase_change', phase: 'rating' });
