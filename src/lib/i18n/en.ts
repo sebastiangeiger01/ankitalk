@@ -87,7 +87,7 @@ export const en: Record<string, string> = {
 	'review.hint': 'Hint',
 	'review.explain': 'Explain',
 	'review.suspend': 'Suspend',
-	'review.stop': 'Stop session',
+	'review.stop': 'End session',
 	'review.showAnswer': 'Show Answer',
 	'review.undo': 'undo',
 	'review.cardSuspended': 'Card suspended',

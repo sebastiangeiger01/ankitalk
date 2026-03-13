@@ -4,6 +4,7 @@
 	import { buildApkg } from '$lib/client/apkg-export';
 	import OnboardingChecklist from '$lib/components/OnboardingChecklist.svelte';
 	import { locale, t } from '$lib/i18n';
+	import { preloadTTS } from '$lib/client/audio';
 	import type { DeckWithDueCount } from '$lib/types';
 
 	let decks = $state<DeckWithDueCount[]>([]);
@@ -32,8 +33,37 @@
 		if (res.ok) {
 			const data = (await res.json()) as { decks: DeckWithDueCount[] };
 			decks = data.decks;
+			// Warm up TTS cache for the first due card of each deck with cards due.
+			// Limited to 3 decks to avoid hammering the TTS endpoint on large collections.
+			// The audioCache is module-level so these buffers are already decoded when
+			// the user navigates to the review page.
+			prefetchDueDecksTTS(data.decks);
 		}
 		loading = false;
+	}
+
+	function prefetchDueDecksTTS(allDecks: DeckWithDueCount[]) {
+		const targets = allDecks.filter((d) => d.due_count > 0).slice(0, 3);
+		for (const deck of targets) {
+			fetch(`/api/cards/next?${new URLSearchParams({ deckId: deck.id, limit: '1' })}`)
+				.then((r) => r.ok ? r.json() : null)
+				.then((data: { cards: { fields: string; card_type: string }[] } | null) => {
+					const card = data?.cards?.[0];
+					if (!card) return;
+					const fields = JSON.parse(card.fields) as { value: string }[];
+					if (!fields.length) return;
+					const firstValue = fields[0]?.value ?? '';
+					const isCloze = card.card_type === 'cloze' || /\{\{c\d+::/.test(firstValue);
+					const rawHtml = isCloze
+						? firstValue.replace(/\{\{c\d+::(.*?)(?:::(.*?))?\}\}/g, (_m, _a, hint) => hint || 'blank')
+						: firstValue;
+					const div = document.createElement('div');
+					div.innerHTML = rawHtml;
+					const plain = (div.textContent ?? '').trim();
+					if (plain) preloadTTS(plain);
+				})
+				.catch(() => {});
+		}
 	}
 
 	async function handleFileUpload(event: Event) {
