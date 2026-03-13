@@ -96,7 +96,8 @@ export async function speak(text: string, voice?: string, speed?: number, onPlay
 	// so interruptTTS() called during async operations (e.g. audioContext.resume) can
 	// still cancel this invocation via the abort signal.
 	if (currentSource) {
-		try { currentSource.stop(); } catch { /* already stopped */ }
+		try { currentSource.stop(audioContext ? audioContext.currentTime : 0); } catch { /* already stopped */ }
+		try { currentSource.disconnect(); } catch { /* already disconnected */ }
 		currentSource = null;
 	}
 	if (currentAbort) {
@@ -162,9 +163,15 @@ export function stopPlayback(): void {
 
 	if (currentSource) {
 		try {
-			currentSource.stop();
+			// Pass explicit time so iOS Safari stops immediately rather than at next quantum
+			currentSource.stop(audioContext ? audioContext.currentTime : 0);
 		} catch {
 			// Already stopped
+		}
+		try {
+			currentSource.disconnect();
+		} catch {
+			// Already disconnected
 		}
 		currentSource = null;
 	}
