@@ -398,11 +398,8 @@
 			<button class="toolbar-btn" onclick={() => engine.executeCommand('explain')} title="{t('review.explain')} (E)" aria-label={t('review.explain')}>
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor" stroke="none"/></svg>
 			</button>
-			<button class="toolbar-btn" onclick={() => engine.executeCommand('suspend')} title="{t('review.suspend')} (S)" aria-label={t('review.suspend')}>
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-			</button>
 			<button class="toolbar-btn stop" onclick={() => engine.executeCommand('stop')} title="{t('review.stop')} (Esc)" aria-label={t('review.stop')}>
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+				{t('review.stop')}
 			</button>
 			{#if status === 'loading' || status === 'speaking' || status === 'listening' || status === 'explaining'}
 				<span class="voice-dot" class:loading={status === 'loading'} class:speaking={status === 'speaking'} class:listening={status === 'listening'} class:explaining={status === 'explaining'}></span>
@@ -770,6 +767,14 @@
 
 	.toolbar-btn.off {
 		color: #ff8888;
+	}
+
+	.toolbar-btn.stop {
+		width: auto;
+		padding: 0 10px;
+		font-size: 0.8rem;
+		font-weight: 500;
+		letter-spacing: 0.01em;
 	}
 
 	.toolbar-btn.stop:hover {
