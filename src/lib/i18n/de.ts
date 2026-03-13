@@ -161,6 +161,7 @@ export const de: Record<string, string> = {
 	'settings.apiKeys.notConfigured': 'Nicht konfiguriert',
 	'settings.apiKeys.save': 'Speichern',
 	'settings.apiKeys.remove': 'Entfernen',
+	'settings.apiKeys.removing': 'Wird entfernt…',
 	'settings.apiKeys.saved': 'Schlüssel gespeichert und verifiziert',
 	'settings.apiKeys.removed': 'Schlüssel entfernt',
 	'settings.apiKeys.placeholder': 'API-Schlüssel hier einfügen',

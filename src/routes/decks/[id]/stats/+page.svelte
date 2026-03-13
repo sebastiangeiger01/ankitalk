@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { locale, t } from '$lib/i18n';
+	import Spinner from '$lib/components/Spinner.svelte';
 
 	const deckId = $derived($page.params.id);
 
@@ -85,7 +86,7 @@
 	<h1>{t('stats.title')}{deckName ? ` — ${deckName}` : ''}</h1>
 
 	{#if loading}
-		<p class="loading">{t('stats.loading')}</p>
+		<div class="loading"><Spinner size={26} /></div>
 	{:else}
 		<section class="section">
 			<h2>{t('stats.cardStates')}</h2>
@@ -187,7 +188,14 @@
 		font-size: 1.4rem;
 	}
 
-	.loading, .no-data {
+	.loading {
+		color: #8080c0;
+		display: flex;
+		justify-content: center;
+		padding: 3rem 0;
+	}
+
+	.no-data {
 		color: #a8a8b8;
 		font-size: 0.9rem;
 	}

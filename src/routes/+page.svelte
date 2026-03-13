@@ -175,7 +175,16 @@
 </section>
 
 {#if loading}
-	<p class="loading">{t('dashboard.loading')}</p>
+	<ul class="deck-list" aria-hidden="true">
+		{#each [1, 2, 3] as _}
+			<li class="deck-card">
+				<div class="skeleton-body">
+					<div class="skeleton-title"></div>
+					<div class="skeleton-meta"></div>
+				</div>
+			</li>
+		{/each}
+	</ul>
 {:else if decks.length === 0}
 	<div class="onboarding">
 		<div class="onboarding-icon">
@@ -389,6 +398,37 @@
 	.deck-action-btn:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
+	}
+
+	/* Skeleton loader for deck list */
+	.skeleton-body {
+		flex: 1;
+		padding: 1rem 1.25rem;
+	}
+
+	.skeleton-title,
+	.skeleton-meta {
+		border-radius: 4px;
+		background: linear-gradient(90deg, #2a2a4e 25%, #353560 50%, #2a2a4e 75%);
+		background-size: 200% 100%;
+		animation: skeleton-shimmer 1.4s ease-in-out infinite;
+	}
+
+	.skeleton-title {
+		height: 1rem;
+		width: 42%;
+		margin-bottom: 0.5rem;
+	}
+
+	.skeleton-meta {
+		height: 0.75rem;
+		width: 28%;
+		animation-delay: 0.1s;
+	}
+
+	@keyframes skeleton-shimmer {
+		0% { background-position: 200% 0; }
+		100% { background-position: -200% 0; }
 	}
 
 </style>

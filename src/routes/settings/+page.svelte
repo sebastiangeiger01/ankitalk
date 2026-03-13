@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { locale, t, type Locale } from '$lib/i18n';
+	import Spinner from '$lib/components/Spinner.svelte';
 
 	function setLocale(l: Locale) {
 		locale.set(l);
@@ -220,7 +221,8 @@
 							disabled={removing[service]}
 							onclick={() => removeKey(service)}
 						>
-							{removing[service] ? '...' : t('settings.apiKeys.remove')}
+							{#if removing[service]}<Spinner size={13} />{/if}
+							{removing[service] ? t('settings.apiKeys.removing') : t('settings.apiKeys.remove')}
 						</button>
 					</div>
 				{/if}
@@ -246,7 +248,8 @@
 								disabled={saving[service] || !keyInputs[service].trim()}
 								onclick={() => saveKey(service)}
 							>
-								{saving[service] ? t('settings.apiKeys.validating') : t('settings.apiKeys.save')}
+								{#if saving[service]}<Spinner size={13} />{/if}
+							{saving[service] ? t('settings.apiKeys.validating') : t('settings.apiKeys.save')}
 							</button>
 						</div>
 					</div>
@@ -288,7 +291,8 @@
 							disabled={removing[service]}
 							onclick={() => removeKey(service)}
 						>
-							{removing[service] ? '...' : t('settings.apiKeys.remove')}
+							{#if removing[service]}<Spinner size={13} />{/if}
+							{removing[service] ? t('settings.apiKeys.removing') : t('settings.apiKeys.remove')}
 						</button>
 					</div>
 				{/if}
@@ -314,7 +318,8 @@
 								disabled={saving[service] || !keyInputs[service].trim()}
 								onclick={() => saveKey(service)}
 							>
-								{saving[service] ? t('settings.apiKeys.validating') : t('settings.apiKeys.save')}
+								{#if saving[service]}<Spinner size={13} />{/if}
+							{saving[service] ? t('settings.apiKeys.validating') : t('settings.apiKeys.save')}
 							</button>
 						</div>
 					</div>
@@ -326,7 +331,7 @@
 	<section class="section">
 		<h2>{t('settings.usage.title')}</h2>
 		{#if loadingUsage}
-			<p class="muted">{t('common.loading')}</p>
+			<div class="usage-loading"><Spinner size={22} /></div>
 		{:else if !usageData || allZero(usageData)}
 			<p class="muted">{t('settings.usage.noUsage')}</p>
 		{:else}
@@ -599,7 +604,17 @@
 		color: #a0a0e0;
 	}
 
+	.usage-loading {
+		display: flex;
+		justify-content: center;
+		padding: 1.5rem 0;
+		color: #8080c0;
+	}
+
 	.btn-primary {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
 		padding: 0.5rem 1.1rem;
 		background: #3a3a6e;
 		border: 1px solid #5a5a8e;
@@ -624,6 +639,9 @@
 	}
 
 	.btn-danger {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
 		padding: 0.4rem 0.9rem;
 		background: #2a1a1a;
 		border: 1px solid #5a2a2a;

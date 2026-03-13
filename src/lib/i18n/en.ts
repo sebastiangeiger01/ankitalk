@@ -161,6 +161,7 @@ export const en: Record<string, string> = {
 	'settings.apiKeys.notConfigured': 'Not configured',
 	'settings.apiKeys.save': 'Save',
 	'settings.apiKeys.remove': 'Remove',
+	'settings.apiKeys.removing': 'Removing…',
 	'settings.apiKeys.saved': 'Key saved and verified successfully',
 	'settings.apiKeys.removed': 'Key removed',
 	'settings.apiKeys.placeholder': 'Paste your API key here',
