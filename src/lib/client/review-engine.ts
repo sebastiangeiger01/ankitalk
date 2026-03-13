@@ -38,6 +38,7 @@ export type ReviewEvent =
 	| { type: 'session_end'; stats: SessionStats }
 	| { type: 'error'; message: string }
 	| { type: 'explaining' }
+	| { type: 'hinting' }
 	| { type: 'deck_info'; name: string }
 	| { type: 'undo_available'; available: boolean }
 	| { type: 'mic_change'; micOn: boolean }
@@ -400,11 +401,9 @@ export function createReviewEngine(): ReviewEngine {
 				speakText(currentCard.back);
 				break;
 
-			case 'hint': {
-				const words = currentCard.back.split(/\s+/).slice(0, 3).join(' ');
-				speakText(words + '...');
+			case 'hint':
+				handleHint();
 				break;
-			}
 
 			case 'repeat': {
 				const lastText = getLastSpokenText();
@@ -617,6 +616,30 @@ export function createReviewEngine(): ReviewEngine {
 			playSound('/chime.mp3').catch(() => {});
 		} catch {
 			emit({ type: 'error', message: 'Failed to get explanation' });
+			if (micOn) emit({ type: 'listening' });
+			else emit({ type: 'idle' });
+		}
+	}
+
+	async function handleHint() {
+		interruptTTS();
+		emit({ type: 'hinting' });
+		if (!currentCard) return;
+
+		try {
+			const res = await fetch('/api/hint', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ front: currentCard.front, back: currentCard.back })
+			});
+
+			if (!res.ok) throw new Error('Hint API failed');
+			const { hint } = (await res.json()) as { hint: string };
+
+			speakText(hint);
+			playSound('/chime.mp3').catch(() => {});
+		} catch {
+			emit({ type: 'error', message: 'Failed to get hint' });
 			if (micOn) emit({ type: 'listening' });
 			else emit({ type: 'idle' });
 		}

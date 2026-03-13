@@ -1,0 +1,31 @@
+import { json, error } from '@sveltejs/kit';
+import { hintCard } from '$lib/server/hint';
+import { getUserApiKey } from '$lib/server/user-keys';
+import { logUsage, calculateExplainCost } from '$lib/server/usage';
+import { getDb } from '$lib/server/db';
+import type { RequestHandler } from './$types';
+
+export const POST: RequestHandler = async ({ request, platform, locals }) => {
+	if (!locals.userId) throw error(401, 'Unauthorized');
+
+	const userId = locals.userId;
+	const db = getDb(platform!);
+
+	const apiKey = await getUserApiKey(db, userId, 'anthropic', platform!.env.ENCRYPTION_KEY);
+	if (!apiKey) return json({ error: 'Add your Anthropic API key in Settings to use AI hints' }, { status: 400 });
+
+	const body = (await request.json()) as { front: string; back: string };
+	const { front, back } = body;
+
+	if (!front || !back) {
+		throw error(400, 'Missing front or back text');
+	}
+
+	const { hint, inputTokens, outputTokens } = await hintCard(apiKey, front, back);
+
+	const cost = calculateExplainCost(inputTokens, outputTokens);
+	const usagePromise = logUsage(db, userId, 'anthropic', 'hint', inputTokens + outputTokens, cost);
+	platform?.context?.waitUntil(usagePromise);
+
+	return json({ hint });
+};

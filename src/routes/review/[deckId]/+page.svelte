@@ -10,7 +10,7 @@
 
 	let started = $state(false);
 	let phase = $state<ReviewPhase>('question');
-	let status = $state<'idle' | 'loading' | 'speaking' | 'listening' | 'explaining' | 'waiting'>('idle');
+	let status = $state<'idle' | 'loading' | 'speaking' | 'listening' | 'explaining' | 'hinting' | 'waiting'>('idle');
 	let cardsReviewed = $state(0);
 	let frontText = $state('');
 	let backText = $state('');
@@ -87,6 +87,9 @@
 				break;
 			case 'explaining':
 				status = 'explaining';
+				break;
+			case 'hinting':
+				status = 'hinting';
 				break;
 			case 'transcript':
 				break;
@@ -404,8 +407,8 @@
 			<button class="toolbar-btn stop" onclick={() => engine.executeCommand('stop')} title="{t('review.stop')} (Esc)" aria-label={t('review.stop')}>
 				{t('review.stop')}
 			</button>
-			{#if status === 'loading' || status === 'speaking' || status === 'listening' || status === 'explaining'}
-				<span class="voice-dot" class:loading={status === 'loading'} class:speaking={status === 'speaking'} class:listening={status === 'listening'} class:explaining={status === 'explaining'}></span>
+			{#if status === 'loading' || status === 'speaking' || status === 'listening' || status === 'explaining' || status === 'hinting'}
+				<span class="voice-dot" class:loading={status === 'loading'} class:speaking={status === 'speaking'} class:listening={status === 'listening'} class:explaining={status === 'explaining'} class:hinting={status === 'hinting'}></span>
 			{/if}
 		</div>
 		<div class="top-right">
@@ -806,6 +809,11 @@
 
 	.voice-dot.explaining {
 		background: #bbaaff;
+		animation: pulse-dot 0.8s ease-in-out infinite;
+	}
+
+	.voice-dot.hinting {
+		background: #ffdd88;
 		animation: pulse-dot 0.8s ease-in-out infinite;
 	}
 

@@ -12,7 +12,7 @@ export async function logUsage(
 	db: D1Database,
 	userId: string,
 	service: 'openai' | 'deepgram' | 'anthropic',
-	operation: 'tts' | 'stt_token' | 'explain',
+	operation: 'tts' | 'stt_token' | 'explain' | 'hint',
 	units: number,
 	estimatedCostUsd: number
 ): Promise<void> {
