@@ -92,18 +92,27 @@ export async function speak(text: string, voice?: string, speed?: number, onPlay
 		audioContext = new AudioContext();
 	}
 
-	if (audioContext.state === 'suspended') {
-		await audioContext.resume();
+	// Stop any currently playing audio and abort in-flight fetch BEFORE any await,
+	// so interruptTTS() called during async operations (e.g. audioContext.resume) can
+	// still cancel this invocation via the abort signal.
+	if (currentSource) {
+		try { currentSource.stop(); } catch { /* already stopped */ }
+		currentSource = null;
 	}
-
-	lastSpokenText = text;
-
-	// Abort any in-flight TTS fetch
 	if (currentAbort) {
 		currentAbort.abort();
 	}
 	const abort = new AbortController();
 	currentAbort = abort;
+
+	if (audioContext.state === 'suspended') {
+		await audioContext.resume();
+	}
+
+	// If we were interrupted while waiting for resume, bail out.
+	if (abort !== currentAbort || abort.signal.aborted) return;
+
+	lastSpokenText = text;
 
 	const key = cacheKey(text, voice, speed);
 	let audioBuffer: AudioBuffer;
@@ -117,8 +126,8 @@ export async function speak(text: string, voice?: string, speed?: number, onPlay
 		audioBuffer = await fetchTTSBuffer(text, voice, speed, abort.signal);
 	}
 
-	// Check if cancelled during fetch/decode
-	if (abort.signal.aborted) return;
+	// Check if cancelled or superseded during fetch/decode
+	if (abort !== currentAbort || abort.signal.aborted) return;
 
 	return new Promise<void>((resolve, reject) => {
 		const source = audioContext!.createBufferSource();
