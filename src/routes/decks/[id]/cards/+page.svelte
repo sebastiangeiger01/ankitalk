@@ -3,6 +3,7 @@
 	import { onMount } from 'svelte';
 	import CardEditModal from '$lib/components/CardEditModal.svelte';
 	import { locale, t } from '$lib/i18n';
+	import Spinner from '$lib/components/Spinner.svelte';
 	import type { BrowseCard, NoteField } from '$lib/types';
 
 	const deckId = $derived($page.params.id);
@@ -230,7 +231,7 @@
 	{/if}
 
 	{#if loading}
-		<p class="loading-msg">{t('cards.loading')}</p>
+		<div class="loading-msg"><Spinner size={26} /></div>
 	{:else if cards.length === 0}
 		<p class="empty-msg">{t('cards.empty')}</p>
 	{:else}
@@ -403,7 +404,9 @@
 	}
 
 	.loading-msg, .empty-msg {
-		color: #a8a8b8;
+		color: #8080c0;
+		display: flex;
+		justify-content: center;
 		text-align: center;
 		padding: 2rem;
 	}

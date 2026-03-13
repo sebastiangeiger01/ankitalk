@@ -2,6 +2,7 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { locale, t } from '$lib/i18n';
+	import Spinner from '$lib/components/Spinner.svelte';
 
 	const deckId = $derived($page.params.id);
 
@@ -130,7 +131,7 @@
 	<h1>{t('settings.title')}{deckName ? ` — ${deckName}` : ''}</h1>
 
 	{#if loading}
-		<p class="loading">{t('settings.loading')}</p>
+		<div class="page-spinner"><Spinner size={28} /></div>
 	{:else}
 		<form onsubmit={(e) => { e.preventDefault(); save(); }}>
 			<div class="field">
@@ -174,6 +175,7 @@
 			</div>
 
 			<button type="submit" class="save-btn" disabled={saving}>
+				{#if saving}<Spinner size={14} />{/if}
 				{saving ? t('settings.saving') : t('settings.save')}
 			</button>
 
@@ -228,8 +230,11 @@
 		font-size: 1.4rem;
 	}
 
-	.loading {
-		color: #a8a8b8;
+	.page-spinner {
+		display: flex;
+		justify-content: center;
+		padding: 3rem 0;
+		color: #8080c0;
 	}
 
 	form {
@@ -282,6 +287,9 @@
 	}
 
 	.save-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
 		padding: 0.6rem 1.5rem;
 		background: #4a4a8e;
 		color: #e0e0ff;
