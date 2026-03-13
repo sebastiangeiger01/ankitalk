@@ -163,8 +163,8 @@ export async function buildApkg(
 	});
 
 	db.run(
-		'INSERT INTO col VALUES (1, ?, ?, ?, 11, 0, 0, 0, ?, ?, ?, ?, ?)',
-		[now, now, now * 1000, '{}', JSON.stringify(modelsJson), JSON.stringify(decksJson), dconf, '{}']
+		'INSERT INTO col VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+		[1, now, now, now * 1000, 11, 0, 0, 0, '{}', JSON.stringify(modelsJson), JSON.stringify(decksJson), dconf, '{}']
 	);
 
 	// Build note ID map (our ID → Anki ID)
@@ -193,8 +193,8 @@ export async function buildApkg(
 		csum = Math.abs(csum);
 
 		db.run(
-			'INSERT INTO notes VALUES (?, ?, ?, ?, -1, ?, ?, ?, ?, 0, ?)',
-			[noteAnkiId, String(noteAnkiId), modelId, now, note.tags, flds, sfld, csum, '']
+			'INSERT INTO notes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+			[noteAnkiId, String(noteAnkiId), modelId, now, -1, note.tags, flds, sfld, csum, 0, '']
 		);
 	}
 
@@ -208,11 +208,12 @@ export async function buildApkg(
 
 		const type = fsrsToAnkiType(card.fsrs_state);
 		const queue = fsrsToAnkiQueue(card.fsrs_state);
-		const due = card.fsrs_state === 0 ? 0 : Math.floor(new Date(card.due_at).getTime() / 86400000);
+		const dueMs = card.due_at ? new Date(card.due_at).getTime() : 0;
+		const due = card.fsrs_state === 0 ? 0 : (Number.isFinite(dueMs) ? Math.floor(dueMs / 86400000) : 0);
 
 		db.run(
-			'INSERT INTO cards VALUES (?, ?, ?, ?, ?, -1, ?, ?, ?, 0, 2500, ?, ?, 0, 0, 0, 0, ?)',
-			[cardAnkiId, noteAnkiId, deckAnkiId, card.ordinal, now, type, queue, due, card.fsrs_reps, card.fsrs_lapses, '']
+			'INSERT INTO cards VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+			[cardAnkiId, noteAnkiId, deckAnkiId, card.ordinal, now, -1, type, queue, due, 0, 2500, card.fsrs_reps, card.fsrs_lapses, 0, 0, 0, 0, '']
 		);
 	}
 
