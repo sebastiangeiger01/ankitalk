@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { parseApkg } from '$lib/client/anki-parser';
-	import { buildApkg } from '$lib/client/apkg-export';
+	import { buildApkg, extractMediaFilenames } from '$lib/client/apkg-export';
 	import OnboardingChecklist from '$lib/components/OnboardingChecklist.svelte';
 	import { locale, t } from '$lib/i18n';
 	import { preloadTTS } from '$lib/client/audio';
@@ -123,8 +123,25 @@
 			if (!res.ok) throw new Error('Failed to fetch deck data');
 			const data = (await res.json()) as { deck: Record<string, unknown>; notes: Record<string, unknown>[]; cards: Record<string, unknown>[] };
 
+			// Fetch media files referenced in note fields
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			const apkg = await buildApkg(data.deck as any, data.notes as any, data.cards as any);
+			const mediaFilenames = extractMediaFilenames(data.notes as any);
+			const mediaMap = new Map<string, Uint8Array>();
+			const mediaFetches = [...mediaFilenames].map(async (filename) => {
+				try {
+					const mediaRes = await fetch(`/api/media/${encodeURIComponent(filename)}`);
+					if (mediaRes.ok) {
+						const buf = await mediaRes.arrayBuffer();
+						mediaMap.set(filename, new Uint8Array(buf));
+					}
+				} catch {
+					// Skip media files that can't be fetched
+				}
+			});
+			await Promise.all(mediaFetches);
+
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const apkg = await buildApkg(data.deck as any, data.notes as any, data.cards as any, mediaMap);
 
 			const blob = new Blob([apkg.buffer as ArrayBuffer], { type: 'application/octet-stream' });
 			const url = URL.createObjectURL(blob);

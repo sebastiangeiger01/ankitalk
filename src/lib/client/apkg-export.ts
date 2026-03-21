@@ -26,6 +26,35 @@ interface ExportCard {
 	fsrs_state: number;
 	fsrs_reps: number;
 	fsrs_lapses: number;
+	fsrs_scheduled_days: number;
+	suspended: number;
+	learning_step_index: number;
+}
+
+/** Extract unique media filenames from note field HTML (img src, audio src, [sound:...]) */
+export function extractMediaFilenames(notes: ExportNote[]): Set<string> {
+	const filenames = new Set<string>();
+	const srcPattern = /(?:<(?:img|audio|source)\b[^>]*\bsrc\s*=\s*["'])(?!https?:\/\/|data:)([^"']+)["']/gi;
+	const soundPattern = /\[sound:([^\]]+)\]/gi;
+
+	for (const note of notes) {
+		let fields: { name: string; value: string }[];
+		try {
+			fields = JSON.parse(note.fields);
+		} catch {
+			continue;
+		}
+		for (const field of fields) {
+			let match;
+			while ((match = srcPattern.exec(field.value)) !== null) {
+				filenames.add(match[1]);
+			}
+			while ((match = soundPattern.exec(field.value)) !== null) {
+				filenames.add(match[1]);
+			}
+		}
+	}
+	return filenames;
 }
 
 /** Generate a timestamp-based Anki ID (milliseconds since epoch). */
@@ -53,7 +82,8 @@ function fsrsToAnkiQueue(state: number): number {
 export async function buildApkg(
 	deck: ExportDeck,
 	notes: ExportNote[],
-	cards: ExportCard[]
+	cards: ExportCard[],
+	media?: Map<string, Uint8Array>
 ): Promise<Uint8Array> {
 	const SQL = await initSqlJs({
 		locateFile: (filename: string) => `/${filename}`
@@ -152,6 +182,15 @@ export async function buildApkg(
 
 	db.run(`CREATE TABLE graves (usn integer not null, oid integer not null, type integer not null)`);
 
+	// Indexes expected by Anki Desktop on import
+	db.run('CREATE INDEX ix_notes_usn ON notes (usn)');
+	db.run('CREATE INDEX ix_notes_csum ON notes (csum)');
+	db.run('CREATE INDEX ix_cards_usn ON cards (usn)');
+	db.run('CREATE INDEX ix_cards_nid ON cards (nid)');
+	db.run('CREATE INDEX ix_cards_sched ON cards (did, queue, due)');
+	db.run('CREATE INDEX ix_revlog_usn ON revlog (usn)');
+	db.run('CREATE INDEX ix_revlog_cid ON revlog (cid)');
+
 	const now = ankiTs();
 	const dconf = JSON.stringify({
 		'1': {
@@ -207,13 +246,15 @@ export async function buildApkg(
 		if (!noteAnkiId) continue;
 
 		const type = fsrsToAnkiType(card.fsrs_state);
-		const queue = fsrsToAnkiQueue(card.fsrs_state);
+		const queue = card.suspended ? -1 : fsrsToAnkiQueue(card.fsrs_state);
 		const dueMs = card.due_at ? new Date(card.due_at).getTime() : 0;
 		const due = card.fsrs_state === 0 ? 0 : (Number.isFinite(dueMs) ? Math.floor(dueMs / 86400000) : 0);
+		const ivl = card.fsrs_scheduled_days ?? 0;
+		const left = card.learning_step_index ?? 0;
 
 		db.run(
 			'INSERT INTO cards VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-			[cardAnkiId, noteAnkiId, deckAnkiId, card.ordinal, now, -1, type, queue, due, 0, 2500, card.fsrs_reps, card.fsrs_lapses, 0, 0, 0, 0, '']
+			[cardAnkiId, noteAnkiId, deckAnkiId, card.ordinal, now, -1, type, queue, due, ivl, 2500, card.fsrs_reps, card.fsrs_lapses, left, 0, 0, 0, '']
 		);
 	}
 
@@ -221,11 +262,23 @@ export async function buildApkg(
 	const dbData = db.export() as Uint8Array;
 	db.close();
 
-	// ZIP as .apkg
-	const zipped = zipSync({
-		'collection.anki2': dbData,
-		'media': new TextEncoder().encode('{}')
-	});
+	// Build media manifest and numbered file entries
+	const zipEntries: Record<string, Uint8Array> = {
+		'collection.anki21': dbData
+	};
 
+	const mediaManifest: Record<string, string> = {};
+	if (media && media.size > 0) {
+		let idx = 0;
+		for (const [filename, data] of media) {
+			mediaManifest[String(idx)] = filename;
+			zipEntries[String(idx)] = data;
+			idx++;
+		}
+	}
+
+	zipEntries['media'] = new TextEncoder().encode(JSON.stringify(mediaManifest));
+
+	const zipped = zipSync(zipEntries);
 	return zipped;
 }
