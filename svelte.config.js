@@ -1,6 +1,10 @@
 import adapter from '@sveltejs/adapter-cloudflare';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 
+const platformProxyConfigPath = process.env.PLAYWRIGHT_TEST
+	? 'wrangler.playwright.jsonc'
+	: 'wrangler.jsonc';
+
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
 	preprocess: vitePreprocess(),
@@ -11,7 +15,7 @@ const config = {
 				exclude: ['<all>']
 			},
 			platformProxy: {
-				configPath: 'wrangler.jsonc',
+				configPath: platformProxyConfigPath,
 				persist: { path: '.wrangler/state' }
 			}
 		})
