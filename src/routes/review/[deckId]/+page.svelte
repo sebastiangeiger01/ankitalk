@@ -35,6 +35,7 @@
 	let intervals = $state<IntervalLabels>({ again: '', hard: '', good: '', easy: '' });
 	let counts = $state<QueueCounts>({ new: 0, learning: 0, review: 0 });
 	let helpOpen = $state(false);
+	let shortcutsOpen = $state(false);
 	let loc = $state('en');
 	locale.subscribe((v) => { loc = v; });
 	let prefetchedCards = $state<PrefetchedCards | null>(null);
@@ -178,8 +179,24 @@
 		if (!started || sessionEnded) return;
 		if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
+		// Toggle the shortcuts overlay with `?` at any time during an active session
+		if (e.key === '?') {
+			shortcutsOpen = !shortcutsOpen;
+			return;
+		}
+
+		// Close the overlay with Escape when it is open
+		if (shortcutsOpen && e.key === 'Escape') {
+			shortcutsOpen = false;
+			return;
+		}
+
+		// Disable action shortcuts while STT is actively listening to avoid conflicts
+		if (status === 'listening') return;
+
 		switch (e.key) {
 			case ' ':
+			case 'Enter':
 				e.preventDefault();
 				if (phase === 'question') engine.executeCommand('answer');
 				break;
@@ -413,6 +430,9 @@
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor" stroke="none"/></svg>
 				</button>
 			{/if}
+			<button class="toolbar-btn" onclick={() => shortcutsOpen = !shortcutsOpen} title="{t('help.keyHelp')} (?)" aria-label={t('help.keyboardTitle')} aria-pressed={shortcutsOpen}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor" stroke="none"/></svg>
+			</button>
 			<button class="toolbar-btn stop" onclick={() => engine.executeCommand('stop')} title="{t('review.stop')} (Esc)" aria-label={t('review.stop')}>
 				{t('review.stop')}
 			</button>
@@ -468,6 +488,41 @@
 			</div>
 		{/if}
 	</div>
+
+	<!-- Keyboard shortcuts overlay -->
+	{#if shortcutsOpen}
+		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<div class="shortcuts-backdrop" onclick={() => shortcutsOpen = false}></div>
+		<div class="shortcuts-overlay" role="dialog" aria-modal="true" aria-label={t('help.keyboardTitle')}>
+			<div class="shortcuts-header">
+				<span class="shortcuts-title">{t('help.keyboardTitle')}</span>
+				<button class="shortcuts-close" onclick={() => shortcutsOpen = false} aria-label={t('help.closeOverlay')}>
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+				</button>
+			</div>
+			<table class="shortcuts-table">
+				<tbody>
+					<tr><td><kbd>Space</kbd> / <kbd>Enter</kbd></td><td>{t('help.keyAnswer')}</td></tr>
+					<tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></td><td>{t('help.keyRatings')}</td></tr>
+					<tr><td><kbd>R</kbd></td><td>{t('help.keyRepeat')}</td></tr>
+					<tr><td><kbd>E</kbd></td><td>{t('help.keyExplain')}</td></tr>
+					<tr><td><kbd>H</kbd></td><td>{t('help.keyHint')}</td></tr>
+					<tr><td><kbd>Z</kbd></td><td>{t('help.keyUndo')}</td></tr>
+					<tr><td><kbd>Esc</kbd></td><td>{t('help.keyStop')}</td></tr>
+					<tr><td><kbd>?</kbd></td><td>{t('help.keyHelp')}</td></tr>
+				</tbody>
+			</table>
+			<div class="shortcuts-section-title">{t('help.voiceTitle')}</div>
+			<ul class="shortcuts-voice">
+				<li><strong>{t('help.answer')}</strong> — {t('help.answerDesc')}</li>
+				<li><strong>{t('help.ratings')}</strong> — {t('help.ratingsDesc')}</li>
+				<li><strong>{t('help.repeat')}</strong> — {t('help.repeatDesc')}</li>
+				<li><strong>{t('help.explain')}</strong> — {t('help.explainDesc')}</li>
+				<li><strong>{t('help.hint')}</strong> — {t('help.hintDesc')}</li>
+				<li><strong>{t('help.stop')}</strong> — {t('help.stopDesc')}</li>
+			</ul>
+		</div>
+	{/if}
 {/if}
 
 <style>
@@ -1147,5 +1202,122 @@
 
 	@media (hover: none), (max-width: 640px) {
 		kbd { display: none; }
+	}
+
+	/* ========== Keyboard Shortcuts Overlay ========== */
+	.shortcuts-backdrop {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.55);
+		z-index: 200;
+		animation: fade-in 0.15s ease;
+	}
+
+	.shortcuts-overlay {
+		position: fixed;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		z-index: 201;
+		background: #1e1e38;
+		border: 1px solid #3a3a5e;
+		border-radius: 14px;
+		padding: 1.25rem 1.5rem;
+		min-width: 300px;
+		max-width: min(480px, calc(100vw - 2rem));
+		max-height: calc(100vh - 4rem);
+		max-height: calc(100dvh - 4rem);
+		overflow-y: auto;
+		animation: overlay-pop 0.18s ease;
+	}
+
+	@keyframes overlay-pop {
+		from { opacity: 0; transform: translate(-50%, -48%); }
+		to { opacity: 1; transform: translate(-50%, -50%); }
+	}
+
+	.shortcuts-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 1rem;
+	}
+
+	.shortcuts-title {
+		font-size: 1rem;
+		font-weight: 700;
+		color: #d0d0ff;
+	}
+
+	.shortcuts-close {
+		background: transparent;
+		border: none;
+		color: #8080a0;
+		cursor: pointer;
+		padding: 0.25rem;
+		border-radius: 4px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: color 0.15s;
+	}
+
+	.shortcuts-close:hover {
+		color: #d0d0ff;
+	}
+
+	.shortcuts-table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.875rem;
+		margin-bottom: 1.25rem;
+	}
+
+	.shortcuts-table td {
+		padding: 0.3rem 0;
+		vertical-align: middle;
+		color: #c0c0d8;
+	}
+
+	.shortcuts-table td:first-child {
+		white-space: nowrap;
+		padding-right: 1.25rem;
+		color: #d0d0ff;
+	}
+
+	.shortcuts-table tr + tr td {
+		border-top: 1px solid #2a2a48;
+		padding-top: 0.35rem;
+	}
+
+	.shortcuts-section-title {
+		font-size: 0.8rem;
+		font-weight: 700;
+		color: #8899cc;
+		text-transform: uppercase;
+		letter-spacing: 0.07em;
+		margin-bottom: 0.6rem;
+	}
+
+	.shortcuts-voice {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+		font-size: 0.875rem;
+		color: #a8a8b8;
+	}
+
+	.shortcuts-voice li {
+		padding: 0.25rem 0;
+		border-top: 1px solid #2a2a48;
+	}
+
+	.shortcuts-voice li:first-child {
+		border-top: none;
+	}
+
+	/* On touch/mobile devices keep the overlay fully usable */
+	@media (hover: none), (max-width: 640px) {
+		.shortcuts-overlay kbd { display: inline; }
 	}
 </style>
