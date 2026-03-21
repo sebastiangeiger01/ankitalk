@@ -79,6 +79,19 @@ export const de: Record<string, string> = {
 	'help.stop': 'stopp / aufh\u00f6ren',
 	'help.stopDesc': 'Sitzung beenden',
 
+	// Review - Keyboard shortcuts overlay
+	'help.keyboardTitle': 'Tastenkombinationen',
+	'help.voiceTitle': 'Sprachbefehle',
+	'help.keyAnswer': 'Antwort zeigen',
+	'help.keyRatings': 'Bewerten: Nochmal / Schwer / Gut / Einfach',
+	'help.keyRepeat': 'Audio wiederholen',
+	'help.keyExplain': 'Erkl\u00e4ren (KI)',
+	'help.keyHint': 'Hinweis',
+	'help.keyUndo': 'Letzte Bewertung r\u00fcckg\u00e4ngig',
+	'help.keyStop': 'Sitzung beenden',
+	'help.keyHelp': 'Dieses Overlay zeigen / ausblenden',
+	'help.closeOverlay': 'Schlie\u00dfen',
+
 	// Review - Active session
 	'review.muteAudio': 'Audio stumm',
 	'review.unmuteAudio': 'Audio ein',
