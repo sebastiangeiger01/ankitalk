@@ -92,6 +92,19 @@ export async function buildApkg(
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const db: any = new SQL.Database();
 
+	// sql.js browser build has a bug: Database.run(sql, params) calls
+	// Database.prepare(sql, params), but the browser build's prepare()
+	// only accepts one argument and silently drops the params array.
+	// All ? placeholders become NULL, causing NOT NULL constraint errors.
+	// Workaround: use prepare() + bind() + step() + free() explicitly.
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	function runWithParams(sql: string, params: any[]) {
+		const stmt = db.prepare(sql);
+		stmt.bind(params);
+		stmt.step();
+		stmt.free();
+	}
+
 	const deckAnkiId = deck.anki_id ?? ankiTs();
 	const modelId = ankiTs() + 1;
 
@@ -201,7 +214,7 @@ export async function buildApkg(
 		}
 	});
 
-	db.run(
+	runWithParams(
 		'INSERT INTO col VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
 		[1, now, now, now * 1000, 11, 0, 0, 0, '{}', JSON.stringify(modelsJson), JSON.stringify(decksJson), dconf, '{}']
 	);
@@ -231,7 +244,7 @@ export async function buildApkg(
 		}
 		csum = Math.abs(csum);
 
-		db.run(
+		runWithParams(
 			'INSERT INTO notes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
 			[noteAnkiId, String(noteAnkiId), modelId, now, -1, note.tags, flds, sfld, csum, 0, '']
 		);
@@ -252,7 +265,7 @@ export async function buildApkg(
 		const ivl = card.fsrs_scheduled_days ?? 0;
 		const left = card.learning_step_index ?? 0;
 
-		db.run(
+		runWithParams(
 			'INSERT INTO cards VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
 			[cardAnkiId, noteAnkiId, deckAnkiId, card.ordinal, now, -1, type, queue, due, ivl, 2500, card.fsrs_reps, card.fsrs_lapses, left, 0, 0, 0, '']
 		);
