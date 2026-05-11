@@ -154,6 +154,9 @@ export const en: Record<string, string> = {
 	// App Settings
 	'appSettings.title': 'App Settings',
 	'appSettings.language': 'Language',
+	'appSettings.audio': 'Audio',
+	'appSettings.prepareAudioAhead': 'Prepare audio ahead of time',
+	'appSettings.prepareAudioAheadDesc': 'Generates upcoming card audio before you play it so reviews feel faster. This can use your OpenAI credits for cards you may not hear.',
 	'appSettings.dashboard': 'Dashboard',
 
 	// API Keys

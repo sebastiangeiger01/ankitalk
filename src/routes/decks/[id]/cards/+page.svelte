@@ -4,6 +4,7 @@
 	import CardEditModal from '$lib/components/CardEditModal.svelte';
 	import { locale, t } from '$lib/i18n';
 	import Spinner from '$lib/components/Spinner.svelte';
+	import { sanitizeCardHtml } from '$lib/sanitize';
 	import type { BrowseCard, NoteField } from '$lib/types';
 
 	const deckId = $derived($page.params.id);
@@ -167,7 +168,7 @@
 			const raw = fields[0]?.value ?? '';
 			// Strip HTML
 			const div = document.createElement('div');
-			div.innerHTML = raw;
+			div.innerHTML = sanitizeCardHtml(raw);
 			return div.textContent ?? '';
 		} catch {
 			return '';
@@ -249,9 +250,8 @@
 
 			{#each cards as card (card.id)}
 				<div class="card-row" role="button" tabindex="0" onclick={() => openEditModal(card)} onkeydown={(e) => { if (e.key === 'Enter') openEditModal(card); }}>
-					<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-					<span class="checkbox-cell" onclick={(e) => e.stopPropagation()}>
-						<input type="checkbox" checked={selected.has(card.id)} onchange={() => toggleSelect(card.id)} />
+					<span class="checkbox-cell">
+						<input type="checkbox" checked={selected.has(card.id)} onclick={(e) => e.stopPropagation()} onchange={() => toggleSelect(card.id)} />
 					</span>
 					<span class="col-front">{truncate(getFrontText(card.fields), 60)}</span>
 					<span class="col-state"><span class="state-badge {stateClass(card.fsrs_state, card.suspended)}">{stateName(card.fsrs_state, card.suspended)}</span></span>

@@ -44,6 +44,8 @@ export interface Card {
 	anki_id: number | null;
 	ordinal: number;
 	card_type: 'basic' | 'cloze';
+	front_template: string | null;
+	back_template: string | null;
 	due_at: string;
 	fsrs_state: number;
 	fsrs_stability: number;

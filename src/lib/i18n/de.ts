@@ -154,6 +154,9 @@ export const de: Record<string, string> = {
 	// App Settings
 	'appSettings.title': 'App-Einstellungen',
 	'appSettings.language': 'Sprache',
+	'appSettings.audio': 'Audio',
+	'appSettings.prepareAudioAhead': 'Audio im Voraus vorbereiten',
+	'appSettings.prepareAudioAheadDesc': 'Erzeugt Audio für kommende Karten, bevor du es abspielst, damit Wiederholungen schneller wirken. Das kann deine OpenAI-Credits für Karten nutzen, die du eventuell nicht anhörst.',
 	'appSettings.dashboard': '\u00dcbersicht',
 
 	// API Keys

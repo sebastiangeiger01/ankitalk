@@ -5,7 +5,12 @@
 	import OnboardingChecklist from '$lib/components/OnboardingChecklist.svelte';
 	import { locale, t } from '$lib/i18n';
 	import { preloadTTS } from '$lib/client/audio';
+	import { getPrepareAudioAhead } from '$lib/client/preferences';
+	import { sanitizeCardHtml } from '$lib/sanitize';
 	import type { DeckWithDueCount } from '$lib/types';
+
+	type ApiKeyStatus = { openai: boolean; deepgram: boolean; anthropic: boolean };
+	type NextCardsPreview = { cards: { fields: string; card_type: string }[] };
 
 	let decks = $state<DeckWithDueCount[]>([]);
 	let importing = $state(false);
@@ -43,11 +48,13 @@
 	}
 
 	function prefetchDueDecksTTS(allDecks: DeckWithDueCount[]) {
+		if (!getPrepareAudioAhead()) return;
+
 		const targets = allDecks.filter((d) => d.due_count > 0).slice(0, 3);
 		for (const deck of targets) {
 			fetch(`/api/cards/next?${new URLSearchParams({ deckId: deck.id, limit: '1' })}`)
-				.then((r) => r.ok ? r.json() : null)
-				.then((data: { cards: { fields: string; card_type: string }[] } | null) => {
+				.then(async (r): Promise<NextCardsPreview | null> => r.ok ? await r.json() as NextCardsPreview : null)
+				.then((data) => {
 					const card = data?.cards?.[0];
 					if (!card) return;
 					const fields = JSON.parse(card.fields) as { value: string }[];
@@ -58,7 +65,7 @@
 						? firstValue.replace(/\{\{c\d+::(.*?)(?:::(.*?))?\}\}/g, (_m, _a, hint) => hint || 'blank')
 						: firstValue;
 					const div = document.createElement('div');
-					div.innerHTML = rawHtml;
+					div.innerHTML = sanitizeCardHtml(rawHtml);
 					const plain = (div.textContent ?? '').trim();
 					if (plain) preloadTTS(plain);
 				})
@@ -161,7 +168,7 @@
 	$effect(() => {
 		loadDecks();
 		// Fetch key status for onboarding
-		fetch('/api/settings/api-keys').then(r => r.ok ? r.json() : null).then((data) => {
+		fetch('/api/settings/api-keys').then(async (r): Promise<ApiKeyStatus | null> => r.ok ? await r.json() as ApiKeyStatus : null).then((data) => {
 			if (data) hasRequiredKeys = data.openai && data.deepgram;
 		}).catch(() => {});
 		// Check if user has any reviews (simple heuristic: check first deck's stats or use a lightweight query)
@@ -296,10 +303,6 @@
 		margin-top: 0.75rem;
 		color: #aaa;
 		font-size: 0.9rem;
-	}
-
-	.loading {
-		color: #a8a8b8;
 	}
 
 	.onboarding {
