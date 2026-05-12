@@ -1,5 +1,10 @@
 import { error } from '@sveltejs/kit';
-import { isSafeMediaFilename, mediaContentTypeForFilename } from '$lib/sanitize';
+import {
+	isSafeMediaFilename,
+	isSvgMediaFilename,
+	mediaContentTypeForFilename,
+	svgMediaContentSecurityPolicy
+} from '$lib/sanitize';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ params, platform, locals }) => {
@@ -18,6 +23,10 @@ export const GET: RequestHandler = async ({ params, platform, locals }) => {
 	headers.set('Content-Type', contentType);
 	headers.set('Cache-Control', 'public, max-age=31536000, immutable');
 	headers.set('X-Content-Type-Options', 'nosniff');
+	headers.set('Cross-Origin-Resource-Policy', 'same-origin');
+	if (isSvgMediaFilename(params.key)) {
+		headers.set('Content-Security-Policy', svgMediaContentSecurityPolicy());
+	}
 
 	return new Response(object.body, { headers });
 };

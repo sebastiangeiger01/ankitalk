@@ -4,9 +4,10 @@ import initSqlJs from 'sql.js';
 import {
 	IMPORT_LIMITS,
 	assertMaxBytes,
-	isSafeMediaFilename,
-	mediaContentTypeForFilename,
+	mediaContentTypeSafetyError,
+	mediaFilenameSafetyError,
 	sanitizeCardHtml,
+	sanitizeMediaBytes,
 	sanitizePlainText
 } from '$lib/sanitize';
 
@@ -232,12 +233,10 @@ export async function parseApkg(file: File): Promise<ParsedApkg> {
 			if (mediaCount > IMPORT_LIMITS.maxMediaFiles) {
 				throw new Error('APKG contains too many media files');
 			}
-			if (!isSafeMediaFilename(filename)) {
-				throw new Error(`Unsafe media filename: ${filename}`);
-			}
-			if (!mediaContentTypeForFilename(filename)) {
-				throw new Error(`Unsupported media file type: ${filename}`);
-			}
+			const filenameError = mediaFilenameSafetyError(filename);
+			if (filenameError) throw new Error(filenameError);
+			const contentTypeError = mediaContentTypeSafetyError(filename);
+			if (contentTypeError) throw new Error(contentTypeError);
 			const fileData = zip[numKey];
 			if (fileData) {
 				if (fileData.byteLength > IMPORT_LIMITS.maxMediaFileBytes) {
@@ -247,11 +246,7 @@ export async function parseApkg(file: File): Promise<ParsedApkg> {
 				if (mediaBytes > IMPORT_LIMITS.maxMediaTotalBytes) {
 					throw new Error('APKG media is too large');
 				}
-				const mediaArrayBuffer = fileData.buffer.slice(
-					fileData.byteOffset,
-					fileData.byteOffset + fileData.byteLength
-				) as ArrayBuffer;
-				media.set(filename, new Blob([mediaArrayBuffer]));
+				media.set(filename, sanitizeMediaBytes(filename, fileData));
 			}
 		}
 	}

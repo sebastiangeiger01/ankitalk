@@ -3,9 +3,11 @@ import { getDb, newId } from '$lib/server/db';
 import {
 	IMPORT_LIMITS,
 	assertMaxBytes,
-	isSafeMediaFilename,
 	mediaContentTypeForFilename,
+	mediaContentTypeSafetyError,
+	mediaFilenameSafetyError,
 	sanitizeCardHtml,
+	sanitizeMediaBlob,
 	sanitizePlainText
 } from '$lib/sanitize';
 import type { RequestHandler } from './$types';
@@ -87,7 +89,7 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 	assertArrayLimit(notes, IMPORT_LIMITS.maxNotes, 'Note');
 	assertArrayLimit(cards, IMPORT_LIMITS.maxCards, 'Card');
 
-	const mediaUploads: { filename: string; file: File }[] = [];
+	const mediaUploads: { filename: string; blob: Blob; contentType: string }[] = [];
 	let mediaCount = 0;
 	let mediaBytes = 0;
 	for (const [key, value] of formData.entries()) {
@@ -99,13 +101,11 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 		}
 
 		const filename = key.slice(6);
-		if (!isSafeMediaFilename(filename)) {
-			throw error(400, `Unsafe media filename: ${filename}`);
-		}
+		const filenameError = mediaFilenameSafetyError(filename);
+		if (filenameError) throw error(400, filenameError);
 		const contentType = mediaContentTypeForFilename(filename);
-		if (!contentType) {
-			throw error(400, `Unsupported media file type: ${filename}`);
-		}
+		const contentTypeError = mediaContentTypeSafetyError(filename);
+		if (!contentType || contentTypeError) throw error(400, contentTypeError ?? 'Unsupported media type');
 		if (!(value instanceof File)) {
 			throw error(400, 'Invalid media file');
 		}
@@ -117,7 +117,16 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 		if (mediaBytes > IMPORT_LIMITS.maxMediaTotalBytes) {
 			throw error(413, 'Media upload is too large');
 		}
-		mediaUploads.push({ filename, file: value });
+		try {
+			mediaUploads.push({
+				filename,
+				blob: await sanitizeMediaBlob(filename, value),
+				contentType
+			});
+		} catch (err) {
+			const message = err instanceof Error ? err.message : 'Invalid media file';
+			throw error(400, message);
+		}
 	}
 
 	// Build ID mappings: Anki ID → UUID
@@ -223,10 +232,9 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 
 	// Upload media files to R2
 	const mediaKeys: string[] = [];
-	for (const { filename, file } of mediaUploads) {
+	for (const { filename, blob, contentType } of mediaUploads) {
 		const r2Key = `${userId}/${filename}`;
-		const contentType = mediaContentTypeForFilename(filename)!;
-		await platform!.env.MEDIA.put(r2Key, await file.arrayBuffer(), {
+		await platform!.env.MEDIA.put(r2Key, await blob.arrayBuffer(), {
 			httpMetadata: { contentType }
 		});
 		mediaKeys.push(r2Key);
