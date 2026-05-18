@@ -4,15 +4,20 @@ import { newId } from './db';
 const RATES = {
 	openai_tts: 0.6 / 1_000_000, // $0.60 per 1M characters
 	deepgram_stt: 0.0043 / 60, // $0.0043 per minute → per second
+	elevenlabs_tts: 0.18 / 1_000_000, // rough subscription-dependent estimate
+	elevenlabs_stt: 0.0048 / 60, // rough subscription-dependent estimate
 	anthropic_input: 1.0 / 1_000_000, // $1.00 per 1M input tokens
 	anthropic_output: 5.0 / 1_000_000 // $5.00 per 1M output tokens
 };
 
+export type UsageService = 'openai' | 'deepgram' | 'anthropic' | 'elevenlabs';
+export type UsageOperation = 'tts' | 'stt_token' | 'explain' | 'hint';
+
 export async function logUsage(
 	db: D1Database,
 	userId: string,
-	service: 'openai' | 'deepgram' | 'anthropic',
-	operation: 'tts' | 'stt_token' | 'explain' | 'hint',
+	service: UsageService,
+	operation: UsageOperation,
 	units: number,
 	estimatedCostUsd: number
 ): Promise<void> {
@@ -28,8 +33,16 @@ export function calculateTtsCost(characterCount: number): number {
 	return characterCount * RATES.openai_tts;
 }
 
+export function calculateElevenLabsTtsCost(characterCount: number): number {
+	return characterCount * RATES.elevenlabs_tts;
+}
+
 export function calculateSttCost(estimatedSeconds: number): number {
 	return estimatedSeconds * RATES.deepgram_stt;
+}
+
+export function calculateElevenLabsSttCost(estimatedSeconds: number): number {
+	return estimatedSeconds * RATES.elevenlabs_stt;
 }
 
 export function calculateExplainCost(inputTokens: number, outputTokens: number): number {
@@ -40,6 +53,7 @@ export type UsagePeriod = {
 	openai: number;
 	deepgram: number;
 	anthropic: number;
+	elevenlabs: number;
 	total: number;
 };
 
@@ -63,23 +77,23 @@ export async function getUsageSummary(
 		.bind(userId)
 		.all<{ service: string; today: number; week: number; month: number }>();
 
-	const empty = (): UsagePeriod => ({ openai: 0, deepgram: 0, anthropic: 0, total: 0 });
+	const empty = (): UsagePeriod => ({ openai: 0, deepgram: 0, anthropic: 0, elevenlabs: 0, total: 0 });
 	const today = empty();
 	const week = empty();
 	const month = empty();
 
 	for (const row of rows.results) {
-		const svc = row.service as 'openai' | 'deepgram' | 'anthropic';
-		if (svc === 'openai' || svc === 'deepgram' || svc === 'anthropic') {
+		const svc = row.service as UsageService;
+		if (svc === 'openai' || svc === 'deepgram' || svc === 'anthropic' || svc === 'elevenlabs') {
 			today[svc] = row.today ?? 0;
 			week[svc] = row.week ?? 0;
 			month[svc] = row.month ?? 0;
 		}
 	}
 
-	today.total = today.openai + today.deepgram + today.anthropic;
-	week.total = week.openai + week.deepgram + week.anthropic;
-	month.total = month.openai + month.deepgram + month.anthropic;
+	today.total = today.openai + today.deepgram + today.anthropic + today.elevenlabs;
+	week.total = week.openai + week.deepgram + week.anthropic + week.elevenlabs;
+	month.total = month.openai + month.deepgram + month.anthropic + month.elevenlabs;
 
 	return { today, week, month };
 }

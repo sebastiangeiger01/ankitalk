@@ -1,6 +1,8 @@
 import { decryptApiKey } from './crypto';
 
-export type ServiceName = 'openai' | 'deepgram' | 'anthropic';
+export type ServiceName = 'openai' | 'deepgram' | 'anthropic' | 'elevenlabs';
+
+export type ApiKeyStatus = Record<ServiceName, boolean>;
 
 export async function getUserApiKey(
 	db: D1Database,
@@ -21,7 +23,7 @@ export async function getUserApiKey(
 export async function getUserApiKeyStatus(
 	db: D1Database,
 	userId: string
-): Promise<{ openai: boolean; deepgram: boolean; anthropic: boolean }> {
+): Promise<ApiKeyStatus> {
 	const rows = await db
 		.prepare('SELECT service FROM user_api_keys WHERE user_id = ?')
 		.bind(userId)
@@ -32,6 +34,7 @@ export async function getUserApiKeyStatus(
 	return {
 		openai: services.has('openai'),
 		deepgram: services.has('deepgram'),
-		anthropic: services.has('anthropic')
+		anthropic: services.has('anthropic'),
+		elevenlabs: services.has('elevenlabs')
 	};
 }

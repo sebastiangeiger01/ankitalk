@@ -5,7 +5,7 @@ import { getDb } from '$lib/server/db';
 import type { RequestHandler } from './$types';
 import type { ServiceName } from '$lib/server/user-keys';
 
-const ALLOWED_SERVICES: ServiceName[] = ['openai', 'deepgram', 'anthropic'];
+const ALLOWED_SERVICES: ServiceName[] = ['openai', 'deepgram', 'anthropic', 'elevenlabs'];
 
 function isAllowedService(value: unknown): value is ServiceName {
 	return typeof value === 'string' && (ALLOWED_SERVICES as string[]).includes(value);
@@ -17,6 +17,8 @@ function validateKeyFormat(service: ServiceName, key: string): boolean {
 			return key.startsWith('sk-');
 		case 'anthropic':
 			return key.startsWith('sk-ant-');
+		case 'elevenlabs':
+			return key.length >= 20 && !/\s/.test(key);
 		case 'deepgram':
 			return /^[a-zA-Z0-9_-]+$/.test(key);
 	}
@@ -39,6 +41,32 @@ async function testApiKey(service: ServiceName, key: string): Promise<void> {
 				},
 				body: JSON.stringify({ time_to_live_in_seconds: 10 })
 			});
+		} else if (service === 'elevenlabs') {
+			response = await fetch('https://api.elevenlabs.io/v1/models', {
+				headers: { 'xi-api-key': key }
+			});
+			if (!response.ok) throw response;
+
+			response = await fetch('https://api.elevenlabs.io/v1/single-use-token/realtime_scribe', {
+				method: 'POST',
+				headers: { 'xi-api-key': key }
+			});
+			if (!response.ok) throw response;
+
+			response = await fetch(
+				'https://api.elevenlabs.io/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb/stream?output_format=mp3_22050_32',
+				{
+					method: 'POST',
+					headers: {
+						'xi-api-key': key,
+						'Content-Type': 'application/json'
+					},
+					body: JSON.stringify({
+						text: 'OK',
+						model_id: 'eleven_flash_v2_5'
+					})
+				}
+			);
 		} else {
 			// anthropic
 			response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -55,8 +83,12 @@ async function testApiKey(service: ServiceName, key: string): Promise<void> {
 				})
 			});
 		}
-	} catch {
-		throw error(502, 'Could not verify key');
+	} catch (err) {
+		if (err instanceof Response) {
+			response = err;
+		} else {
+			throw error(502, 'Could not verify key');
+		}
 	}
 
 	if (response.ok) return;
@@ -67,7 +99,7 @@ async function testApiKey(service: ServiceName, key: string): Promise<void> {
 		case 403:
 			throw error(403, 'Insufficient permissions');
 		case 429:
-			throw error(400, 'Rate limited');
+			throw error(429, 'Rate limited');
 		default:
 			throw error(400, 'Could not verify key');
 	}
@@ -89,7 +121,7 @@ export const PUT: RequestHandler = async ({ request, platform, locals }) => {
 	const { service, key } = body;
 
 	if (!isAllowedService(service)) {
-		throw error(400, 'Invalid service. Must be one of: openai, deepgram, anthropic');
+		throw error(400, 'Invalid service. Must be one of: openai, deepgram, anthropic, elevenlabs');
 	}
 
 	if (!key || typeof key !== 'string' || key.trim().length === 0) {
@@ -127,7 +159,7 @@ export const DELETE: RequestHandler = async ({ request, platform, locals }) => {
 	const { service } = body;
 
 	if (!isAllowedService(service)) {
-		throw error(400, 'Invalid service. Must be one of: openai, deepgram, anthropic');
+		throw error(400, 'Invalid service. Must be one of: openai, deepgram, anthropic, elevenlabs');
 	}
 
 	const db = getDb(platform!);
