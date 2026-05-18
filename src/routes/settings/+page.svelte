@@ -3,7 +3,7 @@
 	import { getPrepareAudioAhead, setPrepareAudioAhead } from '$lib/client/preferences';
 	import { locale, t, type Locale } from '$lib/i18n';
 	import Spinner from '$lib/components/Spinner.svelte';
-	import type { UserVoiceSettings, VoiceProvider } from '$lib/voice';
+	import type { UserVoiceSettings, VoiceCommandLanguage, VoiceProvider } from '$lib/voice';
 
 	function setLocale(l: Locale) {
 		locale.set(l);
@@ -52,6 +52,7 @@
 	});
 	let voiceSettings = $state<UserVoiceSettings>({
 		voice_provider: 'elevenlabs',
+		voice_command_language: 'en',
 		elevenlabs_voice_id: 'JBFqnCBsd6RMkjVDRZzb',
 		elevenlabs_tts_model: 'eleven_flash_v2_5',
 		elevenlabs_stt_model: 'scribe_v2_realtime'
@@ -90,7 +91,7 @@
 		}
 
 		try {
-			const res = await fetch('/api/settings/voice');
+			const res = await fetch(`/api/settings/voice?locale=${encodeURIComponent(current)}`);
 			if (res.ok) {
 				const data = await res.json() as { settings: UserVoiceSettings };
 				voiceSettings = data.settings;
@@ -126,17 +127,15 @@
 		setPrepareAudioAhead(input.checked);
 	}
 
-	async function updateVoiceProvider(provider: VoiceProvider) {
-		if (voiceSettings.voice_provider === provider) return;
-		const previous = voiceSettings.voice_provider;
-		voiceSettings.voice_provider = provider;
+	async function saveVoiceSettings(nextSettings: UserVoiceSettings, previousSettings: UserVoiceSettings) {
+		voiceSettings = nextSettings;
 		savingVoiceSettings = true;
 		voiceSettingsMessage = null;
 		try {
 			const res = await fetch('/api/settings/voice', {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ ...voiceSettings, voice_provider: provider })
+				body: JSON.stringify(nextSettings)
 			});
 			if (res.ok) {
 				const data = await res.json() as { settings: UserVoiceSettings };
@@ -144,14 +143,32 @@
 				voiceSettingsMessage = { text: t('settings.voice.saved'), ok: true };
 				setTimeout(() => { voiceSettingsMessage = null; }, 2000);
 			} else {
-				throw new Error('Failed to save voice provider');
+				throw new Error('Failed to save voice settings');
 			}
 		} catch {
-			voiceSettings.voice_provider = previous;
+			voiceSettings = previousSettings;
 			voiceSettingsMessage = { text: t('settings.voice.saveFailed'), ok: false };
 		} finally {
 			savingVoiceSettings = false;
 		}
+	}
+
+	async function updateVoiceProvider(provider: VoiceProvider) {
+		if (voiceSettings.voice_provider === provider) return;
+		const previous = { ...voiceSettings };
+		await saveVoiceSettings(
+			{ ...voiceSettings, voice_provider: provider },
+			previous
+		);
+	}
+
+	async function updateVoiceCommandLanguage(language: VoiceCommandLanguage) {
+		if (voiceSettings.voice_command_language === language) return;
+		const previous = { ...voiceSettings };
+		await saveVoiceSettings(
+			{ ...voiceSettings, voice_command_language: language },
+			previous
+		);
 	}
 
 	async function saveKey(service: Service) {
@@ -220,6 +237,7 @@
 	const primaryServices: Service[] = ['elevenlabs'];
 	const advancedServices: Service[] = ['openai', 'deepgram', 'anthropic'];
 	const usageServices: Service[] = ['elevenlabs', 'openai', 'deepgram', 'anthropic'];
+	const voiceCommandLanguages: VoiceCommandLanguage[] = ['auto', 'en', 'de'];
 
 	function serviceLabel(s: Service): string {
 		return t(`settings.apiKeys.${s}`);
@@ -292,6 +310,31 @@
 					{voiceSettingsMessage.text}
 				</p>
 			{/if}
+		</div>
+		<div class="voice-language-group" aria-label={t('settings.voice.commandLanguage')}>
+			<div class="voice-provider-copy">
+				<span class="preference-title">{t('settings.voice.commandLanguage')}</span>
+				<span class="preference-desc">
+					{voiceSettings.voice_command_language === 'auto'
+						? t('settings.voice.commandLanguageAutoDesc')
+						: t('settings.voice.commandLanguageFixedDesc')}
+				</span>
+			</div>
+			<div class="segmented-control">
+				{#each voiceCommandLanguages as language}
+					<label class="segment-option" class:active={voiceSettings.voice_command_language === language}>
+						<input
+							type="radio"
+							name="voice-command-language"
+							value={language}
+							checked={voiceSettings.voice_command_language === language}
+							disabled={savingVoiceSettings}
+							onchange={() => updateVoiceCommandLanguage(language)}
+						/>
+						<span>{t(`settings.voice.commandLanguage.${language}`)}</span>
+					</label>
+				{/each}
+			</div>
 		</div>
 		<label class="preference-row">
 			<span class="preference-copy">
@@ -581,6 +624,14 @@
 		margin-bottom: 0.75rem;
 	}
 
+	.voice-language-group {
+		background: #1a1a2e;
+		border: 1px solid #2a2a4a;
+		border-radius: 10px;
+		padding: 0.9rem 1rem;
+		margin-bottom: 0.75rem;
+	}
+
 	.voice-provider-copy {
 		display: flex;
 		flex-direction: column;
@@ -629,6 +680,44 @@
 		font-size: 0.78rem;
 		line-height: 1.35;
 		color: #8d8db0;
+	}
+
+	.segmented-control {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 0.35rem;
+		padding: 0.25rem;
+		border: 1px solid #2e2e52;
+		border-radius: 8px;
+		background: #151526;
+	}
+
+	.segment-option {
+		position: relative;
+		min-width: 0;
+		padding: 0.55rem 0.3rem;
+		border-radius: 6px;
+		color: #a8a8c8;
+		text-align: center;
+		cursor: pointer;
+		font-size: 0.85rem;
+		font-weight: 600;
+	}
+
+	.segment-option.active {
+		background: #303060;
+		color: #f0f0ff;
+	}
+
+	.segment-option input {
+		position: absolute;
+		opacity: 0;
+		pointer-events: none;
+	}
+
+	.segment-option span {
+		display: block;
+		overflow-wrap: anywhere;
 	}
 
 	.preference-row {

@@ -166,8 +166,14 @@ export const en: Record<string, string> = {
 	'settings.voice.elevenlabsDesc': 'One key enables card audio and voice commands. Recommended.',
 	'settings.voice.legacy': 'OpenAI + Deepgram',
 	'settings.voice.legacyDesc': 'Use OpenAI for speech and Deepgram for microphone commands.',
-	'settings.voice.saved': 'Voice provider saved',
-	'settings.voice.saveFailed': 'Failed to save voice provider',
+	'settings.voice.commandLanguage': 'Voice command language',
+	'settings.voice.commandLanguageAutoDesc': 'Automatically detects English or German commands. Useful if you switch between both.',
+	'settings.voice.commandLanguageFixedDesc': 'Locks command recognition to one language for more predictable review controls.',
+	'settings.voice.commandLanguage.auto': 'Auto',
+	'settings.voice.commandLanguage.en': 'English',
+	'settings.voice.commandLanguage.de': 'German',
+	'settings.voice.saved': 'Voice settings saved',
+	'settings.voice.saveFailed': 'Failed to save voice settings',
 
 	// API Keys
 	'settings.apiKeys.title': 'API Keys',

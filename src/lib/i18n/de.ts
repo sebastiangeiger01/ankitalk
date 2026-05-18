@@ -166,8 +166,14 @@ export const de: Record<string, string> = {
 	'settings.voice.elevenlabsDesc': 'Ein Schlüssel aktiviert Kartenaudio und Sprachbefehle. Empfohlen.',
 	'settings.voice.legacy': 'OpenAI + Deepgram',
 	'settings.voice.legacyDesc': 'OpenAI liest vor, Deepgram erkennt Mikrofonbefehle.',
-	'settings.voice.saved': 'Sprachanbieter gespeichert',
-	'settings.voice.saveFailed': 'Sprachanbieter konnte nicht gespeichert werden',
+	'settings.voice.commandLanguage': 'Sprache für Sprachbefehle',
+	'settings.voice.commandLanguageAutoDesc': 'Erkennt englische oder deutsche Befehle automatisch. Praktisch, wenn du zwischen beiden wechselst.',
+	'settings.voice.commandLanguageFixedDesc': 'Begrenzt die Erkennung auf eine Sprache, damit die Wiederholungssteuerung vorhersehbarer reagiert.',
+	'settings.voice.commandLanguage.auto': 'Auto',
+	'settings.voice.commandLanguage.en': 'Englisch',
+	'settings.voice.commandLanguage.de': 'Deutsch',
+	'settings.voice.saved': 'Spracheinstellungen gespeichert',
+	'settings.voice.saveFailed': 'Spracheinstellungen konnten nicht gespeichert werden',
 
 	// API Keys
 	'settings.apiKeys.title': 'API-Schlüssel',

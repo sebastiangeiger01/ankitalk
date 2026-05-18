@@ -7,7 +7,7 @@
 	import { locale, t } from '$lib/i18n';
 	import { sanitizeCardHtml } from '$lib/sanitize';
 	import type { ReviewPhase } from '$lib/types';
-	import type { UserVoiceSettings } from '$lib/voice';
+	import { sttLanguageForVoiceCommandLanguage, type UserVoiceSettings } from '$lib/voice';
 
 	const deckId = $derived($page.params.deckId);
 
@@ -48,6 +48,7 @@
 	let keyStatus = $state<ApiKeyStatus | null>(null);
 	let voiceSettings = $state<UserVoiceSettings>({
 		voice_provider: 'elevenlabs',
+		voice_command_language: 'en',
 		elevenlabs_voice_id: 'JBFqnCBsd6RMkjVDRZzb',
 		elevenlabs_tts_model: 'eleven_flash_v2_5',
 		elevenlabs_stt_model: 'scribe_v2_realtime'
@@ -176,8 +177,7 @@
 		if (prefetchedCards && !options.tags && !options.mode) {
 			options.prefetchedCards = prefetchedCards;
 		}
-		// Set STT language to match UI locale for accurate voice command recognition
-		options.sttLanguage = loc;
+		options.sttLanguage = sttLanguageForVoiceCommandLanguage(voiceSettings.voice_command_language);
 		options.voiceProvider = voiceSettings.voice_provider;
 		options.prepareAudioAhead = getPrepareAudioAhead();
 		try {
@@ -258,7 +258,7 @@
 		// Check API key status first
 		Promise.all([
 			fetch('/api/settings/api-keys').then((r) => r.ok ? r.json() : null),
-			fetch('/api/settings/voice').then((r) => r.ok ? r.json() : null)
+			fetch(`/api/settings/voice?locale=${encodeURIComponent(loc)}`).then((r) => r.ok ? r.json() : null)
 		])
 			.then(([keys, voice]) => {
 				if (keys) keyStatus = keys as ApiKeyStatus;
