@@ -2,6 +2,7 @@ import { error, json } from '@sveltejs/kit';
 import { encryptApiKey } from '$lib/server/crypto';
 import { getUserApiKeyStatus } from '$lib/server/user-keys';
 import { getDb } from '$lib/server/db';
+import { validateElevenLabsKey } from '$lib/server/api-key-validation';
 import type { RequestHandler } from './$types';
 import type { ServiceName } from '$lib/server/user-keys';
 
@@ -42,31 +43,9 @@ async function testApiKey(service: ServiceName, key: string): Promise<void> {
 				body: JSON.stringify({ time_to_live_in_seconds: 10 })
 			});
 		} else if (service === 'elevenlabs') {
-			response = await fetch('https://api.elevenlabs.io/v1/models', {
-				headers: { 'xi-api-key': key }
-			});
-			if (!response.ok) throw response;
-
-			response = await fetch('https://api.elevenlabs.io/v1/single-use-token/realtime_scribe', {
-				method: 'POST',
-				headers: { 'xi-api-key': key }
-			});
-			if (!response.ok) throw response;
-
-			response = await fetch(
-				'https://api.elevenlabs.io/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb/stream?output_format=mp3_22050_32',
-				{
-					method: 'POST',
-					headers: {
-						'xi-api-key': key,
-						'Content-Type': 'application/json'
-					},
-					body: JSON.stringify({
-						text: 'OK',
-						model_id: 'eleven_flash_v2_5'
-					})
-				}
-			);
+			const result = await validateElevenLabsKey(key);
+			if (result.ok) return;
+			response = new Response(null, { status: result.status });
 		} else {
 			// anthropic
 			response = await fetch('https://api.anthropic.com/v1/messages', {
