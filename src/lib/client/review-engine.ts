@@ -1,9 +1,10 @@
 import { speak, stopPlayback, getLastSpokenText, unlockAudio, playSound, preloadTTS, clearAudioCache } from './audio';
 import { createDeepgramClient, type DeepgramClient } from './deepgram';
+import { renderCard } from './card-renderer';
 import { matchCommand } from '../commands';
 import { get } from 'svelte/store';
 import { locale } from '../i18n';
-import type { ReviewPhase, VoiceCommand, RatingName, NoteField } from '../types';
+import type { ReviewPhase, VoiceCommand, RatingName } from '../types';
 
 export interface IntervalLabels {
 	again: string;
@@ -59,10 +60,13 @@ interface CardData {
 	id: string;
 	note_id: string;
 	card_type: string;
+	ordinal: number;
 	fsrs_state: number;
 	model_name: string;
 	fields: string;
 	tags: string;
+	front_template: string | null;
+	back_template: string | null;
 	front: string;
 	back: string;
 	frontHtml: string;
@@ -95,6 +99,7 @@ export interface StartOptions {
 	mode?: 'cram';
 	cramState?: 'new' | 'learning' | 'review';
 	prefetchedCards?: PrefetchedCards;
+	prepareAudioAhead?: boolean;
 	/** Language code for STT (e.g. 'en', 'de'). Defaults to 'multi'. */
 	sttLanguage?: string;
 }
@@ -107,84 +112,6 @@ export interface ReviewEngine {
 	toggleMic(): void;
 	toggleAudio(): void;
 	undo(): void;
-}
-
-/**
- * Strip HTML tags and decode entities for TTS.
- */
-function stripHtml(html: string): string {
-	const div = document.createElement('div');
-	div.innerHTML = html;
-	return div.textContent ?? '';
-}
-
-/**
- * Handle cloze deletions: {{c1::answer::hint}} → "blank" for question, "answer" for answer.
- */
-function processCloze(text: string, showAnswer: boolean): string {
-	return text.replace(/\{\{c\d+::(.*?)(?:::(.*?))?\}\}/g, (_match, answer, hint) => {
-		if (showAnswer) return answer;
-		return hint || 'blank';
-	});
-}
-
-/**
- * Process cloze HTML: wrap cloze answers in a styled span for display.
- */
-function processClozeHtml(text: string, showAnswer: boolean): string {
-	return text.replace(/\{\{c\d+::(.*?)(?:::(.*?))?\}\}/g, (_match, answer, hint) => {
-		if (showAnswer) return `<span class="cloze-answer">${answer}</span>`;
-		return `<span class="cloze-blank">[${hint || '...'}]</span>`;
-	});
-}
-
-/**
- * Rewrite relative image/audio src attributes to use the media API endpoint.
- * Anki cards store media as `<img src="image.jpg">` — we rewrite to `/api/media/image.jpg`.
- */
-function rewriteMediaUrls(html: string): string {
-	return html.replace(
-		/(<(?:img|audio|source)\b[^>]*\bsrc\s*=\s*["'])(?!https?:\/\/|\/api\/|data:)([^"']+)(["'])/gi,
-		(_match, prefix, filename, suffix) => `${prefix}/api/media/${filename}${suffix}`
-	);
-}
-
-/**
- * Parse card fields and extract front/back as both HTML (display) and plain text (TTS).
- */
-function renderCard(fieldsJson: string, cardType: string): { front: string; back: string; frontHtml: string; backHtml: string } {
-	let fields: NoteField[];
-	try {
-		fields = JSON.parse(fieldsJson);
-	} catch {
-		return { front: 'Error reading card', back: '', frontHtml: 'Error reading card', backHtml: '' };
-	}
-
-	if (fields.length === 0) {
-		return { front: 'Empty card', back: '', frontHtml: 'Empty card', backHtml: '' };
-	}
-
-	const firstValue = fields[0]?.value ?? '';
-	const isCloze = cardType === 'cloze' || /\{\{c\d+::/.test(firstValue);
-
-	if (isCloze) {
-		return {
-			front: stripHtml(processCloze(firstValue, false)),
-			back: stripHtml(processCloze(firstValue, true)),
-			frontHtml: rewriteMediaUrls(processClozeHtml(firstValue, false)),
-			backHtml: rewriteMediaUrls(processClozeHtml(firstValue, true))
-		};
-	}
-
-	// Basic card: first field = front, second field = back
-	const rawFront = fields[0]?.value ?? '';
-	const rawBack = fields[1]?.value ?? rawFront;
-	return {
-		front: stripHtml(rawFront),
-		back: stripHtml(rawBack),
-		frontHtml: rewriteMediaUrls(rawFront),
-		backHtml: rewriteMediaUrls(rawBack)
-	};
 }
 
 /** FSRS states */
@@ -217,6 +144,10 @@ export function createReviewEngine(): ReviewEngine {
 	let undoTimer: ReturnType<typeof setTimeout> | null = null;
 	let learningTimer: ReturnType<typeof setTimeout> | null = null;
 	let isCramMode = false;
+	let ratingInFlight = false;
+	let undoInFlight = false;
+	let sessionFinished = false;
+	let prepareAudioAhead = true;
 
 	// Dual-queue architecture
 	let reviewQueue: CardData[] = [];
@@ -318,6 +249,8 @@ export function createReviewEngine(): ReviewEngine {
 	}
 
 	function presentCard() {
+		if (sessionFinished) return;
+
 		const result = pickNextCard();
 
 		if (result === 'end') {
@@ -355,7 +288,7 @@ export function createReviewEngine(): ReviewEngine {
 		emit({ type: 'phase_change', phase: 'question' });
 
 		// Preload the answer audio while question is playing
-		if (audioOn && currentCard.back) {
+		if (audioOn && prepareAudioAhead && currentCard.back) {
 			preloadTTS(currentCard.back);
 		}
 
@@ -374,6 +307,8 @@ export function createReviewEngine(): ReviewEngine {
 	}
 
 	function handleCommand(command: VoiceCommand) {
+		if (sessionFinished && command !== 'stop') return;
+
 		interruptTTS();
 		clearLearningTimer();
 
@@ -381,7 +316,7 @@ export function createReviewEngine(): ReviewEngine {
 		if (command === 'undo') {
 			if (undoInfo) {
 				emit({ type: 'command', command });
-				performUndo();
+				void performUndo();
 			}
 			return;
 		}
@@ -397,7 +332,7 @@ export function createReviewEngine(): ReviewEngine {
 				phase = 'rating';
 				emit({ type: 'phase_change', phase: 'rating' });
 				// Preload next card's front while answer is playing
-				if (audioOn && reviewQueue.length > 0) {
+				if (audioOn && prepareAudioAhead && reviewQueue.length > 0) {
 					preloadTTS(reviewQueue[0].front);
 				}
 				speakText(currentCard.back);
@@ -420,7 +355,7 @@ export function createReviewEngine(): ReviewEngine {
 			case 'good':
 			case 'easy': {
 				if (phase !== 'rating') break;
-				submitRating(command);
+				void submitRating(command);
 				break;
 			}
 
@@ -459,23 +394,20 @@ export function createReviewEngine(): ReviewEngine {
 	}
 
 	async function submitRating(rating: RatingName) {
-		if (!currentCard) return;
+		if (!currentCard || ratingInFlight || sessionFinished) return;
 
 		const card = currentCard;
 		const durationMs = Date.now() - cardStartTime;
 
-		stats.cardsReviewed++;
-		stats.ratings[rating]++;
-
-		// Track studied note for sibling dedup
-		studiedNoteIds.add(card.note_id);
-
 		// Submit to server and get fsrsState + dueAt back
 		let addedToLearning = false;
+		let leeched = false;
 
+		ratingInFlight = true;
+		let timeout: ReturnType<typeof setTimeout> | null = null;
 		try {
 			const controller = new AbortController();
-			const timeout = setTimeout(() => controller.abort(), REVIEW_API_TIMEOUT_MS);
+			timeout = setTimeout(() => controller.abort(), REVIEW_API_TIMEOUT_MS);
 
 			const res = await fetch(`/api/cards/${card.id}/review`, {
 				method: 'POST',
@@ -484,52 +416,66 @@ export function createReviewEngine(): ReviewEngine {
 				signal: controller.signal
 			});
 			clearTimeout(timeout);
+			timeout = null;
 
-			if (res.ok) {
-				const data = (await res.json()) as {
-					reviewId: string;
-					dueAt: string;
-					fsrsState: number;
-					leeched?: boolean;
-				};
-
-				const newState = data.fsrsState;
-				const dueAt = new Date(data.dueAt).getTime();
-				const now = Date.now();
-
-				// If card is still learning/relearning and due within 30 min, add to learning queue
-				// If leeched, emit suspended event and don't add to learning queue
-				// In cram mode, skip learning queue insertion
-				if (data.leeched) {
-					emit({ type: 'card_suspended', cardId: card.id });
-				} else if (
-					!isCramMode &&
-					(newState === STATE_LEARNING || newState === STATE_RELEARNING) &&
-					dueAt - now < LEARNING_QUEUE_MAX_MS
-				) {
-					const updatedCard: CardData = { ...card, fsrs_state: newState };
-					// Insert sorted by dueAt
-					const insertIdx = learningQueue.findIndex((e) => e.dueAt > dueAt);
-					const entry: LearningEntry = { card: updatedCard, dueAt };
-					if (insertIdx === -1) {
-						learningQueue.push(entry);
-					} else {
-						learningQueue.splice(insertIdx, 0, entry);
-					}
-					addedToLearning = true;
-				}
+			if (!res.ok) {
+				throw new Error(`Review API failed: ${res.status}`);
 			}
+
+			const data = (await res.json()) as {
+				reviewId: string;
+				dueAt: string;
+				fsrsState: number;
+				leeched?: boolean;
+			};
+
+			if (sessionFinished || destroyed) return;
+
+			stats.cardsReviewed++;
+			stats.ratings[rating]++;
+			studiedNoteIds.add(card.note_id);
+
+			const newState = data.fsrsState;
+			const dueAt = new Date(data.dueAt).getTime();
+			const now = Date.now();
+			leeched = Boolean(data.leeched);
+
+			// If card is still learning/relearning and due within 30 min, add to learning queue
+			// If leeched, emit suspended event and don't add to learning queue
+			// In cram mode, skip learning queue insertion
+			if (leeched) {
+				emit({ type: 'card_suspended', cardId: card.id });
+			} else if (
+				!isCramMode &&
+				(newState === STATE_LEARNING || newState === STATE_RELEARNING) &&
+				dueAt - now < LEARNING_QUEUE_MAX_MS
+			) {
+				const updatedCard: CardData = { ...card, fsrs_state: newState };
+				// Insert sorted by dueAt
+				const insertIdx = learningQueue.findIndex((e) => e.dueAt > dueAt);
+				const entry: LearningEntry = { card: updatedCard, dueAt };
+				if (insertIdx === -1) {
+					learningQueue.push(entry);
+				} else {
+					learningQueue.splice(insertIdx, 0, entry);
+				}
+				addedToLearning = true;
+			}
+
+			// Store undo info — stays available until next command (e.g. "show answer")
+			undoInfo = { rating, card, addedToLearning };
+			emit({ type: 'undo_available', available: true });
+
+			playSound('/success.mp3').catch(() => {});
+			presentCard();
 		} catch {
-			// Timeout or network error — continue without learning queue insertion
 			emit({ type: 'error', message: 'Failed to save review' });
+			if (micOn) emit({ type: 'listening' });
+			else emit({ type: 'idle' });
+		} finally {
+			if (timeout) clearTimeout(timeout);
+			ratingInFlight = false;
 		}
-
-		// Store undo info — stays available until next command (e.g. "show answer")
-		undoInfo = { rating, card, addedToLearning };
-		emit({ type: 'undo_available', available: true });
-
-		playSound('/success.mp3').catch(() => {});
-		presentCard();
 	}
 
 	function clearUndo() {
@@ -543,21 +489,32 @@ export function createReviewEngine(): ReviewEngine {
 		}
 	}
 
-	function performUndo() {
-		if (!undoInfo) return;
+	async function performUndo() {
+		if (!undoInfo || undoInFlight || sessionFinished) return;
 
 		interruptTTS();
 		clearLearningTimer();
 
 		const { rating, card, addedToLearning } = undoInfo;
 
-		// Fire-and-forget server-side undo
-		fetch(`/api/cards/${card.id}/review/undo`, { method: 'POST' }).catch(() => {});
+		undoInFlight = true;
+		try {
+			const res = await fetch(`/api/cards/${card.id}/review/undo`, { method: 'POST' });
+			if (!res.ok) throw new Error(`Undo API failed: ${res.status}`);
+		} catch {
+			emit({ type: 'error', message: 'Failed to undo review' });
+			if (micOn) emit({ type: 'listening' });
+			else emit({ type: 'idle' });
+			undoInFlight = false;
+			return;
+		}
+		undoInFlight = false;
 
 		// Revert stats
-		stats.cardsReviewed--;
-		stats.ratings[rating]--;
+		stats.cardsReviewed = Math.max(0, stats.cardsReviewed - 1);
+		stats.ratings[rating] = Math.max(0, stats.ratings[rating] - 1);
 		cardsReviewedCount--;
+		studiedNoteIds.delete(card.note_id);
 
 		// Put the current card back at the front of the review queue
 		if (currentCard && currentCard.id !== card.id) {
@@ -648,9 +605,13 @@ export function createReviewEngine(): ReviewEngine {
 	}
 
 	function endSession() {
+		if (sessionFinished) return;
+		sessionFinished = true;
 		interruptTTS();
 		clearUndo();
 		clearLearningTimer();
+		ratingInFlight = false;
+		undoInFlight = false;
 		stats.durationMs = Date.now() - startTime;
 		deepgram?.stop();
 		playSound('/complete.mp3').catch(() => {});
@@ -659,6 +620,8 @@ export function createReviewEngine(): ReviewEngine {
 
 	async function start(deckId: string, options?: StartOptions) {
 		destroyed = false;
+		sessionFinished = false;
+		prepareAudioAhead = options?.prepareAudioAhead ?? true;
 		startTime = Date.now();
 		isCramMode = options?.mode === 'cram';
 
@@ -702,17 +665,21 @@ export function createReviewEngine(): ReviewEngine {
 		// Handle Deepgram failure
 		if (deepgramResult.status === 'rejected') {
 			const err = deepgramResult.reason;
+			deepgram?.stop();
+			sessionFinished = true;
 			emit({
 				type: 'error',
 				message: `Microphone error: ${err instanceof Error ? err.message : 'Unknown'}`
 			});
-			return;
+			throw err instanceof Error ? err : new Error('Microphone error');
 		}
 
 		// Handle cards failure
 		if (cardsResult.status === 'rejected') {
+			deepgram?.stop();
+			sessionFinished = true;
 			emit({ type: 'error', message: 'Failed to fetch cards' });
-			return;
+			throw new Error('Failed to fetch cards');
 		}
 
 		const data = cardsResult.value;
@@ -723,6 +690,8 @@ export function createReviewEngine(): ReviewEngine {
 			emit({ type: 'counts', counts: data.counts });
 		}
 		if (!data.cards || data.cards.length === 0) {
+			deepgram?.stop();
+			sessionFinished = true;
 			emit({ type: 'session_end', stats });
 			return;
 		}
@@ -730,16 +699,25 @@ export function createReviewEngine(): ReviewEngine {
 		// Parse card fronts/backs into review queue
 		const defaultIntervals: IntervalLabels = { again: '', hard: '', good: '', easy: '' };
 		reviewQueue = data.cards.map((c) => {
-			const { front, back, frontHtml, backHtml } = renderCard(c.fields as string, c.card_type as string);
+			const { front, back, frontHtml, backHtml } = renderCard(
+				c.fields as string,
+				c.card_type as string,
+				(c.ordinal as number) ?? 0,
+				(c.front_template as string | null) ?? null,
+				(c.back_template as string | null) ?? null
+			);
 			const intervals = (c.intervals as IntervalLabels) ?? defaultIntervals;
 			return {
 				id: c.id as string,
 				note_id: c.note_id as string,
 				card_type: c.card_type as string,
+				ordinal: (c.ordinal as number) ?? 0,
 				fsrs_state: c.fsrs_state as number,
 				model_name: c.model_name as string,
 				fields: c.fields as string,
 				tags: c.tags as string,
+				front_template: (c.front_template as string | null) ?? null,
+				back_template: (c.back_template as string | null) ?? null,
 				front,
 				back,
 				frontHtml,
@@ -758,6 +736,7 @@ export function createReviewEngine(): ReviewEngine {
 
 	function destroy() {
 		destroyed = true;
+		sessionFinished = true;
 		clearUndo();
 		clearLearningTimer();
 		stopPlayback();

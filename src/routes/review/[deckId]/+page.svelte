@@ -3,7 +3,9 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { createReviewEngine, type ReviewEvent, type SessionStats, type StartOptions, type IntervalLabels, type QueueCounts, type PrefetchedCards } from '$lib/client/review-engine';
 	import { preloadTTS } from '$lib/client/audio';
+	import { getPrepareAudioAhead } from '$lib/client/preferences';
 	import { locale, t } from '$lib/i18n';
+	import { sanitizeCardHtml } from '$lib/sanitize';
 	import type { ReviewPhase } from '$lib/types';
 
 	const deckId = $derived($page.params.deckId);
@@ -130,8 +132,8 @@
 				break;
 			case 'learning_due': {
 				status = 'waiting';
-				learningCountdown = Math.ceil(event.waitMs / 1000);
 				clearCountdown();
+				learningCountdown = Math.ceil(event.waitMs / 1000);
 				countdownInterval = setInterval(() => {
 					learningCountdown--;
 					if (learningCountdown <= 0) {
@@ -165,7 +167,13 @@
 		}
 		// Set STT language to match UI locale for accurate voice command recognition
 		options.sttLanguage = loc;
-		await engine.start(deckId!, options);
+		options.prepareAudioAhead = getPrepareAudioAhead();
+		try {
+			await engine.start(deckId!, options);
+		} catch {
+			started = false;
+			document.body.classList.remove('review-active');
+		}
 	}
 
 	function formatDuration(ms: number): string {
@@ -255,6 +263,7 @@
 			.then((data) => {
 				if (!data) return;
 				prefetchedCards = data as PrefetchedCards;
+				if (!getPrepareAudioAhead()) return;
 				const cards = (data as { cards: { fields: string; card_type: string }[] }).cards;
 				if (!cards?.length) return;
 				// Preload first 3 fronts + first 2 backs in parallel so early cards play instantly.
@@ -262,7 +271,7 @@
 				const seen = new Set<string>();
 				const tryPreload = (rawHtml: string) => {
 					const div = document.createElement('div');
-					div.innerHTML = rawHtml;
+					div.innerHTML = sanitizeCardHtml(rawHtml);
 					const plain = (div.textContent ?? '').trim();
 					if (plain && !seen.has(plain)) { seen.add(plain); preloadTTS(plain); }
 				};
@@ -323,6 +332,9 @@
 				{/if}
 			</div>
 			<p class="start-hint">{t('review.startHint')}</p>
+			{#if errorMsg}
+				<p class="start-error">{errorMsg}</p>
+			{/if}
 
 			<button class="start-btn" onclick={startReview}>{cramMode ? t('review.startCram') : t('review.startReview')}</button>
 
@@ -491,8 +503,7 @@
 
 	<!-- Keyboard shortcuts overlay -->
 	{#if shortcutsOpen}
-		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-		<div class="shortcuts-backdrop" onclick={() => shortcutsOpen = false}></div>
+		<button class="shortcuts-backdrop" onclick={() => shortcutsOpen = false} aria-label={t('help.closeOverlay')}></button>
 		<div class="shortcuts-overlay" role="dialog" aria-modal="true" aria-label={t('help.keyboardTitle')}>
 			<div class="shortcuts-header">
 				<span class="shortcuts-title">{t('help.keyboardTitle')}</span>
@@ -634,6 +645,17 @@
 		color: #8080a0;
 		font-size: 0.95rem;
 		margin: 0.75rem 0 0;
+	}
+
+	.start-error {
+		color: #ff8888;
+		background: #3a1a1a;
+		border-radius: 8px;
+		padding: 0.55rem 0.75rem;
+		font-size: 0.85rem;
+		font-weight: 600;
+		margin: 1rem auto 0;
+		max-width: 360px;
 	}
 
 	.start-btn {
@@ -1209,6 +1231,8 @@
 		position: fixed;
 		inset: 0;
 		background: rgba(0, 0, 0, 0.55);
+		border: 0;
+		padding: 0;
 		z-index: 200;
 		animation: fade-in 0.15s ease;
 	}

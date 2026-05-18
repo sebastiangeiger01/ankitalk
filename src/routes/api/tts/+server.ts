@@ -5,6 +5,20 @@ import { logUsage, calculateTtsCost } from '$lib/server/usage';
 import { getDb } from '$lib/server/db';
 import type { RequestHandler } from './$types';
 
+async function makeTtsCacheRequest(
+	userId: string,
+	text: string,
+	voice?: string,
+	speed?: number
+): Promise<Request> {
+	const payload = JSON.stringify([userId, text.slice(0, 4096), voice ?? 'nova', speed ?? 1.0]);
+	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(payload));
+	const hash = [...new Uint8Array(digest)]
+		.map((byte) => byte.toString(16).padStart(2, '0'))
+		.join('');
+	return new Request(`https://tts-cache.internal/v1/${hash}`);
+}
+
 export const POST: RequestHandler = async ({ request, platform, locals }) => {
 	if (!locals.userId) throw error(401, 'Unauthorized');
 
@@ -20,13 +34,10 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 
 	// Check Cloudflare edge cache before hitting OpenAI or even fetching the API key.
 	// Cache key encodes all synthesis parameters so different voices/speeds get separate entries.
-	const cache = typeof caches !== 'undefined' ? caches.default : null;
-	const cacheKey = cache
-		? new Request(
-				`https://tts-cache.internal/v1?` +
-					new URLSearchParams({ t: text.slice(0, 4096), v: voice ?? 'nova', s: String(speed ?? 1.0) })
-			)
+	const cache = typeof caches !== 'undefined'
+		? (caches as unknown as { default: Cache }).default
 		: null;
+	const cacheKey = cache ? await makeTtsCacheRequest(userId, text, voice, speed) : null;
 
 	if (cache && cacheKey) {
 		const cached = await cache.match(cacheKey);

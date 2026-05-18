@@ -54,12 +54,6 @@ export function createDeepgramClient(options?: DeepgramOptions): DeepgramClient 
 			endpointing: '300'
 		};
 
-		// Tell Deepgram the encoding if we're not sending webm
-		if (!MediaRecorder.isTypeSupported('audio/webm')) {
-			params.encoding = 'linear16';
-			params.sample_rate = '16000';
-		}
-
 		const url =
 			'wss://api.deepgram.com/v1/listen?' +
 			new URLSearchParams(params).toString();
@@ -75,7 +69,12 @@ export function createDeepgramClient(options?: DeepgramOptions): DeepgramClient 
 					? 'audio/mp4'
 					: undefined;
 
-			mediaRecorder = new MediaRecorder(stream!, mimeType ? { mimeType } : {});
+			if (!mimeType) {
+				errorCb?.(new Error('Browser does not support a compatible microphone recording format'));
+				return;
+			}
+
+			mediaRecorder = new MediaRecorder(stream!, { mimeType });
 
 			mediaRecorder.ondataavailable = (event) => {
 				if (event.data.size > 0 && socket?.readyState === WebSocket.OPEN) {
@@ -190,7 +189,12 @@ export function createDeepgramClient(options?: DeepgramOptions): DeepgramClient 
 					? 'audio/mp4'
 					: undefined;
 
-			mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+			if (!mimeType) {
+				errorCb?.(new Error('Browser does not support a compatible microphone recording format'));
+				return;
+			}
+
+			mediaRecorder = new MediaRecorder(stream, { mimeType });
 			mediaRecorder.ondataavailable = (event) => {
 				if (event.data.size > 0 && socket?.readyState === WebSocket.OPEN) {
 					socket.send(event.data);

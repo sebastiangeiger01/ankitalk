@@ -34,5 +34,36 @@
       "binding": "MEDIA",
       "bucket_name": "ankitalk-media"
     }
-  ]
+  ],
+
+  // Preview/staging environment. This is used by Cloudflare Pages branch and PR
+  // deployments so manual testing does not touch production auth, data, or media.
+  "env": {
+    "preview": {
+      "vars": {
+        "PUBLIC_HANKO_API_URL": "https://d10f3c14-92fc-48e0-a18a-f891557d7083.hanko.io",
+        "HANKO_API_URL": "https://d10f3c14-92fc-48e0-a18a-f891557d7083.hanko.io"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "ankitalk-staging-db",
+          "database_id": "18da004f-a6b9-4850-a85e-1259b1f76931",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "kv_namespaces": [
+        {
+          "binding": "KV",
+          "id": "bb4db1ebcf97441d82701b004ee09243"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "MEDIA",
+          "bucket_name": "ankitalk-staging-media"
+        }
+      ]
+    }
+  }
 }

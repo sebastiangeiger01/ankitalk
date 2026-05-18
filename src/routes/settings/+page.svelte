@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { getPrepareAudioAhead, setPrepareAudioAhead } from '$lib/client/preferences';
 	import { locale, t, type Locale } from '$lib/i18n';
 	import Spinner from '$lib/components/Spinner.svelte';
 
@@ -8,6 +9,7 @@
 	}
 
 	let current = $state<Locale>('en');
+	let prepareAudioAhead = $state(true);
 	$effect(() => {
 		return locale.subscribe((v) => { current = v; });
 	});
@@ -61,10 +63,12 @@
 	};
 
 	onMount(async () => {
+		prepareAudioAhead = getPrepareAudioAhead();
+
 		try {
 			const res = await fetch('/api/settings/api-keys');
 			if (res.ok) {
-				const data = await res.json();
+				const data = await res.json() as KeyStatus;
 				keyStatus = data;
 			}
 		} catch {
@@ -75,7 +79,7 @@
 		try {
 			const res = await fetch('/api/settings/usage');
 			if (res.ok) {
-				usageData = await res.json();
+				usageData = await res.json() as UsageData;
 			}
 		} catch {
 			// silently ignore
@@ -90,6 +94,12 @@
 			keyInputs[service] = '';
 			messages[service] = null;
 		}
+	}
+
+	function updatePrepareAudioAhead(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		prepareAudioAhead = input.checked;
+		setPrepareAudioAhead(input.checked);
 	}
 
 	async function saveKey(service: Service) {
@@ -181,6 +191,23 @@
 				Deutsch
 			</button>
 		</div>
+	</section>
+
+	<section class="section">
+		<h2>{t('appSettings.audio')}</h2>
+		<label class="preference-row">
+			<span class="preference-copy">
+				<span class="preference-title">{t('appSettings.prepareAudioAhead')}</span>
+				<span class="preference-desc">{t('appSettings.prepareAudioAheadDesc')}</span>
+			</span>
+			<input
+				class="preference-toggle"
+				type="checkbox"
+				role="switch"
+				checked={prepareAudioAhead}
+				onchange={updatePrepareAudioAhead}
+			/>
+		</label>
 	</section>
 
 	<section class="section">
@@ -445,6 +472,45 @@
 		border-color: #5a5a8e;
 		color: #e0e0ff;
 		font-weight: 600;
+	}
+
+	.preference-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		background: #1a1a2e;
+		border: 1px solid #2a2a4a;
+		border-radius: 10px;
+		padding: 0.85rem 1rem;
+		cursor: pointer;
+	}
+
+	.preference-copy {
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+		min-width: 0;
+	}
+
+	.preference-title {
+		font-size: 0.95rem;
+		font-weight: 600;
+		color: #d0d0f0;
+	}
+
+	.preference-desc {
+		font-size: 0.82rem;
+		line-height: 1.45;
+		color: #7a7a9a;
+	}
+
+	.preference-toggle {
+		width: 2.7rem;
+		height: 1.5rem;
+		flex: 0 0 auto;
+		accent-color: #6b6bc8;
+		cursor: pointer;
 	}
 
 	/* Key rows */
