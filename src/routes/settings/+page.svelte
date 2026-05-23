@@ -3,6 +3,7 @@
 	import { getPrepareAudioAhead, setPrepareAudioAhead } from '$lib/client/preferences';
 	import { locale, t, type Locale } from '$lib/i18n';
 	import Spinner from '$lib/components/Spinner.svelte';
+	import ElevenLabsSettings from '$lib/components/ElevenLabsSettings.svelte';
 	import type { UserVoiceSettings, VoiceCommandLanguage, VoiceProvider } from '$lib/voice';
 
 	function setLocale(l: Locale) {
@@ -55,7 +56,12 @@
 		voice_command_language: 'en',
 		elevenlabs_voice_id: 'JBFqnCBsd6RMkjVDRZzb',
 		elevenlabs_tts_model: 'eleven_flash_v2_5',
-		elevenlabs_stt_model: 'scribe_v2_realtime'
+		elevenlabs_stt_model: 'scribe_v2_realtime',
+		elevenlabs_tts_speed: 1.0,
+		elevenlabs_stability: 0.5,
+		elevenlabs_similarity: 0.75,
+		elevenlabs_style: 0.0,
+		elevenlabs_speaker_boost: true
 	});
 	let savingVoiceSettings = $state(false);
 	let voiceSettingsMessage = $state<{ text: string; ok: boolean } | null>(null);
@@ -160,6 +166,11 @@
 			{ ...voiceSettings, voice_provider: provider },
 			previous
 		);
+	}
+
+	async function updateElevenLabsSettings(partial: Partial<UserVoiceSettings>) {
+		const previous = { ...voiceSettings };
+		await saveVoiceSettings({ ...voiceSettings, ...partial }, previous);
 	}
 
 	async function updateVoiceCommandLanguage(language: VoiceCommandLanguage) {
@@ -311,6 +322,15 @@
 				</p>
 			{/if}
 		</div>
+
+		{#if voiceSettings.voice_provider === 'elevenlabs'}
+			<ElevenLabsSettings
+				settings={voiceSettings}
+				keyConfigured={keyStatus.elevenlabs}
+				disabled={savingVoiceSettings}
+				onUpdate={updateElevenLabsSettings}
+			/>
+		{/if}
 		<div class="voice-language-group" aria-label={t('settings.voice.commandLanguage')}>
 			<div class="voice-provider-copy">
 				<span class="preference-title">{t('settings.voice.commandLanguage')}</span>
