@@ -1,9 +1,12 @@
 import { speak, stopPlayback, getLastSpokenText, unlockAudio, playSound, preloadTTS, clearAudioCache } from './audio';
-import { createDeepgramClient, type DeepgramClient } from './deepgram';
+import { createDeepgramClient } from './deepgram';
+import { createElevenLabsClient } from './elevenlabs';
+import type { SpeechClient } from './speech';
 import { renderCard } from './card-renderer';
 import { matchCommand } from '../commands';
 import { get } from 'svelte/store';
 import { locale } from '../i18n';
+import type { VoiceProvider } from '../voice';
 import type { ReviewPhase, VoiceCommand, RatingName } from '../types';
 
 export interface IntervalLabels {
@@ -102,6 +105,7 @@ export interface StartOptions {
 	prepareAudioAhead?: boolean;
 	/** Language code for STT (e.g. 'en', 'de'). Defaults to 'multi'. */
 	sttLanguage?: string;
+	voiceProvider?: VoiceProvider;
 }
 
 export interface ReviewEngine {
@@ -131,7 +135,7 @@ const REVIEW_API_TIMEOUT_MS = 3000;
 
 export function createReviewEngine(): ReviewEngine {
 	let eventCb: EventCallback | null = null;
-	let deepgram: DeepgramClient | null = null;
+	let speechClient: SpeechClient | null = null;
 	let phase: ReviewPhase = 'question';
 	let startTime = 0;
 	let cardStartTime = 0;
@@ -613,7 +617,7 @@ export function createReviewEngine(): ReviewEngine {
 		ratingInFlight = false;
 		undoInFlight = false;
 		stats.durationMs = Date.now() - startTime;
-		deepgram?.stop();
+		speechClient?.stop();
 		playSound('/complete.mp3').catch(() => {});
 		emit({ type: 'session_end', stats });
 	}
@@ -628,9 +632,11 @@ export function createReviewEngine(): ReviewEngine {
 		// 1. Unlock audio for iOS
 		await unlockAudio();
 
-		// 2. Fetch cards + start Deepgram in parallel (both are independent)
-		deepgram = createDeepgramClient({ language: options?.sttLanguage });
-		deepgram.onTranscript((transcript, isFinal) => {
+		// 2. Fetch cards + start the selected speech client in parallel.
+		speechClient = options?.voiceProvider === 'openai_deepgram'
+			? createDeepgramClient({ language: options?.sttLanguage })
+			: createElevenLabsClient({ language: options?.sttLanguage });
+		speechClient.onTranscript((transcript, isFinal) => {
 			emit({ type: 'transcript', text: transcript, isFinal });
 
 			if (isFinal) {
@@ -640,7 +646,7 @@ export function createReviewEngine(): ReviewEngine {
 				}
 			}
 		});
-		deepgram.onError((err) => {
+		speechClient.onError((err) => {
 			emit({ type: 'error', message: err.message });
 		});
 
@@ -657,15 +663,15 @@ export function createReviewEngine(): ReviewEngine {
 				return (await res.json()) as PrefetchedCards;
 			})();
 
-		const [cardsResult, deepgramResult] = await Promise.allSettled([
+		const [cardsResult, speechResult] = await Promise.allSettled([
 			cardsFetch,
-			deepgram.start()
+			speechClient.start()
 		]);
 
-		// Handle Deepgram failure
-		if (deepgramResult.status === 'rejected') {
-			const err = deepgramResult.reason;
-			deepgram?.stop();
+		// Handle speech client failure
+		if (speechResult.status === 'rejected') {
+			const err = speechResult.reason;
+			speechClient?.stop();
 			sessionFinished = true;
 			emit({
 				type: 'error',
@@ -676,7 +682,7 @@ export function createReviewEngine(): ReviewEngine {
 
 		// Handle cards failure
 		if (cardsResult.status === 'rejected') {
-			deepgram?.stop();
+			speechClient?.stop();
 			sessionFinished = true;
 			emit({ type: 'error', message: 'Failed to fetch cards' });
 			throw new Error('Failed to fetch cards');
@@ -690,7 +696,7 @@ export function createReviewEngine(): ReviewEngine {
 			emit({ type: 'counts', counts: data.counts });
 		}
 		if (!data.cards || data.cards.length === 0) {
-			deepgram?.stop();
+			speechClient?.stop();
 			sessionFinished = true;
 			emit({ type: 'session_end', stats });
 			return;
@@ -730,7 +736,7 @@ export function createReviewEngine(): ReviewEngine {
 		currentCard = null;
 		cardsReviewedCount = 0;
 
-		// 3. Present first card immediately (Deepgram is already running)
+		// 3. Present first card immediately (speech recognition is already running)
 		presentCard();
 	}
 
@@ -741,15 +747,15 @@ export function createReviewEngine(): ReviewEngine {
 		clearLearningTimer();
 		stopPlayback();
 		clearAudioCache();
-		deepgram?.stop();
+		speechClient?.stop();
 	}
 
 	function toggleMic() {
 		micOn = !micOn;
 		if (micOn) {
-			deepgram?.resume();
+			speechClient?.resume();
 		} else {
-			deepgram?.pause();
+			speechClient?.pause();
 		}
 		emit({ type: 'mic_change', micOn });
 	}

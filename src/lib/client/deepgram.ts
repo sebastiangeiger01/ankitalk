@@ -1,14 +1,4 @@
-type TranscriptCallback = (transcript: string, isFinal: boolean) => void;
-type ErrorCallback = (error: Error) => void;
-
-export interface DeepgramClient {
-	start(): Promise<void>;
-	stop(): void;
-	pause(): void;
-	resume(): void;
-	onTranscript(cb: TranscriptCallback): void;
-	onError(cb: ErrorCallback): void;
-}
+import type { ErrorCallback, SpeechClient, TranscriptCallback } from './speech';
 
 /**
  * Create a Deepgram STT client that connects to Deepgram's WebSocket API
@@ -19,7 +9,7 @@ export interface DeepgramOptions {
 	language?: string;
 }
 
-export function createDeepgramClient(options?: DeepgramOptions): DeepgramClient {
+export function createDeepgramClient(options?: DeepgramOptions): SpeechClient {
 	let socket: WebSocket | null = null;
 	let mediaRecorder: MediaRecorder | null = null;
 	let stream: MediaStream | null = null;

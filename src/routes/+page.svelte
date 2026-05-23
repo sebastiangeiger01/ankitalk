@@ -8,8 +8,9 @@
 	import { getPrepareAudioAhead } from '$lib/client/preferences';
 	import { sanitizeCardHtml } from '$lib/sanitize';
 	import type { DeckWithDueCount } from '$lib/types';
+	import type { UserVoiceSettings } from '$lib/voice';
 
-	type ApiKeyStatus = { openai: boolean; deepgram: boolean; anthropic: boolean };
+	type ApiKeyStatus = { openai: boolean; deepgram: boolean; anthropic: boolean; elevenlabs: boolean };
 	type NextCardsPreview = { cards: { fields: string; card_type: string }[] };
 
 	let decks = $state<DeckWithDueCount[]>([]);
@@ -168,8 +169,15 @@
 	$effect(() => {
 		loadDecks();
 		// Fetch key status for onboarding
-		fetch('/api/settings/api-keys').then(async (r): Promise<ApiKeyStatus | null> => r.ok ? await r.json() as ApiKeyStatus : null).then((data) => {
-			if (data) hasRequiredKeys = data.openai && data.deepgram;
+		Promise.all([
+			fetch('/api/settings/api-keys').then(async (r): Promise<ApiKeyStatus | null> => r.ok ? await r.json() as ApiKeyStatus : null),
+			fetch('/api/settings/voice').then(async (r): Promise<{ settings: UserVoiceSettings } | null> => r.ok ? await r.json() as { settings: UserVoiceSettings } : null)
+		]).then(([keys, voice]) => {
+			if (!keys) return;
+			const provider = voice?.settings.voice_provider ?? 'elevenlabs';
+			hasRequiredKeys = provider === 'openai_deepgram'
+				? keys.openai && keys.deepgram
+				: keys.elevenlabs;
 		}).catch(() => {});
 		// Check if user has any reviews (simple heuristic: check first deck's stats or use a lightweight query)
 		// For now, we'll consider "has reviewed" once they have decks with any due history
