@@ -178,7 +178,7 @@ export const en: Record<string, string> = {
 	// ElevenLabs voice studio
 	'settings.elevenlabs.needKey': 'Add your ElevenLabs API key below to pick a voice, choose a model and see your credit balance.',
 	'settings.elevenlabs.credits': 'Credit balance',
-	'settings.elevenlabs.creditsError': 'Could not load your ElevenLabs credit balance.',
+	'settings.elevenlabs.creditsError': 'Could not load your credit balance — your ElevenLabs key may be missing the “User” (Read) permission.',
 	'settings.elevenlabs.creditsUsed': '{used} / {limit} characters used',
 	'settings.elevenlabs.creditsReset': 'Resets on {date}',
 	'settings.elevenlabs.model': 'Model version',
@@ -195,7 +195,7 @@ export const en: Record<string, string> = {
 	'settings.elevenlabs.fullCredits': '1 credit/char',
 	'settings.elevenlabs.voice': 'Voice',
 	'settings.elevenlabs.voiceDesc': 'Current: {name}. Tap ▶ to preview without using credits.',
-	'settings.elevenlabs.voicesError': 'Could not load your voices.',
+	'settings.elevenlabs.voicesError': 'Could not load your voices — your ElevenLabs key may be missing the “Voices” (Read) permission.',
 	'settings.elevenlabs.retry': 'Retry',
 	'settings.elevenlabs.searchVoices': 'Search voices…',
 	'settings.elevenlabs.preview': 'Preview voice',
@@ -245,6 +245,12 @@ export const en: Record<string, string> = {
 	'settings.apiKeys.invalid': 'Invalid API key — please check and try again',
 	'settings.apiKeys.rateLimited': 'Provider rate limit reached — please wait and try again',
 	'settings.apiKeys.elevenlabsPermissions': 'Key needs ElevenLabs text-to-speech and realtime speech-to-text permissions',
+	'settings.apiKeys.elevenlabsPerms.title': 'Required key permissions',
+	'settings.apiKeys.elevenlabsPerms.intro': 'When creating a scoped key, enable these so every feature works (or use an unrestricted key):',
+	'settings.apiKeys.elevenlabsPerms.tts': 'Text to Speech — reads cards aloud',
+	'settings.apiKeys.elevenlabsPerms.stt': 'Speech to Text — voice commands',
+	'settings.apiKeys.elevenlabsPerms.voices': 'Voices (Read) — voice picker & preview',
+	'settings.apiKeys.elevenlabsPerms.user': 'User (Read) — credit balance',
 	'settings.apiKeys.deepgramPermissions': 'Key needs Member-level permissions — in the Deepgram Console, create your key with the "Member" role',
 
 	// Usage & Costs
