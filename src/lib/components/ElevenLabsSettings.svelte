@@ -54,7 +54,7 @@
 	const filteredVoices = $derived(
 		voiceSearch.trim()
 			? voices.filter((v) =>
-					`${v.name} ${v.category} ${v.description}`.toLowerCase().includes(voiceSearch.trim().toLowerCase())
+					`${v.name} ${v.category} ${v.description} ${v.voiceId}`.toLowerCase().includes(voiceSearch.trim().toLowerCase())
 				)
 			: voices
 	);

@@ -197,7 +197,7 @@ export const en: Record<string, string> = {
 	'settings.elevenlabs.voiceDesc': 'Current: {name}. Tap ▶ to preview without using credits.',
 	'settings.elevenlabs.voicesError': 'Could not load your voices — your ElevenLabs key may be missing the “Voices” (Read) permission.',
 	'settings.elevenlabs.retry': 'Retry',
-	'settings.elevenlabs.searchVoices': 'Search voices…',
+	'settings.elevenlabs.searchVoices': 'Search by name or voice ID…',
 	'settings.elevenlabs.preview': 'Preview voice',
 	'settings.elevenlabs.noVoices': 'No voices match your search.',
 	'settings.elevenlabs.tuning': 'Advanced voice tuning',
