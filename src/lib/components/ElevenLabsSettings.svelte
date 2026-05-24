@@ -51,13 +51,18 @@
 	let previewVoiceId = $state<string | null>(null);
 	let previewAudio: HTMLAudioElement | null = null;
 
-	const filteredVoices = $derived(
-		voiceSearch.trim()
+	const filteredVoices = $derived.by(() => {
+		const query = voiceSearch.trim().toLowerCase();
+		const base = query
 			? voices.filter((v) =>
-					`${v.name} ${v.category} ${v.description} ${v.voiceId}`.toLowerCase().includes(voiceSearch.trim().toLowerCase())
+					`${v.name} ${v.category} ${v.description} ${v.voiceId}`.toLowerCase().includes(query)
 				)
-			: voices
-	);
+			: voices;
+		// Always surface the currently selected voice first.
+		const selected = base.filter((v) => v.voiceId === settings.elevenlabs_voice_id);
+		const rest = base.filter((v) => v.voiceId !== settings.elevenlabs_voice_id);
+		return [...selected, ...rest];
+	});
 
 	const selectedVoiceName = $derived(
 		voices.find((v) => v.voiceId === settings.elevenlabs_voice_id)?.name ?? settings.elevenlabs_voice_id

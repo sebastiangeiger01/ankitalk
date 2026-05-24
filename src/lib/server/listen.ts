@@ -17,6 +17,7 @@ export interface ListenDocumentRow {
 	estimated_credits: number;
 	estimated_cost_usd: number;
 	content_hash: string;
+	language: string | null;
 	created_at: string;
 	updated_at: string;
 	expires_at: string;

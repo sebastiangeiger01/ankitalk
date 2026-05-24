@@ -9,6 +9,7 @@ import {
 } from '$lib/server/listen';
 import { chunkText } from '$lib/listen/chunk';
 import { estimateCredits, hashContent } from '$lib/listen/estimate';
+import { isListenLanguage } from '$lib/listen/languages';
 import { isElevenLabsTtsModel } from '$lib/voice';
 import type { ListenDocumentSummary } from '$lib/listen/types';
 import type { RequestHandler } from './$types';
@@ -44,6 +45,7 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 		title?: unknown;
 		voiceId?: unknown;
 		modelId?: unknown;
+		language?: unknown;
 		force?: unknown;
 	};
 
@@ -55,6 +57,7 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 	const voiceId =
 		typeof body.voiceId === 'string' && body.voiceId.trim() ? body.voiceId.trim() : saved.elevenlabs_voice_id;
 	const modelId = isElevenLabsTtsModel(body.modelId) ? body.modelId : saved.elevenlabs_tts_model;
+	const language = isListenLanguage(body.language) ? body.language : null;
 
 	const chunks = chunkText(text);
 	if (!chunks.length) throw error(400, 'No usable text');
@@ -62,7 +65,7 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 	const totalChars = chunks.reduce((sum, c) => sum + c.length, 0);
 	const estimatedCredits = estimateCredits(totalChars, modelId);
 	const estimatedCostUsd = calculateElevenLabsTtsCost(totalChars, modelId);
-	const contentHash = await hashContent(text, voiceId, modelId);
+	const contentHash = await hashContent(text, voiceId, modelId, language ?? 'auto');
 
 	if (body.force !== true) {
 		const dup = await db
@@ -81,10 +84,10 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 		db
 			.prepare(
 				`INSERT INTO listen_documents
-					(id, user_id, title, status, total_chars, segment_count, tts_model, voice_id, estimated_credits, estimated_cost_usd, content_hash)
-				 VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)`
+					(id, user_id, title, status, total_chars, segment_count, tts_model, voice_id, estimated_credits, estimated_cost_usd, content_hash, language)
+				 VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
-			.bind(docId, userId, title, totalChars, chunks.length, modelId, voiceId, estimatedCredits, estimatedCostUsd, contentHash),
+			.bind(docId, userId, title, totalChars, chunks.length, modelId, voiceId, estimatedCredits, estimatedCostUsd, contentHash, language),
 		...chunks.map((chunk, i) =>
 			db
 				.prepare(

@@ -32,4 +32,9 @@ describe('hashContent', () => {
 		const b = await hashContent('Goodbye world', 'v1', 'm1');
 		expect(a).not.toBe(b);
 	});
+
+	it('changes when the language changes', async () => {
+		const base = await hashContent('Hello world', 'v1', 'm1', 'auto');
+		expect(await hashContent('Hello world', 'v1', 'm1', 'de')).not.toBe(base);
+	});
 });

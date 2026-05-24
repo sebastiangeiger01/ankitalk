@@ -6,6 +6,7 @@
 	import { chunkText } from '$lib/listen/chunk';
 	import { estimateCredits } from '$lib/listen/estimate';
 	import { runGeneration, ListenKeyError } from '$lib/listen/client';
+	import { LISTEN_LANGUAGES } from '$lib/listen/languages';
 	import { ELEVENLABS_TTS_MODELS } from '$lib/voice';
 	import type { ListenDocumentSummary } from '$lib/listen/types';
 
@@ -16,6 +17,7 @@
 	let title = $state('');
 	let modelId = $state('eleven_flash_v2_5');
 	let voiceId = $state('');
+	let language = $state('auto');
 	let voices = $state<{ voiceId: string; name: string }[]>([]);
 	let balanceRemaining = $state<number | null>(null);
 
@@ -89,7 +91,7 @@
 			const res = await fetch('/api/listen', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ text, title, voiceId, modelId, force })
+				body: JSON.stringify({ text, title, voiceId, modelId, language: language === 'auto' ? null : language, force })
 			});
 			if (!res.ok) {
 				errorMsg = t('listen.error');
@@ -185,7 +187,17 @@
 					</select>
 				</label>
 			{/if}
+			<label class="override-field">
+				<span>{t('listen.language')}</span>
+				<select bind:value={language} disabled={generating}>
+					<option value="auto">{t('listen.languageAuto')}</option>
+					{#each LISTEN_LANGUAGES as lang}
+						<option value={lang.code}>{lang.name}</option>
+					{/each}
+				</select>
+			</label>
 		</div>
+		<p class="override-hint">{t('listen.languageHint')}</p>
 
 		{#if charCount > 0}
 			<div class="estimate" class:warn={insufficient}>
@@ -337,6 +349,8 @@
 		font-size: 0.85rem;
 		padding: 0.45rem 0.5rem;
 	}
+
+	.override-hint { font-size: 0.74rem; color: #6a6a8a; margin: 0.4rem 0 0; line-height: 1.4; }
 
 	.estimate {
 		display: flex;
