@@ -3,7 +3,8 @@ export const de: Record<string, string> = {
 	'nav.title': 'AnkiTalk',
 	'nav.logout': 'Abmelden',
 	'nav.settings': 'Einstellungen',
-	'nav.listen': 'Hören',
+	'nav.learn': 'Lernen',
+	'nav.listen': 'Vertonen',
 
 	// Login
 	'login.title': 'AnkiTalk',
@@ -301,7 +302,7 @@ export const de: Record<string, string> = {
 	'stats.noReviews': 'Keine Abfragen in diesem Zeitraum',
 
 	// Listen (Text → Audio)
-	'listen.title': 'Höre deine Texte',
+	'listen.title': 'Texte vertonen',
 	'listen.subtitle': 'Verwandle deine Studienmaterialien in Audio. Text hochladen oder einfügen, MP3s mit ElevenLabs erzeugen und später anhören — 14 Tage gespeichert.',
 	'listen.inputLabel': 'Text',
 	'listen.pastePlaceholder': 'Füge deinen Text hier ein oder lade unten eine .txt-Datei hoch…',
