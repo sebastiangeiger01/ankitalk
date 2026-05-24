@@ -14,9 +14,10 @@ async function makeTtsCacheRequest(
 	provider: VoiceProvider,
 	model: string,
 	voice?: string,
-	speed?: number
+	speed?: number,
+	extra?: string
 ): Promise<Request> {
-	const payload = makeTtsCachePayload(userId, text, provider, model, voice ?? '', speed ?? 1.0);
+	const payload = makeTtsCachePayload(userId, text, provider, model, voice ?? '', speed ?? 1.0, extra);
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(payload));
 	const hash = [...new Uint8Array(digest)]
 		.map((byte) => byte.toString(16).padStart(2, '0'))
@@ -50,8 +51,19 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 	const ttsVoice = provider === 'elevenlabs'
 		? voiceSettings.elevenlabs_voice_id
 		: (voice ?? 'nova');
+	// For ElevenLabs the per-request `speed`/tuning live in the user's saved settings,
+	// so fold them into the cache key — otherwise changing them would serve stale audio.
+	const cacheSpeed = provider === 'elevenlabs' ? voiceSettings.elevenlabs_tts_speed : speed;
+	const cacheExtra = provider === 'elevenlabs'
+		? JSON.stringify([
+			voiceSettings.elevenlabs_stability,
+			voiceSettings.elevenlabs_similarity,
+			voiceSettings.elevenlabs_style,
+			voiceSettings.elevenlabs_speaker_boost
+		])
+		: undefined;
 	const cacheKey = cache
-		? await makeTtsCacheRequest(userId, text, provider, ttsModel, ttsVoice, speed)
+		? await makeTtsCacheRequest(userId, text, provider, ttsModel, ttsVoice, cacheSpeed, cacheExtra)
 		: null;
 
 	if (cache && cacheKey) {
@@ -65,7 +77,7 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 		const apiKey = await getUserApiKey(db, userId, 'elevenlabs', platform!.env.ENCRYPTION_KEY);
 		if (!apiKey) return json({ error: 'Add your ElevenLabs API key in Settings to use text-to-speech' }, { status: 400 });
 		response = await synthesizeElevenLabsSpeech(apiKey, text, voiceSettings);
-		cost = calculateElevenLabsTtsCost(text.length);
+		cost = calculateElevenLabsTtsCost(text.length, voiceSettings.elevenlabs_tts_model);
 	} else {
 		const apiKey = await getUserApiKey(db, userId, 'openai', platform!.env.ENCRYPTION_KEY);
 		if (!apiKey) return json({ error: 'Add your OpenAI API key in Settings to use text-to-speech' }, { status: 400 });

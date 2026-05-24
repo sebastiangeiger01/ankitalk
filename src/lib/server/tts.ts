@@ -31,10 +31,21 @@ export async function synthesizeOpenAISpeech(
 	});
 }
 
+export type ElevenLabsTtsSettings = Pick<
+	UserVoiceSettings,
+	| 'elevenlabs_voice_id'
+	| 'elevenlabs_tts_model'
+	| 'elevenlabs_tts_speed'
+	| 'elevenlabs_stability'
+	| 'elevenlabs_similarity'
+	| 'elevenlabs_style'
+	| 'elevenlabs_speaker_boost'
+>;
+
 export async function synthesizeElevenLabsSpeech(
 	apiKey: string,
 	text: string,
-	settings: Pick<UserVoiceSettings, 'elevenlabs_voice_id' | 'elevenlabs_tts_model'>
+	settings: ElevenLabsTtsSettings
 ): Promise<Response> {
 	const voiceId = encodeURIComponent(settings.elevenlabs_voice_id);
 	const response = await fetch(
@@ -47,7 +58,14 @@ export async function synthesizeElevenLabsSpeech(
 			},
 			body: JSON.stringify({
 				text: text.slice(0, 5000),
-				model_id: settings.elevenlabs_tts_model
+				model_id: settings.elevenlabs_tts_model,
+				voice_settings: {
+					stability: settings.elevenlabs_stability,
+					similarity_boost: settings.elevenlabs_similarity,
+					style: settings.elevenlabs_style,
+					use_speaker_boost: settings.elevenlabs_speaker_boost,
+					speed: settings.elevenlabs_tts_speed
+				}
 			})
 		}
 	);

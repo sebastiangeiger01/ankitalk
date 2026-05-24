@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { getUsageSummary } from './usage';
+import { calculateElevenLabsTtsCost, getUsageSummary } from './usage';
+
+describe('ElevenLabs TTS cost', () => {
+	it('charges Flash/Turbo models half of the standard-model rate', () => {
+		const flash = calculateElevenLabsTtsCost(1000, 'eleven_flash_v2_5');
+		const standard = calculateElevenLabsTtsCost(1000, 'eleven_multilingual_v2');
+		expect(flash).toBeCloseTo(standard / 2);
+	});
+
+	it('defaults to the standard rate when no model is given', () => {
+		expect(calculateElevenLabsTtsCost(1000)).toBeCloseTo(calculateElevenLabsTtsCost(1000, 'eleven_multilingual_v2'));
+	});
+});
 
 describe('usage summary', () => {
 	it('includes ElevenLabs in service totals', async () => {
