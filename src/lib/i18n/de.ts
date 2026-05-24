@@ -197,7 +197,7 @@ export const de: Record<string, string> = {
 	'settings.elevenlabs.voiceDesc': 'Aktuell: {name}. Tippe auf ▶, um ohne Credits anzuhören.',
 	'settings.elevenlabs.voicesError': 'Deine Stimmen konnten nicht geladen werden — deinem ElevenLabs-Key fehlt evtl. die Berechtigung „Voices" (Read).',
 	'settings.elevenlabs.retry': 'Erneut versuchen',
-	'settings.elevenlabs.searchVoices': 'Stimmen suchen…',
+	'settings.elevenlabs.searchVoices': 'Nach Name oder Voice-ID suchen…',
 	'settings.elevenlabs.preview': 'Stimme anhören',
 	'settings.elevenlabs.noVoices': 'Keine Stimmen passen zu deiner Suche.',
 	'settings.elevenlabs.tuning': 'Erweiterte Stimmeinstellungen',
