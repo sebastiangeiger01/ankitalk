@@ -178,7 +178,7 @@ export const de: Record<string, string> = {
 	// ElevenLabs Sprach-Studio
 	'settings.elevenlabs.needKey': 'Füge unten deinen ElevenLabs-API-Schlüssel hinzu, um eine Stimme zu wählen, ein Modell auszuwählen und dein Credit-Guthaben zu sehen.',
 	'settings.elevenlabs.credits': 'Credit-Guthaben',
-	'settings.elevenlabs.creditsError': 'Dein ElevenLabs-Credit-Guthaben konnte nicht geladen werden.',
+	'settings.elevenlabs.creditsError': 'Credit-Guthaben konnte nicht geladen werden — deinem ElevenLabs-Key fehlt evtl. die Berechtigung „User" (Read).',
 	'settings.elevenlabs.creditsUsed': '{used} / {limit} Zeichen verbraucht',
 	'settings.elevenlabs.creditsReset': 'Zurücksetzung am {date}',
 	'settings.elevenlabs.model': 'Modellversion',
@@ -195,7 +195,7 @@ export const de: Record<string, string> = {
 	'settings.elevenlabs.fullCredits': '1 Credit/Zeichen',
 	'settings.elevenlabs.voice': 'Stimme',
 	'settings.elevenlabs.voiceDesc': 'Aktuell: {name}. Tippe auf ▶, um ohne Credits anzuhören.',
-	'settings.elevenlabs.voicesError': 'Deine Stimmen konnten nicht geladen werden.',
+	'settings.elevenlabs.voicesError': 'Deine Stimmen konnten nicht geladen werden — deinem ElevenLabs-Key fehlt evtl. die Berechtigung „Voices" (Read).',
 	'settings.elevenlabs.retry': 'Erneut versuchen',
 	'settings.elevenlabs.searchVoices': 'Stimmen suchen…',
 	'settings.elevenlabs.preview': 'Stimme anhören',
@@ -245,6 +245,12 @@ export const de: Record<string, string> = {
 	'settings.apiKeys.invalid': 'Ungültiger API-Schlüssel — bitte überprüfen und erneut versuchen',
 	'settings.apiKeys.rateLimited': 'Anbieter-Limit erreicht — bitte warte kurz und versuche es erneut',
 	'settings.apiKeys.elevenlabsPermissions': 'Schlüssel benötigt ElevenLabs-Berechtigungen für Text-zu-Sprache und Echtzeit-Sprache-zu-Text',
+	'settings.apiKeys.elevenlabsPerms.title': 'Benötigte Schlüssel-Berechtigungen',
+	'settings.apiKeys.elevenlabsPerms.intro': 'Aktiviere diese beim Erstellen eines eingeschränkten Schlüssels, damit alle Funktionen laufen (oder nutze einen uneingeschränkten Schlüssel):',
+	'settings.apiKeys.elevenlabsPerms.tts': 'Text to Speech — liest Karten vor',
+	'settings.apiKeys.elevenlabsPerms.stt': 'Speech to Text — Sprachbefehle',
+	'settings.apiKeys.elevenlabsPerms.voices': 'Voices (Read) — Stimmenauswahl & Vorschau',
+	'settings.apiKeys.elevenlabsPerms.user': 'User (Read) — Credit-Guthaben',
 	'settings.apiKeys.deepgramPermissions': 'Schlüssel benötigt Member-Berechtigung — erstelle den Schlüssel in der Deepgram Console mit der Rolle „Member"',
 
 	// Usage & Costs

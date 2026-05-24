@@ -424,6 +424,18 @@
 							bind:value={keyInputs[service]}
 							onkeydown={(e) => { if (e.key === 'Enter') saveKey(service); }}
 						/>
+						{#if service === 'elevenlabs'}
+							<div class="perm-hint">
+								<span class="perm-hint-title">{t('settings.apiKeys.elevenlabsPerms.title')}</span>
+								<span class="perm-hint-intro">{t('settings.apiKeys.elevenlabsPerms.intro')}</span>
+								<ul class="perm-list">
+									<li>{t('settings.apiKeys.elevenlabsPerms.tts')}</li>
+									<li>{t('settings.apiKeys.elevenlabsPerms.stt')}</li>
+									<li>{t('settings.apiKeys.elevenlabsPerms.voices')}</li>
+									<li>{t('settings.apiKeys.elevenlabsPerms.user')}</li>
+								</ul>
+							</div>
+						{/if}
 						<div class="key-input-footer">
 							<span class="key-link-hint">
 								{t('settings.apiKeys.getKey')}
@@ -495,6 +507,18 @@
 							bind:value={keyInputs[service]}
 							onkeydown={(e) => { if (e.key === 'Enter') saveKey(service); }}
 						/>
+						{#if service === 'elevenlabs'}
+							<div class="perm-hint">
+								<span class="perm-hint-title">{t('settings.apiKeys.elevenlabsPerms.title')}</span>
+								<span class="perm-hint-intro">{t('settings.apiKeys.elevenlabsPerms.intro')}</span>
+								<ul class="perm-list">
+									<li>{t('settings.apiKeys.elevenlabsPerms.tts')}</li>
+									<li>{t('settings.apiKeys.elevenlabsPerms.stt')}</li>
+									<li>{t('settings.apiKeys.elevenlabsPerms.voices')}</li>
+									<li>{t('settings.apiKeys.elevenlabsPerms.user')}</li>
+								</ul>
+							</div>
+						{/if}
 						<div class="key-input-footer">
 							<span class="key-link-hint">
 								{t('settings.apiKeys.getKey')}
@@ -920,6 +944,42 @@
 		justify-content: space-between;
 		gap: 0.5rem;
 		flex-wrap: wrap;
+	}
+
+	.perm-hint {
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+		padding: 0.6rem 0.75rem;
+		background: #12121f;
+		border: 1px solid #2e2e52;
+		border-radius: 7px;
+	}
+
+	.perm-hint-title {
+		font-size: 0.78rem;
+		font-weight: 600;
+		color: #b0b0d0;
+	}
+
+	.perm-hint-intro {
+		font-size: 0.76rem;
+		color: #7a7a9a;
+		line-height: 1.4;
+	}
+
+	.perm-list {
+		margin: 0;
+		padding-left: 1.1rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+	}
+
+	.perm-list li {
+		font-size: 0.76rem;
+		color: #9a9ac0;
+		line-height: 1.35;
 	}
 
 	.key-link-hint {
