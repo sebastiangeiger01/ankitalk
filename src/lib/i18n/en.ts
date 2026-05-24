@@ -3,7 +3,8 @@ export const en: Record<string, string> = {
 	'nav.title': 'AnkiTalk',
 	'nav.logout': 'Logout',
 	'nav.settings': 'Settings',
-	'nav.listen': 'Listen',
+	'nav.learn': 'Learn',
+	'nav.listen': 'Narrate',
 
 	// Login
 	'login.title': 'AnkiTalk',
@@ -301,7 +302,7 @@ export const en: Record<string, string> = {
 	'stats.noReviews': 'No reviews in this period',
 
 	// Listen (text → audio)
-	'listen.title': 'Listen to your texts',
+	'listen.title': 'Narrate your texts',
 	'listen.subtitle': 'Turn your study materials into audio. Upload or paste a text, generate MP3s with ElevenLabs, and listen later — saved for 14 days.',
 	'listen.inputLabel': 'Text',
 	'listen.pastePlaceholder': 'Paste your text here, or upload a .txt file below…',
@@ -309,6 +310,9 @@ export const en: Record<string, string> = {
 	'listen.titlePlaceholder': 'Title (optional)',
 	'listen.model': 'Model',
 	'listen.voice': 'Voice',
+	'listen.language': 'Language',
+	'listen.languageAuto': 'Auto-detect',
+	'listen.languageHint': 'Language is enforced with Flash and Turbo v2.5 models; other models auto-detect from the text.',
 	'listen.characters': '{count} characters',
 	'listen.segments': '{count} segments',
 	'listen.credits': '{count} credits',

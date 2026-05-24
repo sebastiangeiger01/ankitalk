@@ -57,7 +57,7 @@ export const POST: RequestHandler = async ({ params, request, platform, locals }
 			.run();
 
 		try {
-			const response = await synthesizeElevenLabsSpeech(apiKey, seg.source_text, settings);
+			const response = await synthesizeElevenLabsSpeech(apiKey, seg.source_text, settings, doc.language ?? undefined);
 			const buffer = await response.arrayBuffer();
 			const key = listenR2Key(userId, params.id, seg.seq);
 			await platform!.env.MEDIA.put(key, buffer, { httpMetadata: { contentType: 'audio/mpeg' } });
