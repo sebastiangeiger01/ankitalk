@@ -66,8 +66,15 @@ export const GET: RequestHandler = async ({ params, url, platform, locals }) => 
 	// Kick off generation; do NOT await — the Response returns immediately so the browser
 	// can start consuming. waitUntil keeps the loop alive even if the client disconnects
 	// mid-stream, so the *current* sentence finishes its R2 cache write (the user paid for it).
+	//
+	// Throttle: cap how far ahead we run-ahead of audible playback by sleeping
+	// `durationMs / 2` between sentence writes. That keeps generation at ~2× real-time,
+	// which is enough to stay ahead of the browser buffer but stops us from pre-generating
+	// 5 minutes of audio that the user may never hear after pausing.
 	ctx.waitUntil(
 		(async () => {
+			let writtenMs = 0;
+			const realStart = Date.now();
 			try {
 				for (const sentence of sentences) {
 					const result = await getOrSynthesizeSentence(
@@ -83,6 +90,12 @@ export const GET: RequestHandler = async ({ params, url, platform, locals }) => 
 						waitUntil
 					);
 					await writer.write(result.bytes);
+					writtenMs += result.durationMs;
+					const elapsed = Date.now() - realStart;
+					const targetElapsed = writtenMs / 2; // 2× real-time
+					if (elapsed < targetElapsed) {
+						await new Promise((r) => setTimeout(r, targetElapsed - elapsed));
+					}
 				}
 				await writer.close();
 			} catch (err) {

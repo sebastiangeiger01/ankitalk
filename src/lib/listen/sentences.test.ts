@@ -128,11 +128,11 @@ describe('mp3 duration estimates', () => {
 		expect(estimateMp3DurationMs(8_000)).toBe(500);
 	});
 
-	it('estimates from char count using ~12 chars/sec', () => {
-		// 120 chars at normal speed → ~10 seconds.
-		expect(estimateDurationMsFromChars(120)).toBeGreaterThan(8_000);
-		expect(estimateDurationMsFromChars(120)).toBeLessThan(12_000);
+	it('estimates from char count using ~15 chars/sec', () => {
+		// 150 chars at normal speed → ~10 seconds.
+		expect(estimateDurationMsFromChars(150)).toBeGreaterThan(8_000);
+		expect(estimateDurationMsFromChars(150)).toBeLessThan(12_000);
 		// Speed 2× → half the duration.
-		expect(estimateDurationMsFromChars(120, 2)).toBeLessThan(estimateDurationMsFromChars(120, 1));
+		expect(estimateDurationMsFromChars(150, 2)).toBeLessThan(estimateDurationMsFromChars(150, 1));
 	});
 });
