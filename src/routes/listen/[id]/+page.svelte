@@ -51,11 +51,17 @@
 
 	const cachedNowCount = $derived(sentences.filter((s) => s.cached).length);
 
-	// Live "credits spent" / "credits saved" since opening the doc. Stable after refresh —
-	// uncached sentences I listened to count as spent, cached ones I listened to as saved.
+	// Live "credits spent" / "credits saved" since opening the doc.
+	// `spent` tracks what the *server actually generated* this session (sentences that
+	// flipped from uncached at load time to cached now). This matches actual ElevenLabs
+	// billing — including any buffer-ahead the browser triggers. The previous version
+	// only counted what the user audibly passed, which silently under-reported by the
+	// pre-buffer amount.
+	// `saved` tracks cached sentences the user actually consumed (heard), so it stays
+	// gated on `listenedInSession`.
 	const spentEstimate = $derived(
 		sentences
-			.filter((s) => listenedInSession.has(s.seq) && !cachedInitially.has(s.seq))
+			.filter((s) => s.cached && !cachedInitially.has(s.seq))
 			.reduce((sum, s) => sum + Math.ceil(s.char_count * multiplier), 0)
 	);
 	const savedEstimate = $derived(
