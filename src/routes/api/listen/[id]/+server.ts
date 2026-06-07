@@ -1,7 +1,6 @@
 import { error, json } from '@sveltejs/kit';
 import { getDb } from '$lib/server/db';
 import type { ListenDocumentRow } from '$lib/server/listen';
-import type { ListenSegmentInfo } from '$lib/listen/types';
 import type { RequestHandler } from './$types';
 
 async function getOwnedDocument(
@@ -10,26 +9,29 @@ async function getOwnedDocument(
 	id: string
 ): Promise<ListenDocumentRow | null> {
 	return db
-		.prepare("SELECT * FROM listen_documents WHERE id = ? AND user_id = ? AND expires_at > datetime('now')")
+		.prepare(
+			"SELECT * FROM listen_documents WHERE id = ? AND user_id = ? AND expires_at > datetime('now') AND original_text IS NOT NULL"
+		)
 		.bind(id, userId)
 		.first<ListenDocumentRow>();
 }
 
-export const GET: RequestHandler = async ({ params, url, platform, locals }) => {
+export const GET: RequestHandler = async ({ params, platform, locals }) => {
 	if (!locals.userId) throw error(401, 'Unauthorized');
 
 	const db = getDb(platform!);
 	const doc = await getOwnedDocument(db, locals.userId, params.id);
 	if (!doc) throw error(404, 'Not found');
 
-	const includeText = url.searchParams.get('text') === '1';
-	const columns = includeText ? 'seq, status, char_count, source_text' : 'seq, status, char_count';
-	const segs = await db
-		.prepare(`SELECT ${columns} FROM listen_segments WHERE document_id = ? ORDER BY seq`)
-		.bind(params.id)
-		.all<ListenSegmentInfo>();
-
-	const doneCount = segs.results.filter((s) => s.status === 'done').length;
+	const cachedRow = await db
+		.prepare(
+			`SELECT COUNT(*) AS n FROM listen_sentence_cache c
+			 JOIN listen_sentences s ON s.sentence_hash = c.sentence_hash
+			 WHERE c.user_id = ? AND s.doc_id = ? AND c.expires_at > datetime('now')`
+		)
+		.bind(locals.userId, params.id)
+		.first<{ n: number }>();
+	const cachedCount = Number(cachedRow?.n ?? 0);
 
 	return json({
 		document: {
@@ -38,15 +40,15 @@ export const GET: RequestHandler = async ({ params, url, platform, locals }) => 
 			status: doc.status,
 			total_chars: doc.total_chars,
 			segment_count: doc.segment_count,
-			done_count: doneCount,
+			cached_count: cachedCount,
 			tts_model: doc.tts_model,
 			voice_id: doc.voice_id,
+			language: doc.language,
 			estimated_credits: doc.estimated_credits,
 			estimated_cost_usd: doc.estimated_cost_usd,
 			created_at: doc.created_at,
 			expires_at: doc.expires_at
-		},
-		segments: segs.results
+		}
 	});
 };
 
@@ -77,6 +79,9 @@ export const DELETE: RequestHandler = async ({ params, platform, locals }) => {
 		.first<{ id: string }>();
 	if (!doc) throw error(404, 'Not found');
 
+	// Best-effort cleanup of any legacy per-segment R2 objects. Reader-model audio lives in
+	// the shared sentence cache and isn't deleted here — it may still be used by other docs
+	// and expires on its own R2 lifecycle.
 	const segs = await db
 		.prepare('SELECT r2_key FROM listen_segments WHERE document_id = ? AND r2_key IS NOT NULL')
 		.bind(params.id)
