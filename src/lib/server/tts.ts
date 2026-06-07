@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import type { UserVoiceSettings } from '$lib/voice';
+import { modelSupportsLanguageCode } from '$lib/listen/languages';
 
 export type TTSVoice = 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer';
 
@@ -31,12 +32,40 @@ export async function synthesizeOpenAISpeech(
 	});
 }
 
+export type ElevenLabsTtsSettings = Pick<
+	UserVoiceSettings,
+	| 'elevenlabs_voice_id'
+	| 'elevenlabs_tts_model'
+	| 'elevenlabs_tts_speed'
+	| 'elevenlabs_stability'
+	| 'elevenlabs_similarity'
+	| 'elevenlabs_style'
+	| 'elevenlabs_speaker_boost'
+>;
+
 export async function synthesizeElevenLabsSpeech(
 	apiKey: string,
 	text: string,
-	settings: Pick<UserVoiceSettings, 'elevenlabs_voice_id' | 'elevenlabs_tts_model'>
+	settings: ElevenLabsTtsSettings,
+	languageCode?: string
 ): Promise<Response> {
 	const voiceId = encodeURIComponent(settings.elevenlabs_voice_id);
+	const body: Record<string, unknown> = {
+		text: text.slice(0, 5000),
+		model_id: settings.elevenlabs_tts_model,
+		voice_settings: {
+			stability: settings.elevenlabs_stability,
+			similarity_boost: settings.elevenlabs_similarity,
+			style: settings.elevenlabs_style,
+			use_speaker_boost: settings.elevenlabs_speaker_boost,
+			speed: settings.elevenlabs_tts_speed
+		}
+	};
+	// language_code is only honored by Flash/Turbo v2.5; sending it to other models errors.
+	if (languageCode && modelSupportsLanguageCode(settings.elevenlabs_tts_model)) {
+		body.language_code = languageCode;
+	}
+
 	const response = await fetch(
 		`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream?output_format=mp3_44100_128`,
 		{
@@ -45,10 +74,7 @@ export async function synthesizeElevenLabsSpeech(
 				'xi-api-key': apiKey,
 				'Content-Type': 'application/json'
 			},
-			body: JSON.stringify({
-				text: text.slice(0, 5000),
-				model_id: settings.elevenlabs_tts_model
-			})
+			body: JSON.stringify(body)
 		}
 	);
 

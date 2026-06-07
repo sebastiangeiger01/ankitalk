@@ -3,6 +3,7 @@
 	import { getPrepareAudioAhead, setPrepareAudioAhead } from '$lib/client/preferences';
 	import { locale, t, type Locale } from '$lib/i18n';
 	import Spinner from '$lib/components/Spinner.svelte';
+	import ElevenLabsSettings from '$lib/components/ElevenLabsSettings.svelte';
 	import type { UserVoiceSettings, VoiceCommandLanguage, VoiceProvider } from '$lib/voice';
 
 	function setLocale(l: Locale) {
@@ -55,7 +56,12 @@
 		voice_command_language: 'en',
 		elevenlabs_voice_id: 'JBFqnCBsd6RMkjVDRZzb',
 		elevenlabs_tts_model: 'eleven_flash_v2_5',
-		elevenlabs_stt_model: 'scribe_v2_realtime'
+		elevenlabs_stt_model: 'scribe_v2_realtime',
+		elevenlabs_tts_speed: 1.0,
+		elevenlabs_stability: 0.5,
+		elevenlabs_similarity: 0.75,
+		elevenlabs_style: 0.0,
+		elevenlabs_speaker_boost: true
 	});
 	let savingVoiceSettings = $state(false);
 	let voiceSettingsMessage = $state<{ text: string; ok: boolean } | null>(null);
@@ -160,6 +166,11 @@
 			{ ...voiceSettings, voice_provider: provider },
 			previous
 		);
+	}
+
+	async function updateElevenLabsSettings(partial: Partial<UserVoiceSettings>) {
+		const previous = { ...voiceSettings };
+		await saveVoiceSettings({ ...voiceSettings, ...partial }, previous);
 	}
 
 	async function updateVoiceCommandLanguage(language: VoiceCommandLanguage) {
@@ -311,6 +322,15 @@
 				</p>
 			{/if}
 		</div>
+
+		{#if voiceSettings.voice_provider === 'elevenlabs'}
+			<ElevenLabsSettings
+				settings={voiceSettings}
+				keyConfigured={keyStatus.elevenlabs}
+				disabled={savingVoiceSettings}
+				onUpdate={updateElevenLabsSettings}
+			/>
+		{/if}
 		<div class="voice-language-group" aria-label={t('settings.voice.commandLanguage')}>
 			<div class="voice-provider-copy">
 				<span class="preference-title">{t('settings.voice.commandLanguage')}</span>
@@ -404,6 +424,18 @@
 							bind:value={keyInputs[service]}
 							onkeydown={(e) => { if (e.key === 'Enter') saveKey(service); }}
 						/>
+						{#if service === 'elevenlabs'}
+							<div class="perm-hint">
+								<span class="perm-hint-title">{t('settings.apiKeys.elevenlabsPerms.title')}</span>
+								<span class="perm-hint-intro">{t('settings.apiKeys.elevenlabsPerms.intro')}</span>
+								<ul class="perm-list">
+									<li>{t('settings.apiKeys.elevenlabsPerms.tts')}</li>
+									<li>{t('settings.apiKeys.elevenlabsPerms.stt')}</li>
+									<li>{t('settings.apiKeys.elevenlabsPerms.voices')}</li>
+									<li>{t('settings.apiKeys.elevenlabsPerms.user')}</li>
+								</ul>
+							</div>
+						{/if}
 						<div class="key-input-footer">
 							<span class="key-link-hint">
 								{t('settings.apiKeys.getKey')}
@@ -475,6 +507,18 @@
 							bind:value={keyInputs[service]}
 							onkeydown={(e) => { if (e.key === 'Enter') saveKey(service); }}
 						/>
+						{#if service === 'elevenlabs'}
+							<div class="perm-hint">
+								<span class="perm-hint-title">{t('settings.apiKeys.elevenlabsPerms.title')}</span>
+								<span class="perm-hint-intro">{t('settings.apiKeys.elevenlabsPerms.intro')}</span>
+								<ul class="perm-list">
+									<li>{t('settings.apiKeys.elevenlabsPerms.tts')}</li>
+									<li>{t('settings.apiKeys.elevenlabsPerms.stt')}</li>
+									<li>{t('settings.apiKeys.elevenlabsPerms.voices')}</li>
+									<li>{t('settings.apiKeys.elevenlabsPerms.user')}</li>
+								</ul>
+							</div>
+						{/if}
 						<div class="key-input-footer">
 							<span class="key-link-hint">
 								{t('settings.apiKeys.getKey')}
@@ -900,6 +944,42 @@
 		justify-content: space-between;
 		gap: 0.5rem;
 		flex-wrap: wrap;
+	}
+
+	.perm-hint {
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+		padding: 0.6rem 0.75rem;
+		background: #12121f;
+		border: 1px solid #2e2e52;
+		border-radius: 7px;
+	}
+
+	.perm-hint-title {
+		font-size: 0.78rem;
+		font-weight: 600;
+		color: #b0b0d0;
+	}
+
+	.perm-hint-intro {
+		font-size: 0.76rem;
+		color: #7a7a9a;
+		line-height: 1.4;
+	}
+
+	.perm-list {
+		margin: 0;
+		padding-left: 1.1rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+	}
+
+	.perm-list li {
+		font-size: 0.76rem;
+		color: #9a9ac0;
+		line-height: 1.35;
 	}
 
 	.key-link-hint {

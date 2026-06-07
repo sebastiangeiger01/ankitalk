@@ -6,7 +6,10 @@ export function makeTtsCachePayload(
 	provider: VoiceProvider,
 	model: string,
 	voice: string,
-	speed: number
+	speed: number,
+	extra?: string
 ): string {
-	return JSON.stringify([userId, provider, model, text.slice(0, 5000), voice, speed]);
+	const parts: unknown[] = [userId, provider, model, text.slice(0, 5000), voice, speed];
+	if (extra !== undefined) parts.push(extra);
+	return JSON.stringify(parts);
 }

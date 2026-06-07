@@ -1,10 +1,11 @@
 import { newId } from './db';
+import { elevenLabsModelCreditMultiplier } from '$lib/voice';
 
 // Rates (USD)
 const RATES = {
 	openai_tts: 0.6 / 1_000_000, // $0.60 per 1M characters
 	deepgram_stt: 0.0043 / 60, // $0.0043 per minute → per second
-	elevenlabs_tts: 0.18 / 1_000_000, // rough subscription-dependent estimate
+	elevenlabs_tts: 0.36 / 1_000_000, // standard model (1 credit/char); Flash/Turbo bill at half
 	elevenlabs_stt: 0.0048 / 60, // rough subscription-dependent estimate
 	anthropic_input: 1.0 / 1_000_000, // $1.00 per 1M input tokens
 	anthropic_output: 5.0 / 1_000_000 // $5.00 per 1M output tokens
@@ -33,8 +34,9 @@ export function calculateTtsCost(characterCount: number): number {
 	return characterCount * RATES.openai_tts;
 }
 
-export function calculateElevenLabsTtsCost(characterCount: number): number {
-	return characterCount * RATES.elevenlabs_tts;
+export function calculateElevenLabsTtsCost(characterCount: number, modelId?: string): number {
+	const multiplier = modelId ? elevenLabsModelCreditMultiplier(modelId) : 1;
+	return characterCount * RATES.elevenlabs_tts * multiplier;
 }
 
 export function calculateSttCost(estimatedSeconds: number): number {

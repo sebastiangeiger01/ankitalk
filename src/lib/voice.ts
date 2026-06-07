@@ -7,6 +7,11 @@ export interface UserVoiceSettings {
 	elevenlabs_voice_id: string;
 	elevenlabs_tts_model: string;
 	elevenlabs_stt_model: string;
+	elevenlabs_tts_speed: number;
+	elevenlabs_stability: number;
+	elevenlabs_similarity: number;
+	elevenlabs_style: number;
+	elevenlabs_speaker_boost: boolean;
 }
 
 export const DEFAULT_ELEVENLABS_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb';
@@ -18,8 +23,38 @@ export const DEFAULT_VOICE_SETTINGS: UserVoiceSettings = {
 	voice_command_language: 'en',
 	elevenlabs_voice_id: DEFAULT_ELEVENLABS_VOICE_ID,
 	elevenlabs_tts_model: DEFAULT_ELEVENLABS_TTS_MODEL,
-	elevenlabs_stt_model: DEFAULT_ELEVENLABS_STT_MODEL
+	elevenlabs_stt_model: DEFAULT_ELEVENLABS_STT_MODEL,
+	elevenlabs_tts_speed: 1.0,
+	elevenlabs_stability: 0.5,
+	elevenlabs_similarity: 0.75,
+	elevenlabs_style: 0.0,
+	elevenlabs_speaker_boost: true
 };
+
+/**
+ * Catalog of selectable ElevenLabs TTS models ("versions"). `creditMultiplier`
+ * is credits charged per character relative to the standard models: Flash and
+ * Turbo bill at half the rate, which drives the cost estimate and the UI hints.
+ */
+export interface ElevenLabsTtsModelInfo {
+	id: string;
+	creditMultiplier: number;
+}
+
+export const ELEVENLABS_TTS_MODELS: ElevenLabsTtsModelInfo[] = [
+	{ id: 'eleven_flash_v2_5', creditMultiplier: 0.5 },
+	{ id: 'eleven_turbo_v2_5', creditMultiplier: 0.5 },
+	{ id: 'eleven_multilingual_v2', creditMultiplier: 1 },
+	{ id: 'eleven_v3', creditMultiplier: 1 }
+];
+
+export function elevenLabsModelCreditMultiplier(modelId: string): number {
+	return ELEVENLABS_TTS_MODELS.find((m) => m.id === modelId)?.creditMultiplier ?? 1;
+}
+
+export function isElevenLabsTtsModel(value: unknown): value is string {
+	return typeof value === 'string' && ELEVENLABS_TTS_MODELS.some((m) => m.id === value);
+}
 
 export function isVoiceProvider(value: unknown): value is VoiceProvider {
 	return value === 'elevenlabs' || value === 'openai_deepgram';
@@ -37,10 +72,43 @@ export function sttLanguageForVoiceCommandLanguage(language: VoiceCommandLanguag
 	return language === 'auto' ? undefined : language;
 }
 
+/** Clamp a value into [min, max], falling back to `fallback` for non-finite input. */
+export function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+	const num = typeof value === 'number' ? value : Number(value);
+	if (!Number.isFinite(num)) return fallback;
+	return Math.min(max, Math.max(min, num));
+}
+
+function toBoolean(value: unknown, fallback: boolean): boolean {
+	if (typeof value === 'boolean') return value;
+	if (value === 1 || value === '1') return true;
+	if (value === 0 || value === '0') return false;
+	return fallback;
+}
+
+/**
+ * Loose shape accepted by {@link normalizeVoiceSettings}: a raw D1 row (where the
+ * speaker-boost flag is an integer and numbers may arrive as strings) or a partial
+ * settings object from a request body.
+ */
+export interface VoiceSettingsInput {
+	voice_provider?: unknown;
+	voice_command_language?: unknown;
+	elevenlabs_voice_id?: string | null;
+	elevenlabs_tts_model?: string | null;
+	elevenlabs_stt_model?: string | null;
+	elevenlabs_tts_speed?: number | string | null;
+	elevenlabs_stability?: number | string | null;
+	elevenlabs_similarity?: number | string | null;
+	elevenlabs_style?: number | string | null;
+	elevenlabs_speaker_boost?: boolean | number | null;
+}
+
 export function normalizeVoiceSettings(
-	row: Partial<UserVoiceSettings> | null | undefined,
+	row: VoiceSettingsInput | null | undefined,
 	defaultVoiceCommandLanguage: VoiceCommandLanguage = DEFAULT_VOICE_SETTINGS.voice_command_language
 ): UserVoiceSettings {
+	const model = row?.elevenlabs_tts_model?.trim();
 	return {
 		voice_provider: isVoiceProvider(row?.voice_provider)
 			? row.voice_provider
@@ -49,7 +117,12 @@ export function normalizeVoiceSettings(
 			? row.voice_command_language
 			: defaultVoiceCommandLanguage,
 		elevenlabs_voice_id: row?.elevenlabs_voice_id?.trim() || DEFAULT_ELEVENLABS_VOICE_ID,
-		elevenlabs_tts_model: row?.elevenlabs_tts_model?.trim() || DEFAULT_ELEVENLABS_TTS_MODEL,
-		elevenlabs_stt_model: row?.elevenlabs_stt_model?.trim() || DEFAULT_ELEVENLABS_STT_MODEL
+		elevenlabs_tts_model: isElevenLabsTtsModel(model) ? model : DEFAULT_ELEVENLABS_TTS_MODEL,
+		elevenlabs_stt_model: row?.elevenlabs_stt_model?.trim() || DEFAULT_ELEVENLABS_STT_MODEL,
+		elevenlabs_tts_speed: clampNumber(row?.elevenlabs_tts_speed, 0.7, 1.2, DEFAULT_VOICE_SETTINGS.elevenlabs_tts_speed),
+		elevenlabs_stability: clampNumber(row?.elevenlabs_stability, 0, 1, DEFAULT_VOICE_SETTINGS.elevenlabs_stability),
+		elevenlabs_similarity: clampNumber(row?.elevenlabs_similarity, 0, 1, DEFAULT_VOICE_SETTINGS.elevenlabs_similarity),
+		elevenlabs_style: clampNumber(row?.elevenlabs_style, 0, 1, DEFAULT_VOICE_SETTINGS.elevenlabs_style),
+		elevenlabs_speaker_boost: toBoolean(row?.elevenlabs_speaker_boost, DEFAULT_VOICE_SETTINGS.elevenlabs_speaker_boost)
 	};
 }

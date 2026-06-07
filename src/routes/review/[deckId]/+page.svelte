@@ -51,7 +51,12 @@
 		voice_command_language: 'en',
 		elevenlabs_voice_id: 'JBFqnCBsd6RMkjVDRZzb',
 		elevenlabs_tts_model: 'eleven_flash_v2_5',
-		elevenlabs_stt_model: 'scribe_v2_realtime'
+		elevenlabs_stt_model: 'scribe_v2_realtime',
+		elevenlabs_tts_speed: 1.0,
+		elevenlabs_stability: 0.5,
+		elevenlabs_similarity: 0.75,
+		elevenlabs_style: 0.0,
+		elevenlabs_speaker_boost: true
 	});
 	let keyStatusLoading = $state(true);
 
