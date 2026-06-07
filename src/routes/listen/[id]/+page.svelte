@@ -1,114 +1,290 @@
 <script lang="ts">
+	import { onDestroy, onMount, tick } from 'svelte';
 	import { page } from '$app/stores';
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { locale, t } from '$lib/i18n';
 	import Spinner from '$lib/components/Spinner.svelte';
-	import ListenPlayer from '$lib/components/ListenPlayer.svelte';
-	import SegmentProgress from '$lib/components/SegmentProgress.svelte';
-	import { runGeneration, ListenKeyError } from '$lib/listen/client';
-	import type { ListenDocumentSummary, ListenSegmentInfo } from '$lib/listen/types';
+	import { elevenLabsModelCreditMultiplier } from '$lib/voice';
+	import type { ListenSentenceInfo, ListenSentencesResponse } from '$lib/listen/types';
 
 	let loc = $state('en');
 	locale.subscribe((v) => { loc = v; });
 
 	const docId = $derived($page.params.id ?? '');
 
-	let document = $state<ListenDocumentSummary | null>(null);
-	let segments = $state<ListenSegmentInfo[]>([]);
+	let doc = $state<ListenSentencesResponse['document'] | null>(null);
+	let sentences = $state<ListenSentenceInfo[]>([]);
+	let cachedInitially = $state<Set<number>>(new Set());
+	let listenedInSession = $state<Set<number>>(new Set());
 	let loading = $state(true);
 	let notFound = $state(false);
-	let resuming = $state(false);
-	let progressDone = $state(0);
-	let progressTotal = $state(0);
 	let errorMsg = $state('');
-	let keyMissing = $state(false);
-	let showText = $state(false);
 
-	const remaining = $derived(document ? document.segment_count - document.done_count : 0);
-	const hasSourceText = $derived(segments.some((s) => typeof s.source_text === 'string' && s.source_text.length > 0));
+	let audioEl = $state<HTMLAudioElement | null>(null);
+	let streamSrc = $state('');
+	let streamStartSeq = $state(0);
+	let playing = $state(false);
+	let curTime = $state(0); // seconds since stream start (relative to streamStartSeq)
+	let editingSeq = $state<number | null>(null);
+	let editingText = $state('');
 
-	onMount(load);
+	const totalChars = $derived(doc?.total_chars ?? 0);
+	const sentenceCount = $derived(sentences.length);
+	const multiplier = $derived(elevenLabsModelCreditMultiplier(doc?.tts_model ?? ''));
+
+	/**
+	 * Map current `audio.currentTime` (relative to the current stream's start sentence) to
+	 * the sentence currently being spoken. Uses cumulative durations (actual for cached,
+	 * estimated for uncached) so the highlight tracks even before metadata is refreshed.
+	 */
+	const activeSeq = $derived.by(() => {
+		if (!sentences.length) return 0;
+		let acc = 0;
+		for (let i = streamStartSeq; i < sentences.length; i++) {
+			const next = acc + sentences[i].duration_ms / 1000;
+			if (curTime < next) return i;
+			acc = next;
+		}
+		return sentences.length - 1;
+	});
+
+	const cachedNowCount = $derived(sentences.filter((s) => s.cached).length);
+
+	// Live "credits spent" / "credits saved" since opening the doc. Stable after refresh —
+	// uncached sentences I listened to count as spent, cached ones I listened to as saved.
+	const spentEstimate = $derived(
+		sentences
+			.filter((s) => listenedInSession.has(s.seq) && !cachedInitially.has(s.seq))
+			.reduce((sum, s) => sum + Math.ceil(s.char_count * multiplier), 0)
+	);
+	const savedEstimate = $derived(
+		sentences
+			.filter((s) => listenedInSession.has(s.seq) && cachedInitially.has(s.seq))
+			.reduce((sum, s) => sum + Math.ceil(s.char_count * multiplier), 0)
+	);
+
+	onMount(async () => {
+		await load();
+		setupMediaSession();
+		document.addEventListener('visibilitychange', onVisibility);
+	});
+
+	onDestroy(() => {
+		if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility);
+		teardownMediaSession();
+	});
 
 	async function load() {
 		loading = true;
 		notFound = false;
 		try {
-			const res = await fetch(`/api/listen/${docId}?text=1`);
-			if (res.status === 404) {
+			const res = await fetch(`/api/listen/${docId}/sentences`);
+			if (res.status === 404 || res.status === 409) {
 				notFound = true;
 				return;
 			}
 			if (!res.ok) return;
-			const data = (await res.json()) as { document: ListenDocumentSummary; segments: ListenSegmentInfo[] };
-			document = data.document;
-			segments = data.segments;
+			const data = (await res.json()) as ListenSentencesResponse;
+			doc = data.document;
+			sentences = data.sentences;
+			if (!cachedInitially.size) {
+				cachedInitially = new Set(sentences.filter((s) => s.cached).map((s) => s.seq));
+			}
 		} catch { /* ignore */ } finally {
 			loading = false;
 		}
 	}
 
-	async function resume() {
-		if (!document || resuming) return;
-		errorMsg = '';
-		keyMissing = false;
-		resuming = true;
-		progressDone = document.done_count;
-		progressTotal = document.segment_count;
+	async function refreshSentences() {
 		try {
-			await runGeneration(docId, segments, {
-				onSegmentChange: (seq, status) => {
-					segments = segments.map((s) => (s.seq === seq ? { ...s, status } : s));
-				},
-				onProgress: (done, total) => {
-					progressDone = done;
-					progressTotal = total;
-				}
+			const res = await fetch(`/api/listen/${docId}/sentences`);
+			if (!res.ok) return;
+			const data = (await res.json()) as ListenSentencesResponse;
+			doc = data.document;
+			sentences = data.sentences;
+		} catch { /* network blip ok */ }
+	}
+
+	function onVisibility() {
+		if (!document.hidden) refreshSentences();
+	}
+
+	function setupMediaSession() {
+		if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+		navigator.mediaSession.setActionHandler('play', () => togglePlay(true));
+		navigator.mediaSession.setActionHandler('pause', () => togglePlay(false));
+		navigator.mediaSession.setActionHandler('previoustrack', () => jumpTo(Math.max(0, activeSeq - 1)));
+		navigator.mediaSession.setActionHandler('nexttrack', () =>
+			jumpTo(Math.min(sentences.length - 1, activeSeq + 1))
+		);
+	}
+
+	function teardownMediaSession() {
+		if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+		try {
+			navigator.mediaSession.setActionHandler('play', null);
+			navigator.mediaSession.setActionHandler('pause', null);
+			navigator.mediaSession.setActionHandler('previoustrack', null);
+			navigator.mediaSession.setActionHandler('nexttrack', null);
+		} catch { /* no-op */ }
+	}
+
+	function updateMediaMetadata() {
+		if (typeof navigator === 'undefined' || !('mediaSession' in navigator) || !doc) return;
+		try {
+			navigator.mediaSession.metadata = new MediaMetadata({
+				title: doc.title || t('listen.title'),
+				artist: 'AnkiTalk',
+				album: sentences[activeSeq]?.text.slice(0, 60) ?? ''
 			});
-		} catch (err) {
-			if (err instanceof ListenKeyError) {
-				keyMissing = true;
-				errorMsg = t('listen.noKey');
-			} else {
-				errorMsg = t('listen.error');
+			navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
+		} catch { /* no-op */ }
+	}
+
+	async function startStream(fromSeq: number) {
+		streamStartSeq = fromSeq;
+		curTime = 0;
+		streamSrc = `/api/listen/${docId}/stream?from=${fromSeq}`;
+		await tick();
+		if (!audioEl) return;
+		audioEl.load();
+		try {
+			await audioEl.play();
+			playing = true;
+			updateMediaMetadata();
+		} catch {
+			playing = false;
+		}
+	}
+
+	async function togglePlay(force?: boolean) {
+		if (!sentences.length) return;
+		const wantPlay = force ?? !playing;
+		if (wantPlay) {
+			if (!streamSrc) {
+				await startStream(streamStartSeq);
+				return;
 			}
-		} finally {
-			resuming = false;
-			await load();
+			try {
+				await audioEl?.play();
+				playing = true;
+				updateMediaMetadata();
+			} catch {
+				playing = false;
+			}
+		} else {
+			audioEl?.pause();
+			playing = false;
+			updateMediaMetadata();
+			refreshSentences();
+		}
+	}
+
+	async function jumpTo(seq: number) {
+		if (!sentences.length) return;
+		const clamped = Math.max(0, Math.min(sentences.length - 1, seq));
+		await startStream(clamped);
+	}
+
+	function onTimeUpdate() {
+		if (!audioEl) return;
+		curTime = audioEl.currentTime;
+		if (!listenedInSession.has(activeSeq)) {
+			const next = new Set(listenedInSession);
+			next.add(activeSeq);
+			listenedInSession = next;
+		}
+		updateMediaMetadata();
+	}
+
+	function onEnded() {
+		playing = false;
+		updateMediaMetadata();
+		refreshSentences();
+	}
+
+	function onAudioError() {
+		errorMsg = t('listen.streamError');
+		playing = false;
+	}
+
+	function startEdit(seq: number) {
+		editingSeq = seq;
+		editingText = sentences[seq]?.text ?? '';
+	}
+
+	function cancelEdit() {
+		editingSeq = null;
+		editingText = '';
+	}
+
+	async function saveEdit(seq: number) {
+		const next = editingText.trim();
+		if (!next || next === sentences[seq]?.text) {
+			cancelEdit();
+			return;
+		}
+		try {
+			const res = await fetch(`/api/listen/${docId}/sentences/${seq}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ text: next })
+			});
+			if (!res.ok) {
+				errorMsg = t('listen.editError');
+				return;
+			}
+			const data = (await res.json()) as { text: string; char_count: number; sentence_hash: string };
+			sentences = sentences.map((s) =>
+				s.seq === seq
+					? { ...s, text: data.text, char_count: data.char_count, sentence_hash: data.sentence_hash, cached: false }
+					: s
+			);
+			const init = new Set(cachedInitially);
+			init.delete(seq);
+			cachedInitially = init;
+			cancelEdit();
+		} catch {
+			errorMsg = t('listen.editError');
 		}
 	}
 
 	async function rename() {
-		if (!document) return;
-		const next = prompt(t('listen.rename'), document.title);
+		if (!doc) return;
+		const next = prompt(t('listen.rename'), doc.title);
 		if (!next || !next.trim()) return;
 		const res = await fetch(`/api/listen/${docId}`, {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: next.trim() })
 		});
-		if (res.ok && document) document.title = next.trim();
+		if (res.ok && doc) doc = { ...doc, title: next.trim() };
 	}
 
 	async function remove() {
-		if (!document) return;
-		if (!confirm(t('listen.deleteConfirm', { title: document.title }))) return;
+		if (!doc) return;
+		if (!confirm(t('listen.deleteConfirm', { title: doc.title }))) return;
 		const res = await fetch(`/api/listen/${docId}`, { method: 'DELETE' });
 		if (res.ok) await goto('/listen');
+	}
+
+	function expiryDays(expiresAt: string): number {
+		const ms = new Date(expiresAt.replace(' ', 'T') + 'Z').getTime() - Date.now();
+		return Math.max(0, Math.ceil(ms / 86_400_000));
 	}
 </script>
 
 {#key loc}
-<div class="doc-page">
+<div class="reader">
 	<a href="/listen" class="back-link">&larr; {t('listen.back')}</a>
 
 	{#if loading}
 		<div class="center"><Spinner size={24} /></div>
-	{:else if notFound || !document}
+	{:else if notFound || !doc}
 		<p class="muted">{t('listen.notFound')}</p>
 	{:else}
 		<div class="doc-head">
-			<h1>{document.title}</h1>
+			<h1>{doc.title}</h1>
 			<div class="head-actions">
 				<button class="text-btn" onclick={rename}>{t('listen.rename')}</button>
 				<button class="text-btn danger" onclick={remove}>{t('listen.delete')}</button>
@@ -116,59 +292,80 @@
 		</div>
 
 		<div class="doc-sub">
-			<span class="status status--{document.status}">{t(`listen.status.${document.status}`)}</span>
-			<span>{t('listen.charsLabel', { count: document.total_chars.toLocaleString() })}</span>
-			<span>{t('listen.credits', { count: document.estimated_credits.toLocaleString() })}</span>
+			<span>{t('listen.cachedCount', { cached: cachedNowCount, total: sentenceCount })}</span>
+			<span>{t('listen.charsLabel', { count: totalChars.toLocaleString() })}</span>
+			<span class="expiry">{t('listen.expiresIn', { days: expiryDays(doc.expires_at) })}</span>
 		</div>
 
-		{#if document.done_count > 0}
-			<ListenPlayer documentId={docId} title={document.title} {segments} />
-		{/if}
+		<p class="legend">
+			<span class="dot dot--cached"></span> {t('listen.legendCached')}
+			<span class="dot dot--listened"></span> {t('listen.legendListened')}
+			<span class="dot dot--default"></span> {t('listen.legendDefault')}
+		</p>
 
-		{#if remaining > 0}
-			{#if resuming}
-				<div class="progress-block">
-					<SegmentProgress segments={segments.map((s) => ({ seq: s.seq, status: s.status }))} />
-					<span class="progress-text">{t('listen.progress', { done: progressDone, total: progressTotal })}</span>
-				</div>
-				<p class="hint">{t('listen.keepOpen')}</p>
-			{:else}
-				<button class="resume-btn" onclick={resume}>{t('listen.resume')} ({document.done_count}/{document.segment_count})</button>
-			{/if}
-		{/if}
+		<div class="text-body">
+			{#each sentences as s (s.seq)}
+				{#if editingSeq === s.seq}
+					<div class="sentence-edit">
+						<textarea class="edit-input" bind:value={editingText} rows="3"></textarea>
+						<div class="edit-actions">
+							<button class="edit-btn" onclick={() => saveEdit(s.seq)}>{t('listen.saveEdit')}</button>
+							<button class="edit-btn ghost" onclick={cancelEdit}>{t('listen.cancel')}</button>
+						</div>
+					</div>
+				{:else}
+					<span class="sentence-wrap"><button
+						class="sentence"
+						class:cached={s.cached}
+						class:listened={listenedInSession.has(s.seq) && !s.cached}
+						class:active={s.seq === activeSeq && playing}
+						onclick={() => jumpTo(s.seq)}
+						title={t('listen.tapToJump')}
+					>{s.text}</button><button
+						class="edit-pencil"
+						aria-label={t('listen.edit')}
+						onclick={() => startEdit(s.seq)}
+					>✎</button> </span>
+				{/if}
+			{/each}
+		</div>
 
-		{#if keyMissing}
-			<p class="error-text">{t('listen.noKey')} <a href="/settings">{t('review.goToSettings')}</a></p>
-		{:else if errorMsg}
+		{#if errorMsg}
 			<p class="error-text">{errorMsg}</p>
 		{/if}
 
-		{#if hasSourceText}
-			<div class="text-section">
-				<button
-					class="text-toggle"
-					type="button"
-					aria-expanded={showText}
-					onclick={() => (showText = !showText)}
-				>
-					<span>{showText ? t('listen.hideText') : t('listen.showText')}</span>
-					<span class="chevron">{showText ? '−' : '+'}</span>
-				</button>
-				{#if showText}
-					<div class="source-text">
-						{#each segments as s (s.seq)}
-							{#if s.source_text}<p>{s.source_text}</p>{/if}
-						{/each}
-					</div>
-				{/if}
+		<div class="player-bar">
+			<button class="skip-btn" onclick={() => jumpTo(activeSeq - 1)} aria-label={t('listen.previous')} disabled={activeSeq <= 0}>⏮</button>
+			<button class="play-btn" onclick={() => togglePlay()} aria-label={playing ? t('listen.pause') : t('listen.play')}>
+				{#if playing}❚❚{:else}▶{/if}
+			</button>
+			<button class="skip-btn" onclick={() => jumpTo(activeSeq + 1)} aria-label={t('listen.next')} disabled={activeSeq >= sentences.length - 1}>⏭</button>
+			<div class="progress">
+				<div class="progress-line">{activeSeq + 1} / {sentenceCount}</div>
+				<div class="bar">
+					<div class="fill" style={`width:${((activeSeq + 1) / sentenceCount) * 100}%`}></div>
+				</div>
+				<div class="credit-line">
+					<span class="spent">−{spentEstimate.toLocaleString()} {t('listen.creditsShort')}</span>
+					<span class="saved">{t('listen.savedLabel', { count: savedEstimate.toLocaleString() })}</span>
+				</div>
 			</div>
-		{/if}
+		</div>
+
+		<audio
+			bind:this={audioEl}
+			src={streamSrc}
+			ontimeupdate={onTimeUpdate}
+			onended={onEnded}
+			onerror={onAudioError}
+			preload="none"
+		></audio>
 	{/if}
 </div>
 {/key}
 
 <style>
-	.doc-page { max-width: 640px; margin: 0 auto; }
+	.reader { max-width: 720px; margin: 0 auto; padding-bottom: 7rem; }
 	.back-link { color: #a8a8b8; text-decoration: none; font-size: 0.9rem; }
 	.back-link:hover { color: #e0e0ff; }
 	.center { display: flex; justify-content: center; padding: 2rem 0; color: #8080c0; }
@@ -181,53 +378,118 @@
 	.text-btn:hover { color: #e0e0ff; }
 	.text-btn.danger:hover { color: #e07070; }
 
-	.doc-sub { display: flex; flex-wrap: wrap; gap: 0.5rem 0.9rem; align-items: center; font-size: 0.8rem; color: #8d8db0; margin-bottom: 1rem; }
-	.status { font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 99px; font-size: 0.72rem; }
-	.status--complete { background: #1a3a2a; color: #5aba84; }
-	.status--generating, .status--pending { background: #2a2a4a; color: #9a9ac0; }
-	.status--partial { background: #3a3320; color: #c8a85a; }
-	.status--failed { background: #3a1a1a; color: #cc6666; }
+	.doc-sub { display: flex; flex-wrap: wrap; gap: 0.5rem 0.9rem; align-items: center; font-size: 0.8rem; color: #8d8db0; margin-bottom: 0.6rem; }
+	.expiry { color: #6a6a8a; }
 
-	.resume-btn {
-		margin-top: 1rem; width: 100%; padding: 0.7rem;
-		background: #3a3a6e; border: 1px solid #5a5a8e; color: #e0e0ff;
-		border-radius: 8px; font-size: 0.92rem; font-weight: 600; cursor: pointer; touch-action: manipulation;
+	.legend {
+		display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1rem;
+		font-size: 0.72rem; color: #7a7a9a; margin: 0 0 1rem;
 	}
-	.resume-btn:hover { background: #4a4a8e; }
+	.dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; display: inline-block; margin-right: 0.3rem; vertical-align: middle; }
+	.dot--cached { background: #2a7a4c; }
+	.dot--listened { background: #4a9870; }
+	.dot--default { background: #3a3a5e; }
 
-	.progress-block { margin-top: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
-	.progress-text { font-size: 0.8rem; color: #a0a0c0; align-self: flex-end; }
-	.hint { font-size: 0.78rem; color: #7a7a9a; margin: 0.4rem 0 0; }
-	.error-text { color: #cc6666; font-size: 0.85rem; margin: 0.6rem 0 0; }
-	.error-text a { color: #e07070; }
-
-	.text-section {
-		margin-top: 1.5rem;
+	.text-body {
 		background: #1a1a2e;
 		border: 1px solid #2a2a4a;
-		border-radius: 10px;
-		padding: 0.85rem 1rem;
+		border-radius: 12px;
+		padding: 1rem 1.05rem;
+		font-size: 1rem;
+		line-height: 1.8;
+		color: #d6d6f2;
 	}
-	.text-toggle {
-		display: flex; align-items: center; justify-content: space-between; width: 100%;
-		background: none; border: none; cursor: pointer; color: #c0c0e0;
-		font-size: 0.92rem; font-weight: 600; padding: 0;
+
+	.sentence-wrap { display: inline; }
+
+	.sentence {
+		display: inline;
+		background: none;
+		border: none;
+		padding: 0.1rem 0.1rem;
+		margin: 0;
+		font: inherit;
+		color: inherit;
+		text-align: left;
+		cursor: pointer;
+		border-radius: 4px;
+		border-bottom: 2px solid transparent;
+		transition: background 0.15s, border-color 0.15s;
+		-webkit-tap-highlight-color: transparent;
 	}
-	.text-toggle:hover { color: #e0e0ff; }
-	.chevron { font-size: 1.2rem; color: #8d8db0; line-height: 1; }
-	.source-text {
-		margin-top: 0.75rem;
-		max-height: 50vh;
-		overflow-y: auto;
-		font-size: 0.92rem;
-		line-height: 1.55;
-		color: #d0d0e6;
-		-webkit-overflow-scrolling: touch;
+	.sentence:hover { background: rgba(90, 90, 142, 0.18); }
+
+	.sentence.listened { border-bottom-color: rgba(90, 186, 132, 0.55); }
+	.sentence.cached { border-bottom-color: #2a7a4c; }
+	.sentence.active {
+		background: rgba(200, 168, 90, 0.22);
+		border-bottom-color: #c8a85a;
+		animation: pulse 1.4s ease-in-out infinite;
 	}
-	.source-text p {
-		margin: 0 0 0.85rem;
-		white-space: pre-wrap;
-		overflow-wrap: anywhere;
+
+	@keyframes pulse {
+		0%, 100% { background-color: rgba(200, 168, 90, 0.22); }
+		50% { background-color: rgba(200, 168, 90, 0.38); }
 	}
-	.source-text p:last-child { margin-bottom: 0; }
+
+	.edit-pencil {
+		background: none; border: none; color: #5a5a7a; font-size: 0.78rem;
+		margin-left: 0.05rem; padding: 0 0.15rem; cursor: pointer; opacity: 0.4;
+	}
+	.edit-pencil:hover { opacity: 1; color: #b0b0d0; }
+
+	.sentence-edit {
+		display: block;
+		background: #12121f;
+		border: 1px solid #5a5a8e;
+		border-radius: 8px;
+		padding: 0.5rem;
+		margin: 0.4rem 0;
+	}
+	.edit-input {
+		width: 100%; box-sizing: border-box;
+		background: #1a1a2e; border: 1px solid #3a3a5e; border-radius: 6px;
+		color: #e0e0ff; font: inherit; padding: 0.4rem 0.55rem; resize: vertical;
+	}
+	.edit-actions { display: flex; gap: 0.4rem; margin-top: 0.4rem; }
+	.edit-btn {
+		padding: 0.35rem 0.7rem; border-radius: 6px; border: 1px solid #5a5a8e;
+		background: #3a3a6e; color: #e0e0ff; font-size: 0.82rem; cursor: pointer; font-weight: 600;
+	}
+	.edit-btn.ghost { background: #22223a; color: #a8a8c8; }
+
+	.error-text { color: #cc6666; font-size: 0.85rem; margin: 0.6rem 0 0; }
+
+	.player-bar {
+		position: fixed; left: 0; right: 0; bottom: 0;
+		background: #16162a;
+		border-top: 1px solid #2a2a4a;
+		padding: 0.7rem 0.9rem calc(0.7rem + env(safe-area-inset-bottom));
+		display: flex; align-items: center; gap: 0.6rem;
+		z-index: 20;
+	}
+
+	.play-btn {
+		flex-shrink: 0;
+		width: 3rem; height: 3rem; border-radius: 50%;
+		border: 1px solid #5a5a8e; background: #3a3a6e; color: #e0e0ff;
+		font-size: 1rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
+		touch-action: manipulation;
+	}
+	.skip-btn {
+		flex-shrink: 0;
+		width: 2.2rem; height: 2.2rem; border-radius: 50%;
+		border: 1px solid #3a3a5e; background: #22223a; color: #c0c0e0;
+		font-size: 0.85rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
+		touch-action: manipulation;
+	}
+	.skip-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+	.progress { flex: 1; display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+	.progress-line { font-size: 0.78rem; color: #a0a0c0; }
+	.bar { height: 5px; background: #2a2a4a; border-radius: 99px; overflow: hidden; }
+	.fill { height: 100%; background: #6b6bc8; transition: width 0.15s linear; }
+	.credit-line { display: flex; gap: 0.7rem; font-size: 0.7rem; color: #7a7a9a; }
+	.spent { color: #c8a85a; }
+	.saved { color: #5aba84; }
 </style>

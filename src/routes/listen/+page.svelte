@@ -3,13 +3,11 @@
 	import { goto } from '$app/navigation';
 	import { locale, t } from '$lib/i18n';
 	import Spinner from '$lib/components/Spinner.svelte';
-	import SegmentProgress from '$lib/components/SegmentProgress.svelte';
-	import { chunkText } from '$lib/listen/chunk';
+	import { splitIntoSentences } from '$lib/listen/sentences';
 	import { estimateCredits } from '$lib/listen/estimate';
-	import { runGeneration, ListenKeyError } from '$lib/listen/client';
 	import { LISTEN_LANGUAGES } from '$lib/listen/languages';
 	import { ELEVENLABS_TTS_MODELS } from '$lib/voice';
-	import type { ListenDocumentSummary, SegmentStatus } from '$lib/listen/types';
+	import type { ListenDocumentSummary } from '$lib/listen/types';
 
 	let loc = $state('en');
 	locale.subscribe((v) => { loc = v; });
@@ -25,17 +23,13 @@
 	let documents = $state<ListenDocumentSummary[]>([]);
 	let loadingHistory = $state(true);
 
-	let generating = $state(false);
-	let progressDone = $state(0);
-	let progressTotal = $state(0);
-	let segmentStatuses = $state<{ seq: number; status: SegmentStatus }[]>([]);
+	let submitting = $state(false);
 	let errorMsg = $state('');
-	let keyMissing = $state(false);
 	let duplicateDocId = $state<string | null>(null);
 
 	const charCount = $derived(text.length);
-	const segments = $derived(text.trim() ? chunkText(text) : []);
-	const credits = $derived(estimateCredits(segments.reduce((n, c) => n + c.length, 0), modelId));
+	const sentences = $derived(text.trim() ? splitIntoSentences(text) : []);
+	const credits = $derived(estimateCredits(sentences.reduce((n, c) => n + c.length, 0), modelId));
 	const insufficient = $derived(balanceRemaining !== null && charCount > balanceRemaining);
 
 	onMount(async () => {
@@ -80,16 +74,11 @@
 		input.value = '';
 	}
 
-	async function generate(force = false) {
-		if (!text.trim() || generating) return;
+	async function submit(force = false) {
+		if (!text.trim() || submitting) return;
 		errorMsg = '';
-		keyMissing = false;
 		duplicateDocId = null;
-		generating = true;
-		progressDone = 0;
-		progressTotal = segments.length;
-		segmentStatuses = Array.from({ length: segments.length }, (_, i) => ({ seq: i, status: 'pending' as SegmentStatus }));
-
+		submitting = true;
 		try {
 			const res = await fetch('/api/listen', {
 				method: 'POST',
@@ -100,7 +89,7 @@
 				errorMsg = t('listen.error');
 				return;
 			}
-			const data = (await res.json()) as { id?: string; segmentCount?: number; duplicate?: boolean; existingDocumentId?: string };
+			const data = (await res.json()) as { id?: string; duplicate?: boolean; existingDocumentId?: string };
 			if (data.duplicate && data.existingDocumentId) {
 				duplicateDocId = data.existingDocumentId;
 				return;
@@ -109,28 +98,11 @@
 				errorMsg = t('listen.error');
 				return;
 			}
-			progressTotal = data.segmentCount ?? segments.length;
-			segmentStatuses = Array.from({ length: progressTotal }, (_, i) => ({ seq: i, status: 'pending' as SegmentStatus }));
-			await runGeneration(data.id, segmentStatuses, {
-				onSegmentChange: (seq, status) => {
-					segmentStatuses = segmentStatuses.map((s) => (s.seq === seq ? { ...s, status } : s));
-				},
-				onProgress: (done, total) => {
-					progressDone = done;
-					progressTotal = total;
-				}
-			});
 			await goto(`/listen/${data.id}`);
-		} catch (err) {
-			if (err instanceof ListenKeyError) {
-				keyMissing = true;
-				errorMsg = t('listen.noKey');
-			} else {
-				errorMsg = t('listen.error');
-			}
-			await loadHistory();
+		} catch {
+			errorMsg = t('listen.error');
 		} finally {
-			generating = false;
+			submitting = false;
 		}
 	}
 
@@ -150,7 +122,7 @@
 <div class="listen-page">
 	<a href="/" class="back-link">&larr; {t('appSettings.dashboard')}</a>
 	<h1>{t('listen.title')}</h1>
-	<p class="subtitle">{t('listen.subtitle')}</p>
+	<p class="subtitle">{t('listen.subtitleV2')}</p>
 
 	<section class="card">
 		<label class="field-label" for="listen-text">{t('listen.inputLabel')}</label>
@@ -160,27 +132,27 @@
 			rows="8"
 			placeholder={t('listen.pastePlaceholder')}
 			bind:value={text}
-			disabled={generating}
+			disabled={submitting}
 		></textarea>
 
 		<div class="row">
-			<label class="upload-btn" class:disabled={generating}>
+			<label class="upload-btn" class:disabled={submitting}>
 				{t('listen.uploadTxt')}
-				<input type="file" accept=".txt,text/plain" onchange={handleFile} hidden disabled={generating} />
+				<input type="file" accept=".txt,text/plain" onchange={handleFile} hidden disabled={submitting} />
 			</label>
 			<input
 				class="title-input"
 				type="text"
 				placeholder={t('listen.titlePlaceholder')}
 				bind:value={title}
-				disabled={generating}
+				disabled={submitting}
 			/>
 		</div>
 
 		<div class="row override">
 			<label class="override-field">
 				<span>{t('listen.model')}</span>
-				<select bind:value={modelId} disabled={generating}>
+				<select bind:value={modelId} disabled={submitting}>
 					{#each ELEVENLABS_TTS_MODELS as m}
 						<option value={m.id}>{t(`settings.elevenlabs.model.${m.id}`)}</option>
 					{/each}
@@ -189,7 +161,7 @@
 			{#if voices.length}
 				<label class="override-field">
 					<span>{t('listen.voice')}</span>
-					<select bind:value={voiceId} disabled={generating}>
+					<select bind:value={voiceId} disabled={submitting}>
 						{#each voices as v}
 							<option value={v.voiceId}>{v.name}</option>
 						{/each}
@@ -198,7 +170,7 @@
 			{/if}
 			<label class="override-field">
 				<span>{t('listen.language')}</span>
-				<select bind:value={language} disabled={generating}>
+				<select bind:value={language} disabled={submitting}>
 					<option value="auto">{t('listen.languageAuto')}</option>
 					{#each LISTEN_LANGUAGES as lang}
 						<option value={lang.code}>{lang.name}</option>
@@ -211,32 +183,24 @@
 		{#if charCount > 0}
 			<div class="estimate" class:warn={insufficient}>
 				<span>{t('listen.characters', { count: charCount.toLocaleString() })}</span>
-				<span>{t('listen.segments', { count: segments.length })}</span>
-				<span class="credits">{t('listen.credits', { count: credits.toLocaleString() })}</span>
+				<span>{t('listen.sentenceCount', { count: sentences.length })}</span>
+				<span class="credits">{t('listen.creditsMax', { count: credits.toLocaleString() })}</span>
 				{#if balanceRemaining !== null}
 					<span class="balance">{t('listen.balanceRemaining', { count: balanceRemaining.toLocaleString() })}</span>
 				{/if}
 			</div>
+			<p class="hint">{t('listen.payAsYouHear')}</p>
 			{#if insufficient}
 				<p class="warn-text">{t('listen.insufficient')}</p>
 			{/if}
 		{/if}
 
-		{#if generating}
-			<div class="progress-block">
-				<SegmentProgress segments={segmentStatuses} />
-				<span class="progress-text">{t('listen.progress', { done: progressDone, total: progressTotal })}</span>
-			</div>
-			<p class="hint">{t('listen.keepOpen')}</p>
-		{:else}
-			<button class="generate-btn" onclick={() => generate(false)} disabled={!text.trim()}>
-				{t('listen.generate')}
-			</button>
-		{/if}
+		<button class="generate-btn" onclick={() => submit(false)} disabled={!text.trim() || submitting}>
+			{#if submitting}<Spinner size={14} />{/if}
+			{submitting ? t('listen.preparing') : t('listen.openReader')}
+		</button>
 
-		{#if keyMissing}
-			<p class="error-text">{t('listen.noKey')} <a href="/settings">{t('review.goToSettings')}</a></p>
-		{:else if errorMsg}
+		{#if errorMsg}
 			<p class="error-text">{errorMsg}</p>
 		{/if}
 	</section>
@@ -249,7 +213,7 @@
 				<div class="modal-actions">
 					<a class="btn-secondary" href={`/listen/${duplicateDocId}`}>{t('listen.openExisting')}</a>
 					<button class="btn-secondary" onclick={() => (duplicateDocId = null)}>{t('listen.cancel')}</button>
-					<button class="btn-primary" onclick={() => generate(true)}>{t('listen.generateAnyway')}</button>
+					<button class="btn-primary" onclick={() => submit(true)}>{t('listen.generateAnyway')}</button>
 				</div>
 			</div>
 		</div>
@@ -268,11 +232,8 @@
 						<a class="doc-link" href={`/listen/${doc.id}`}>
 							<span class="doc-title">{doc.title}</span>
 							<span class="doc-meta">
-								<span class="status status--{doc.status}">{t(`listen.status.${doc.status}`)}</span>
-								{#if doc.status !== 'complete'}
-									<span>{doc.done_count}/{doc.segment_count}</span>
-								{/if}
-								<span>{t('listen.credits', { count: doc.estimated_credits.toLocaleString() })}</span>
+								<span>{t('listen.cachedCount', { cached: doc.done_count, total: doc.segment_count })}</span>
+								<span>{t('listen.charsLabel', { count: doc.total_chars.toLocaleString() })}</span>
 								<span class="expiry">{t('listen.expiresIn', { days: expiryDays(doc.expires_at) })}</span>
 							</span>
 						</a>
@@ -377,6 +338,7 @@
 	.estimate .credits { color: #8b8bea; font-weight: 600; }
 	.estimate .balance { color: #6a6a8a; margin-left: auto; }
 	.warn-text { color: #cc6666; font-size: 0.82rem; margin: 0.4rem 0 0; }
+	.hint { font-size: 0.78rem; color: #7a7a9a; margin: 0.4rem 0 0; line-height: 1.4; }
 
 	.generate-btn {
 		margin-top: 0.85rem;
@@ -390,16 +352,15 @@
 		font-weight: 600;
 		cursor: pointer;
 		touch-action: manipulation;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
 	}
 	.generate-btn:hover:not(:disabled) { background: #4a4a8e; }
 	.generate-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
-	.progress-block { margin-top: 0.85rem; display: flex; flex-direction: column; gap: 0.5rem; }
-	.progress-text { font-size: 0.8rem; color: #a0a0c0; white-space: nowrap; align-self: flex-end; }
-	.hint { font-size: 0.78rem; color: #7a7a9a; margin: 0.4rem 0 0; }
-
 	.error-text { color: #cc6666; font-size: 0.85rem; margin: 0.6rem 0 0; }
-	.error-text a { color: #e07070; }
 
 	.history-title { font-size: 1rem; color: #b0b0d0; margin: 0 0 0.75rem; }
 	.center { display: flex; justify-content: center; padding: 1rem 0; color: #8080c0; }
@@ -420,12 +381,6 @@
 	.doc-title { font-size: 0.95rem; font-weight: 600; color: #dadaff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.doc-meta { display: flex; flex-wrap: wrap; gap: 0.4rem 0.7rem; font-size: 0.76rem; color: #8d8db0; align-items: center; }
 	.expiry { color: #6a6a8a; }
-
-	.status { font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 99px; font-size: 0.72rem; }
-	.status--complete { background: #1a3a2a; color: #5aba84; }
-	.status--generating, .status--pending { background: #2a2a4a; color: #9a9ac0; }
-	.status--partial { background: #3a3320; color: #c8a85a; }
-	.status--failed { background: #3a1a1a; color: #cc6666; }
 
 	.doc-action {
 		flex-shrink: 0;
