@@ -189,6 +189,7 @@ export function estimateMp3DurationMs(byteSize: number): number {
 
 /** Rough estimate for uncached sentences so the UI has *something* before generation. */
 export function estimateDurationMsFromChars(charCount: number, speed = 1): number {
-	// ~12 chars/sec for natural speech; speed-adjusted.
-	return Math.round(((charCount / 12) * 1000) / Math.max(0.5, Math.min(2, speed)));
+	// ~15 chars/sec for Flash v2.5 at speed 1.0; refreshed to actual once each sentence
+	// is cached (the client polls the metadata endpoint while playing).
+	return Math.round(((charCount / 15) * 1000) / Math.max(0.5, Math.min(2, speed)));
 }

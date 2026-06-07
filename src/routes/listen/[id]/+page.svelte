@@ -27,6 +27,7 @@
 	let curTime = $state(0); // seconds since stream start (relative to streamStartSeq)
 	let editingSeq = $state<number | null>(null);
 	let editingText = $state('');
+	let pollHandle: ReturnType<typeof setInterval> | null = null;
 
 	const totalChars = $derived(doc?.total_chars ?? 0);
 	const sentenceCount = $derived(sentences.length);
@@ -71,8 +72,29 @@
 
 	onDestroy(() => {
 		if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility);
+		stopPolling();
 		teardownMediaSession();
 	});
+
+	/**
+	 * Refresh sentence metadata (cache flags + actual durations) while playing. Browsers
+	 * buffer the audio stream aggressively, so a few seconds in many sentences ahead of
+	 * playback are already generated and cached. Polling lets the highlight catch up to
+	 * real durations once they're known.
+	 */
+	function startPolling() {
+		if (pollHandle) return;
+		pollHandle = setInterval(() => {
+			if (!document.hidden) refreshSentences();
+		}, 3000);
+	}
+
+	function stopPolling() {
+		if (pollHandle) {
+			clearInterval(pollHandle);
+			pollHandle = null;
+		}
+	}
 
 	async function load() {
 		loading = true;
@@ -151,9 +173,28 @@
 		try {
 			await audioEl.play();
 			playing = true;
+			startPolling();
 			updateMediaMetadata();
 		} catch {
 			playing = false;
+		}
+	}
+
+	/**
+	 * Hard-close the server stream (set src=''  + load) so the worker loop doesn't keep
+	 * generating sentences past the user's pause point. Without this, browsers buffer
+	 * 30–60s ahead of playback and the server happily burns credits filling that buffer.
+	 */
+	function closeStream() {
+		streamSrc = '';
+		if (audioEl) {
+			audioEl.pause();
+			audioEl.removeAttribute('src');
+			try {
+				audioEl.load();
+			} catch {
+				/* no-op */
+			}
 		}
 	}
 
@@ -161,20 +202,23 @@
 		if (!sentences.length) return;
 		const wantPlay = force ?? !playing;
 		if (wantPlay) {
+			// After a pause the stream was closed; reopen from where we left off.
 			if (!streamSrc) {
-				await startStream(streamStartSeq);
+				await startStream(activeSeq);
 				return;
 			}
 			try {
 				await audioEl?.play();
 				playing = true;
+				startPolling();
 				updateMediaMetadata();
 			} catch {
 				playing = false;
 			}
 		} else {
-			audioEl?.pause();
 			playing = false;
+			stopPolling();
+			closeStream();
 			updateMediaMetadata();
 			refreshSentences();
 		}
@@ -199,6 +243,7 @@
 
 	function onEnded() {
 		playing = false;
+		stopPolling();
 		updateMediaMetadata();
 		refreshSentences();
 	}
@@ -206,6 +251,7 @@
 	function onAudioError() {
 		errorMsg = t('listen.streamError');
 		playing = false;
+		stopPolling();
 	}
 
 	function startEdit(seq: number) {
@@ -386,8 +432,8 @@
 		font-size: 0.72rem; color: #7a7a9a; margin: 0 0 1rem;
 	}
 	.dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; display: inline-block; margin-right: 0.3rem; vertical-align: middle; }
-	.dot--cached { background: #2a7a4c; }
-	.dot--listened { background: #4a9870; }
+	.dot--cached { background: #3aa86c; }
+	.dot--listened { background: #7a8aa8; }
 	.dot--default { background: #3a3a5e; }
 
 	.text-body {
@@ -419,17 +465,17 @@
 	}
 	.sentence:hover { background: rgba(90, 90, 142, 0.18); }
 
-	.sentence.listened { border-bottom-color: rgba(90, 186, 132, 0.55); }
-	.sentence.cached { border-bottom-color: #2a7a4c; }
-	.sentence.active {
-		background: rgba(200, 168, 90, 0.22);
-		border-bottom-color: #c8a85a;
-		animation: pulse 1.4s ease-in-out infinite;
+	/* Listened-but-not-cached: dotted slate underline so it's never confused with the
+	   solid green of cached sentences. */
+	.sentence.listened {
+		border-bottom: 2px dotted #7a8aa8;
 	}
-
-	@keyframes pulse {
-		0%, 100% { background-color: rgba(200, 168, 90, 0.22); }
-		50% { background-color: rgba(200, 168, 90, 0.38); }
+	.sentence.cached {
+		border-bottom: 2px solid #3aa86c;
+	}
+	.sentence.active {
+		background: rgba(200, 168, 90, 0.28);
+		border-bottom-color: #c8a85a;
 	}
 
 	.edit-pencil {
