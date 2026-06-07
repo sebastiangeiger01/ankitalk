@@ -5,11 +5,33 @@ export interface ChunkOptions {
 
 const DEFAULT_MAX_CHARS = 4500;
 
-/** Split a paragraph into sentences, keeping terminators (covers EN + DE punctuation). */
+/**
+ * Split a paragraph into sentences without losing any content. A terminator only ends a
+ * sentence when followed by whitespace or end-of-string — so decimals ("3.14"), version
+ * numbers, abbreviations and the like stay intact.
+ */
 function splitSentences(text: string): string[] {
-	const matches = text.match(/[^.!?。！？]+[.!?。！？]+(?=\s|$)|[^.!?。！？]+$/g);
-	if (!matches) return [text];
-	return matches.map((s) => s.trim()).filter(Boolean);
+	const out: string[] = [];
+	const len = text.length;
+	let start = 0;
+
+	for (let i = 0; i < len; i++) {
+		if (!/[.!?。！？]/.test(text[i])) continue;
+
+		// Consume any run of terminators (e.g. "?!" or "…").
+		let j = i;
+		while (j + 1 < len && /[.!?。！？]/.test(text[j + 1])) j++;
+
+		const next = j + 1 < len ? text[j + 1] : undefined;
+		if (next === undefined || /\s/.test(next)) {
+			out.push(text.slice(start, j + 1));
+			start = j + 1;
+		}
+		i = j;
+	}
+
+	if (start < len) out.push(text.slice(start));
+	return out.map((s) => s.trim()).filter(Boolean);
 }
 
 function hardSlice(text: string, maxChars: number): string[] {
@@ -77,4 +99,18 @@ export function chunkText(text: string, opts?: ChunkOptions): string[] {
 	const normalized = text.replace(/\r\n?/g, '\n').trim();
 	if (!normalized) return [];
 	return splitToChunks(normalized, maxChars);
+}
+
+/**
+ * Throws if the chunks taken together do not cover the non-whitespace content of the input.
+ * Belt-and-suspenders to prevent a chunker bug from silently burning credits on incomplete
+ * audio (as happened once with a buggy sentence regex).
+ */
+export function assertChunkCoverage(original: string, chunks: string[]): void {
+	const strip = (s: string) => s.replace(/\s+/g, '');
+	const left = strip(original);
+	const right = strip(chunks.join(' '));
+	if (left !== right) {
+		throw new Error(`chunker dropped or altered content (${left.length} → ${right.length} chars)`);
+	}
 }

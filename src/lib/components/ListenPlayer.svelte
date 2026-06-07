@@ -14,12 +14,17 @@
 		segments: ListenSegmentInfo[];
 	} = $props();
 
-	const playable = $derived(
-		segments
-			.filter((s) => s.status === 'done')
-			.map((s) => s.seq)
-			.sort((a, b) => a - b)
-	);
+	// Single-track UX: only play contiguous done segments from the start so the audio never
+	// jumps over a still-generating gap.
+	const playable = $derived.by(() => {
+		const sorted = [...segments].sort((a, b) => a.seq - b.seq);
+		const out: number[] = [];
+		for (const s of sorted) {
+			if (s.status === 'done') out.push(s.seq);
+			else break;
+		}
+		return out;
+	});
 	const total = $derived(playable.length);
 
 	let audioEl = $state<HTMLAudioElement | null>(null);

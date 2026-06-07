@@ -3,12 +3,13 @@
 	import { goto } from '$app/navigation';
 	import { locale, t } from '$lib/i18n';
 	import Spinner from '$lib/components/Spinner.svelte';
+	import SegmentProgress from '$lib/components/SegmentProgress.svelte';
 	import { chunkText } from '$lib/listen/chunk';
 	import { estimateCredits } from '$lib/listen/estimate';
 	import { runGeneration, ListenKeyError } from '$lib/listen/client';
 	import { LISTEN_LANGUAGES } from '$lib/listen/languages';
 	import { ELEVENLABS_TTS_MODELS } from '$lib/voice';
-	import type { ListenDocumentSummary } from '$lib/listen/types';
+	import type { ListenDocumentSummary, SegmentStatus } from '$lib/listen/types';
 
 	let loc = $state('en');
 	locale.subscribe((v) => { loc = v; });
@@ -27,6 +28,7 @@
 	let generating = $state(false);
 	let progressDone = $state(0);
 	let progressTotal = $state(0);
+	let segmentStatuses = $state<{ seq: number; status: SegmentStatus }[]>([]);
 	let errorMsg = $state('');
 	let keyMissing = $state(false);
 	let duplicateDocId = $state<string | null>(null);
@@ -86,6 +88,7 @@
 		generating = true;
 		progressDone = 0;
 		progressTotal = segments.length;
+		segmentStatuses = Array.from({ length: segments.length }, (_, i) => ({ seq: i, status: 'pending' as SegmentStatus }));
 
 		try {
 			const res = await fetch('/api/listen', {
@@ -107,9 +110,15 @@
 				return;
 			}
 			progressTotal = data.segmentCount ?? segments.length;
-			await runGeneration(data.id, (done, total) => {
-				progressDone = done;
-				progressTotal = total;
+			segmentStatuses = Array.from({ length: progressTotal }, (_, i) => ({ seq: i, status: 'pending' as SegmentStatus }));
+			await runGeneration(data.id, segmentStatuses, {
+				onSegmentChange: (seq, status) => {
+					segmentStatuses = segmentStatuses.map((s) => (s.seq === seq ? { ...s, status } : s));
+				},
+				onProgress: (done, total) => {
+					progressDone = done;
+					progressTotal = total;
+				}
 			});
 			await goto(`/listen/${data.id}`);
 		} catch (err) {
@@ -214,8 +223,8 @@
 		{/if}
 
 		{#if generating}
-			<div class="progress">
-				<div class="progress-bar"><div class="progress-fill" style={`width:${progressTotal ? (progressDone / progressTotal) * 100 : 0}%`}></div></div>
+			<div class="progress-block">
+				<SegmentProgress segments={segmentStatuses} />
 				<span class="progress-text">{t('listen.progress', { done: progressDone, total: progressTotal })}</span>
 			</div>
 			<p class="hint">{t('listen.keepOpen')}</p>
@@ -385,10 +394,8 @@
 	.generate-btn:hover:not(:disabled) { background: #4a4a8e; }
 	.generate-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
-	.progress { margin-top: 0.85rem; display: flex; align-items: center; gap: 0.6rem; }
-	.progress-bar { flex: 1; height: 8px; border-radius: 99px; background: #2a2a4a; overflow: hidden; }
-	.progress-fill { height: 100%; background: #6b6bc8; transition: width 0.2s; }
-	.progress-text { font-size: 0.8rem; color: #a0a0c0; white-space: nowrap; }
+	.progress-block { margin-top: 0.85rem; display: flex; flex-direction: column; gap: 0.5rem; }
+	.progress-text { font-size: 0.8rem; color: #a0a0c0; white-space: nowrap; align-self: flex-end; }
 	.hint { font-size: 0.78rem; color: #7a7a9a; margin: 0.4rem 0 0; }
 
 	.error-text { color: #cc6666; font-size: 0.85rem; margin: 0.6rem 0 0; }

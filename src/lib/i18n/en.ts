@@ -348,6 +348,8 @@ export const en: Record<string, string> = {
 	'listen.back': 'All audio',
 	'listen.notFound': 'This audio no longer exists or has expired.',
 	'listen.charsLabel': '{count} characters',
+	'listen.showText': 'Show original text',
+	'listen.hideText': 'Hide original text',
 
 	// Common
 	'common.loading': 'Loading...',

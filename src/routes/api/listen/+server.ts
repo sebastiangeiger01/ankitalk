@@ -7,7 +7,7 @@ import {
 	cleanupExpiredListenDocuments,
 	resolveListenTitle
 } from '$lib/server/listen';
-import { chunkText } from '$lib/listen/chunk';
+import { chunkText, assertChunkCoverage } from '$lib/listen/chunk';
 import { estimateCredits, hashContent } from '$lib/listen/estimate';
 import { isListenLanguage } from '$lib/listen/languages';
 import { isElevenLabsTtsModel } from '$lib/voice';
@@ -61,6 +61,12 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 
 	const chunks = chunkText(text);
 	if (!chunks.length) throw error(400, 'No usable text');
+	// Refuse to bill credits if the chunker dropped any content (catches future regressions).
+	try {
+		assertChunkCoverage(text, chunks);
+	} catch (err) {
+		throw error(500, `Text chunking failed: ${err instanceof Error ? err.message : 'unknown'}`);
+	}
 
 	const totalChars = chunks.reduce((sum, c) => sum + c.length, 0);
 	const estimatedCredits = estimateCredits(totalChars, modelId);

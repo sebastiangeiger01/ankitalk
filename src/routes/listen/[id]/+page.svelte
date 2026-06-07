@@ -5,6 +5,7 @@
 	import { locale, t } from '$lib/i18n';
 	import Spinner from '$lib/components/Spinner.svelte';
 	import ListenPlayer from '$lib/components/ListenPlayer.svelte';
+	import SegmentProgress from '$lib/components/SegmentProgress.svelte';
 	import { runGeneration, ListenKeyError } from '$lib/listen/client';
 	import type { ListenDocumentSummary, ListenSegmentInfo } from '$lib/listen/types';
 
@@ -22,8 +23,10 @@
 	let progressTotal = $state(0);
 	let errorMsg = $state('');
 	let keyMissing = $state(false);
+	let showText = $state(false);
 
 	const remaining = $derived(document ? document.segment_count - document.done_count : 0);
+	const hasSourceText = $derived(segments.some((s) => typeof s.source_text === 'string' && s.source_text.length > 0));
 
 	onMount(load);
 
@@ -31,7 +34,7 @@
 		loading = true;
 		notFound = false;
 		try {
-			const res = await fetch(`/api/listen/${docId}`);
+			const res = await fetch(`/api/listen/${docId}?text=1`);
 			if (res.status === 404) {
 				notFound = true;
 				return;
@@ -53,9 +56,14 @@
 		progressDone = document.done_count;
 		progressTotal = document.segment_count;
 		try {
-			await runGeneration(docId, (done, total) => {
-				progressDone = done;
-				progressTotal = total;
+			await runGeneration(docId, segments, {
+				onSegmentChange: (seq, status) => {
+					segments = segments.map((s) => (s.seq === seq ? { ...s, status } : s));
+				},
+				onProgress: (done, total) => {
+					progressDone = done;
+					progressTotal = total;
+				}
 			});
 		} catch (err) {
 			if (err instanceof ListenKeyError) {
@@ -119,8 +127,8 @@
 
 		{#if remaining > 0}
 			{#if resuming}
-				<div class="progress">
-					<div class="progress-bar"><div class="progress-fill" style={`width:${progressTotal ? (progressDone / progressTotal) * 100 : 0}%`}></div></div>
+				<div class="progress-block">
+					<SegmentProgress segments={segments.map((s) => ({ seq: s.seq, status: s.status }))} />
 					<span class="progress-text">{t('listen.progress', { done: progressDone, total: progressTotal })}</span>
 				</div>
 				<p class="hint">{t('listen.keepOpen')}</p>
@@ -133,6 +141,27 @@
 			<p class="error-text">{t('listen.noKey')} <a href="/settings">{t('review.goToSettings')}</a></p>
 		{:else if errorMsg}
 			<p class="error-text">{errorMsg}</p>
+		{/if}
+
+		{#if hasSourceText}
+			<div class="text-section">
+				<button
+					class="text-toggle"
+					type="button"
+					aria-expanded={showText}
+					onclick={() => (showText = !showText)}
+				>
+					<span>{showText ? t('listen.hideText') : t('listen.showText')}</span>
+					<span class="chevron">{showText ? '−' : '+'}</span>
+				</button>
+				{#if showText}
+					<div class="source-text">
+						{#each segments as s (s.seq)}
+							{#if s.source_text}<p>{s.source_text}</p>{/if}
+						{/each}
+					</div>
+				{/if}
+			</div>
 		{/if}
 	{/if}
 </div>
@@ -166,11 +195,39 @@
 	}
 	.resume-btn:hover { background: #4a4a8e; }
 
-	.progress { margin-top: 1rem; display: flex; align-items: center; gap: 0.6rem; }
-	.progress-bar { flex: 1; height: 8px; border-radius: 99px; background: #2a2a4a; overflow: hidden; }
-	.progress-fill { height: 100%; background: #6b6bc8; transition: width 0.2s; }
-	.progress-text { font-size: 0.8rem; color: #a0a0c0; white-space: nowrap; }
+	.progress-block { margin-top: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+	.progress-text { font-size: 0.8rem; color: #a0a0c0; align-self: flex-end; }
 	.hint { font-size: 0.78rem; color: #7a7a9a; margin: 0.4rem 0 0; }
 	.error-text { color: #cc6666; font-size: 0.85rem; margin: 0.6rem 0 0; }
 	.error-text a { color: #e07070; }
+
+	.text-section {
+		margin-top: 1.5rem;
+		background: #1a1a2e;
+		border: 1px solid #2a2a4a;
+		border-radius: 10px;
+		padding: 0.85rem 1rem;
+	}
+	.text-toggle {
+		display: flex; align-items: center; justify-content: space-between; width: 100%;
+		background: none; border: none; cursor: pointer; color: #c0c0e0;
+		font-size: 0.92rem; font-weight: 600; padding: 0;
+	}
+	.text-toggle:hover { color: #e0e0ff; }
+	.chevron { font-size: 1.2rem; color: #8d8db0; line-height: 1; }
+	.source-text {
+		margin-top: 0.75rem;
+		max-height: 50vh;
+		overflow-y: auto;
+		font-size: 0.92rem;
+		line-height: 1.55;
+		color: #d0d0e6;
+		-webkit-overflow-scrolling: touch;
+	}
+	.source-text p {
+		margin: 0 0 0.85rem;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+	.source-text p:last-child { margin-bottom: 0; }
 </style>

@@ -348,6 +348,8 @@ export const de: Record<string, string> = {
 	'listen.back': 'Alle Audios',
 	'listen.notFound': 'Dieses Audio existiert nicht mehr oder ist abgelaufen.',
 	'listen.charsLabel': '{count} Zeichen',
+	'listen.showText': 'Originaltext anzeigen',
+	'listen.hideText': 'Originaltext verbergen',
 
 	// Common
 	'common.loading': 'Laden...',
