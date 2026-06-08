@@ -30,10 +30,11 @@
 	let pollHandle: ReturnType<typeof setInterval> | null = null;
 
 	// Per-document persisted progress: where you last paused (lastSeq) and the farthest you've
-	// ever reached (maxSeq, used for the "farthest ahead" marker the user asked for). Restored
-	// on mount so reopening a long document drops you back where you were instead of at the top.
+	// ever reached (maxSeq, used for the resume banner). Restored on mount so reopening a long
+	// document drops you back where you were instead of at the top.
 	const PROGRESS_KEY = $derived(`listen-progress:${docId}`);
 	let maxSeq = $state(0);
+	let resumeDismissed = $state(false);
 
 	// PLAYBACK rate: client-side audio.playbackRate. Instant, free, applies to already-cached
 	// audio. No re-billing.
@@ -287,6 +288,7 @@
 	async function startStream(fromSeq: number) {
 		streamStartSeq = fromSeq;
 		curTime = 0;
+		errorMsg = '';
 		// Pass the generation speed so the server picks the right cache lane and (on misses)
 		// synthesizes at that tempo.
 		streamSrc = `/api/listen/${docId}/stream?from=${fromSeq}&speed=${genSpeed}`;
@@ -325,7 +327,8 @@
 		if (!sentences.length) return;
 		const wantPlay = force ?? !playing;
 		if (wantPlay) {
-			// After a pause the stream was closed; reopen from where we left off.
+			// After a pause the stream was closed; reopen from where we left off. Also covers
+			// the case where a prior stream errored and was cleared in `onAudioError`.
 			if (!streamSrc) {
 				await startStream(activeSeq);
 				return;
@@ -333,10 +336,15 @@
 			try {
 				await audioEl?.play();
 				playing = true;
+				errorMsg = '';
 				startPolling();
 				updateMediaMetadata();
 			} catch {
+				// play() can reject if the underlying element is in an unrecoverable state
+				// (e.g. a prior network error drained it). Open a fresh stream so the user
+				// isn't stuck pressing a dead play button.
 				playing = false;
+				await startStream(activeSeq);
 			}
 		} else {
 			playing = false;
@@ -485,10 +493,33 @@
 		refreshSentences();
 	}
 
-	function onAudioError() {
-		errorMsg = $t('listen.streamError');
+	async function onAudioError() {
+		// Hard-reset the element so the next play attempt opens a fresh stream instead of
+		// retrying the dead source (which would silently no-op until reload).
 		playing = false;
 		stopPolling();
+		const wasAt = activeSeq;
+		streamSrc = '';
+		errorMsg = $t('listen.streamError');
+		// Probe the same URL to surface the actual reason. The audio element only emits a
+		// generic MEDIA_ERR_*; a follow-up fetch gives us the real HTTP status.
+		try {
+			const probe = await fetch(`/api/listen/${docId}/stream?from=${wasAt}&speed=${genSpeed}`, {
+				headers: { Range: 'bytes=0-0' }
+			});
+			probe.body?.cancel().catch(() => undefined);
+			if (probe.status === 429) errorMsg = $t('listen.rateLimited');
+			else if (probe.status === 400) errorMsg = $t('listen.noKey');
+			else if (probe.status === 401) errorMsg = $t('listen.streamError');
+		} catch {
+			/* network down: leave generic message */
+		}
+	}
+
+	/** Retry button on the error banner: reopen the stream from the current position. */
+	async function retryStream() {
+		errorMsg = '';
+		await startStream(activeSeq);
 	}
 
 	function startEdit(seq: number) {
@@ -577,6 +608,19 @@
 		const ms = new Date(expiresAt.replace(' ', 'T') + 'Z').getTime() - Date.now();
 		return Math.max(0, Math.ceil(ms / 86_400_000));
 	}
+
+	/**
+	 * Resume CTA: jump playback to the farthest sentence the user has previously reached.
+	 * Only meaningful when we're currently behind that point — see `showResumeBanner` below.
+	 */
+	async function resumeFromMax() {
+		resumeDismissed = true;
+		await jumpTo(maxSeq);
+	}
+
+	const showResumeBanner = $derived(
+		!resumeDismissed && !playing && maxSeq > 0 && maxSeq > activeSeq && maxSeq < sentences.length
+	);
 </script>
 
 <div class="reader">
@@ -607,6 +651,17 @@
 			<span class="dot dot--default"></span> {$t('listen.legendDefault')}
 		</p>
 
+		{#if showResumeBanner}
+			<div class="resume-banner" role="region" aria-label={$t('listen.resumeFromTitle')}>
+				<div class="resume-text">
+					<strong>{$t('listen.resumeFromTitle')}</strong>
+					<span>{$t('listen.resumeFromHint', { from: maxSeq + 1, total: sentenceCount })}</span>
+				</div>
+				<button class="resume-btn" onclick={resumeFromMax}>{$t('listen.resumeAction')}</button>
+				<button class="resume-dismiss" onclick={() => (resumeDismissed = true)} aria-label={$t('common.dismiss')}>×</button>
+			</div>
+		{/if}
+
 		<div class="text-body">
 			{#each sentences as s (s.seq)}
 				{#if editingSeq === s.seq}
@@ -620,7 +675,6 @@
 				{:else}
 					<span
 						class="sentence-wrap"
-						class:farthest={maxSeq > 0 && s.seq === maxSeq}
 						data-seq={s.seq}
 					><button
 						class="sentence"
@@ -638,8 +692,15 @@
 			{/each}
 		</div>
 
+		<!-- Sticky error notice: sits above the player so it's visible regardless of scroll
+		     position. Includes Retry — the underlying `streamSrc` was cleared in `onAudioError`
+		     so retry opens a fresh stream from the current sentence. -->
 		{#if errorMsg}
-			<p class="error-text">{errorMsg}</p>
+			<div class="error-toast" role="alert">
+				<span class="error-toast-msg">{errorMsg}</span>
+				<button class="error-toast-retry" onclick={retryStream}>{$t('listen.retry')}</button>
+				<button class="error-toast-dismiss" onclick={() => (errorMsg = '')} aria-label={$t('common.dismiss')}>×</button>
+			</div>
 		{/if}
 
 		<!-- Floating affordances: surface "scroll to top" and "jump to current sentence" only
@@ -834,19 +895,36 @@
 
 	.sentence-wrap { display: inline; }
 
-	/**
-	 * "Farthest ahead" marker: a small caret/line in the left margin next to the highest seq
-	 * the user has ever reached. Subtle enough to read past, but visible when scanning back
-	 * to "where was I". `position: relative` on the inline wrap is fine — the pseudo is
-	 * absolute-positioned to the line, not the wrap.
-	 */
-	.sentence-wrap.farthest {
-		position: relative;
-		background: linear-gradient(to right, color-mix(in srgb, var(--warning) 28%, transparent), transparent 6em);
-		border-radius: var(--r-sm);
-		padding-left: 0.25rem;
-		box-shadow: inset 3px 0 0 var(--warning);
+	/* Resume banner: replaces the previous inline "farthest" marker (which painted a
+	   per-line gradient that doubled up with the active highlight on multi-line sentences).
+	   A single top-of-document CTA is clearer and addresses the "no resume button" gap. */
+	.resume-banner {
+		display: flex; align-items: center; gap: 0.7rem;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-left: 3px solid var(--primary);
+		border-radius: var(--r-md);
+		padding: 0.6rem 0.8rem;
+		margin-bottom: 0.9rem;
 	}
+	.resume-text { display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 0.1rem; }
+	.resume-text strong { font-size: 0.9rem; color: var(--text); }
+	.resume-text span { font-size: 0.78rem; color: var(--text-muted); }
+	.resume-btn {
+		background: var(--primary); color: var(--text);
+		border: none; border-radius: var(--r-pill);
+		padding: 0.5rem 0.95rem;
+		font-size: 0.85rem; font-weight: 600;
+		cursor: pointer; min-height: 36px;
+		touch-action: manipulation;
+	}
+	.resume-btn:hover { background: var(--primary-hover); }
+	.resume-dismiss {
+		background: none; border: none; color: var(--text-muted);
+		font-size: 1.2rem; line-height: 1; cursor: pointer;
+		padding: 0.25rem 0.4rem;
+	}
+	.resume-dismiss:hover { color: var(--text); }
 
 	.sentence {
 		display: inline;
@@ -905,7 +983,40 @@
 	}
 	.edit-btn.ghost { background: var(--surface); color: #a8a8c8; }
 
-	.error-text { color: #cc6666; font-size: 0.85rem; margin: 0.6rem 0 0; }
+	/* Sticky error toast above the player. Pinned so the user sees it regardless of where
+	   they've scrolled when playback fails — the previous inline `.error-text` was easy to
+	   miss in a long document. */
+	.error-toast {
+		position: fixed;
+		left: 0.6rem; right: 0.6rem;
+		bottom: calc(5.4rem + env(safe-area-inset-bottom));
+		background: #5a2a2a;
+		border: 1px solid #8a3a3a;
+		color: #ffe1e1;
+		padding: 0.6rem 0.75rem;
+		border-radius: var(--r-md);
+		display: flex; align-items: center; gap: 0.6rem;
+		box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+		z-index: 23;
+		font-size: 0.85rem;
+	}
+	.error-toast-msg { flex: 1; min-width: 0; }
+	.error-toast-retry {
+		background: #c14a4a; color: white;
+		border: none; border-radius: var(--r-pill);
+		padding: 0.4rem 0.85rem;
+		font-size: 0.8rem; font-weight: 600;
+		cursor: pointer;
+		min-height: 36px;
+		touch-action: manipulation;
+	}
+	.error-toast-retry:hover { background: #d05858; }
+	.error-toast-dismiss {
+		background: none; border: none; color: #ffe1e1;
+		font-size: 1.2rem; line-height: 1; cursor: pointer;
+		padding: 0.25rem 0.4rem;
+	}
+	.error-toast-dismiss:hover { color: white; }
 
 	.player-bar {
 		position: fixed; left: 0; right: 0; bottom: 0;

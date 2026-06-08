@@ -42,6 +42,11 @@ export const RATE_LIMITS = {
 	tts_per_minute: { limit: 60, windowSec: 60 },
 	/** STT token minting — short-lived tokens, but each one costs a few cents in credit. */
 	stt_token_per_minute: { limit: 30, windowSec: 60 },
-	/** Long-running listen streams — each one can run for minutes. */
-	listen_stream_per_minute: { limit: 6, windowSec: 60 }
+	/**
+	 * Listen stream opens. Per-stream API spend is already protected at the sentence layer
+	 * (in-isolate dedupe + KV lock + cache + 2× real-time pacing), so this only needs to
+	 * stop runaway connection churn — not bill flow. Set generously so normal pause/play/
+	 * seek/speed-change interaction never bumps it (each of those opens a new stream).
+	 */
+	listen_stream_per_minute: { limit: 60, windowSec: 60 }
 } as const;
