@@ -5,6 +5,7 @@
 	import { preloadTTS } from '$lib/client/audio';
 	import { getPrepareAudioAhead } from '$lib/client/preferences';
 	import { locale, t } from '$lib/i18n';
+	import { focusTrap } from '$lib/actions/focusTrap';
 	import { sanitizeCardHtml } from '$lib/sanitize';
 	import type { ReviewPhase } from '$lib/types';
 	import { sttLanguageForVoiceCommandLanguage, type UserVoiceSettings } from '$lib/voice';
@@ -522,7 +523,15 @@
 	<!-- Keyboard shortcuts overlay -->
 	{#if shortcutsOpen}
 		<button class="shortcuts-backdrop" onclick={() => shortcutsOpen = false} aria-label={$t('help.closeOverlay')}></button>
-		<div class="shortcuts-overlay" role="dialog" aria-modal="true" aria-label={$t('help.keyboardTitle')}>
+		<div
+			class="shortcuts-overlay"
+			role="dialog"
+			aria-modal="true"
+			aria-label={$t('help.keyboardTitle')}
+			tabindex="-1"
+			onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); shortcutsOpen = false; } }}
+			use:focusTrap
+		>
 			<div class="shortcuts-header">
 				<span class="shortcuts-title">{$t('help.keyboardTitle')}</span>
 				<button class="shortcuts-close" onclick={() => shortcutsOpen = false} aria-label={$t('help.closeOverlay')}>

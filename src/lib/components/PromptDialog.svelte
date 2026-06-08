@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { t } from '$lib/i18n';
+	import { focusTrap } from '$lib/actions/focusTrap';
 
 	interface Props {
 		open: boolean;
@@ -34,19 +35,16 @@
 
 	let value = $state('');
 	let input = $state<HTMLInputElement | null>(null);
-	let previouslyFocused: HTMLElement | null = null;
 
+	// focusTrap handles focus restoration; we just need to pre-fill and select the input
+	// (a generic first-focusable focus would land on Cancel, which isn't useful here).
 	$effect(() => {
 		if (open) {
 			value = initialValue;
-			previouslyFocused = document.activeElement as HTMLElement | null;
 			tick().then(() => {
 				input?.focus();
 				input?.select();
 			});
-		} else if (previouslyFocused) {
-			previouslyFocused.focus();
-			previouslyFocused = null;
 		}
 	});
 
@@ -67,7 +65,15 @@
 
 {#if open}
 	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-	<div class="backdrop" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" onkeydown={onKey}>
+	<div
+		class="backdrop"
+		role="dialog"
+		aria-modal="true"
+		aria-label={title}
+		tabindex="-1"
+		onkeydown={onKey}
+		use:focusTrap
+	>
 		<div class="modal">
 			<h2>{title}</h2>
 			<label class="field">

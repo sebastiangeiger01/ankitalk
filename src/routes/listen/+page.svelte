@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { locale, t } from '$lib/i18n';
+	import { focusTrap } from '$lib/actions/focusTrap';
 	import Spinner from '$lib/components/Spinner.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import { splitIntoSentences } from '$lib/listen/sentences';
@@ -212,9 +213,18 @@
 	</section>
 
 	{#if duplicateDocId}
-		<div class="modal-backdrop">
-			<div class="modal" role="dialog" aria-modal="true" tabindex="-1">
-				<h2>{$t('listen.duplicateTitle')}</h2>
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+		<div
+			class="modal-backdrop"
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="duplicate-title"
+			tabindex="-1"
+			onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); duplicateDocId = null; } }}
+			use:focusTrap
+		>
+			<div class="modal">
+				<h2 id="duplicate-title">{$t('listen.duplicateTitle')}</h2>
 				<p>{$t('listen.duplicateBody')}</p>
 				<div class="modal-actions">
 					<a class="btn-secondary" href={`/listen/${duplicateDocId}`}>{$t('listen.openExisting')}</a>
@@ -253,7 +263,9 @@
 								<span class="expiry">{$t('listen.expiresIn', { days: expiryDays(doc.expires_at) })}</span>
 							</span>
 						</a>
-						<button class="doc-action" aria-label={$t('listen.delete')} onclick={() => askDelete(doc.id, doc.title)}>🗑</button>
+						<button class="doc-action" aria-label={$t('listen.delete')} title={$t('listen.delete')} onclick={() => askDelete(doc.id, doc.title)}>
+						<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
+					</button>
 					</li>
 				{/each}
 			</ul>
@@ -402,10 +414,12 @@
 		background: none;
 		border: none;
 		color: var(--text-subtle);
-		font-size: 1rem;
 		cursor: pointer;
 		padding: 0 0.9rem;
 		align-self: stretch;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		touch-action: manipulation;
 	}
 	.doc-action:hover { color: #e07070; }

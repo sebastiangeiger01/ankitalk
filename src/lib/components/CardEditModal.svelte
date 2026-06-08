@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { t } from '$lib/i18n';
+	import { focusTrap } from '$lib/actions/focusTrap';
 	import type { NoteField } from '$lib/types';
 
 	interface Props {
@@ -23,8 +24,9 @@
 	let errorMsg = $state('');
 
 	let modalEl = $state<HTMLDivElement | null>(null);
-	let previouslyFocused: HTMLElement | null = null;
 
+	// focusTrap handles restore; here we just reset form state and shift focus from the
+	// generic "first focusable" (cancel button) to the first text input.
 	$effect(() => {
 		if (open) {
 			fields = initialFields ? initialFields.map((f) => ({ ...f })) : [{ name: 'Front', value: '' }, { name: 'Back', value: '' }];
@@ -32,11 +34,7 @@
 			cardType = 'basic';
 			saving = false;
 			errorMsg = '';
-			previouslyFocused = document.activeElement as HTMLElement | null;
 			tick().then(() => modalEl?.querySelector<HTMLTextAreaElement>('textarea')?.focus());
-		} else if (previouslyFocused) {
-			previouslyFocused.focus();
-			previouslyFocused = null;
 		}
 	});
 
@@ -90,6 +88,7 @@
 		aria-label={createMode ? $t('cards.editor.createAriaLabel') : $t('cards.editor.editAriaLabel')}
 		tabindex="-1"
 		onkeydown={handleKeydown}
+		use:focusTrap
 	>
 		<div class="modal" bind:this={modalEl}>
 			<h2>{createMode ? $t('cards.editor.new') : $t('cards.editor.edit')}</h2>

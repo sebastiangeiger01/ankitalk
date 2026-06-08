@@ -633,7 +633,7 @@
 						class="edit-pencil"
 						aria-label={$t('listen.edit')}
 						onclick={() => startEdit(s.seq)}
-					>✎</button> </span>
+					><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button> </span>
 				{/if}
 			{/each}
 		</div>
@@ -646,21 +646,32 @@
 		     when actually useful, so they never obstruct reading. -->
 		<div class="float-bar" aria-hidden={!(scrolledAway || (playing && activeOffScreen))}>
 			{#if scrolledAway}
-				<button class="float-pill" onclick={scrollToTop} aria-label={$t('listen.scrollToTop')} title={$t('listen.scrollToTop')}>↑</button>
+				<button class="float-pill icon-only" onclick={scrollToTop} aria-label={$t('listen.scrollToTop')} title={$t('listen.scrollToTop')}>
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+				</button>
 			{/if}
 			{#if playing && activeOffScreen}
 				<button class="float-pill primary" onclick={scrollToActive} aria-label={$t('listen.jumpToCurrent')}>
-					● {$t('listen.jumpToCurrent')}
+					<svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><circle cx="5" cy="5" r="4"/></svg>
+					<span>{$t('listen.jumpToCurrent')}</span>
 				</button>
 			{/if}
 		</div>
 
 		<div class="player-bar">
-			<button class="skip-btn" onclick={() => jumpTo(activeSeq - 1)} aria-label={$t('listen.previous')} disabled={activeSeq <= 0}>⏮</button>
-			<button class="play-btn" onclick={() => togglePlay()} aria-label={playing ? $t('listen.pause') : $t('listen.play')}>
-				{#if playing}❚❚{:else}▶{/if}
+			<button class="skip-btn" onclick={() => jumpTo(activeSeq - 1)} aria-label={$t('listen.previous')} disabled={activeSeq <= 0}>
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="19 20 9 12 19 4 19 20"/><rect x="4" y="4" width="2" height="16" rx="0.5"/></svg>
 			</button>
-			<button class="skip-btn" onclick={() => jumpTo(activeSeq + 1)} aria-label={$t('listen.next')} disabled={activeSeq >= sentences.length - 1}>⏭</button>
+			<button class="play-btn" onclick={() => togglePlay()} aria-label={playing ? $t('listen.pause') : $t('listen.play')}>
+				{#if playing}
+					<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+				{:else}
+					<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+				{/if}
+			</button>
+			<button class="skip-btn" onclick={() => jumpTo(activeSeq + 1)} aria-label={$t('listen.next')} disabled={activeSeq >= sentences.length - 1}>
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="5 4 15 12 5 20 5 4"/><rect x="18" y="4" width="2" height="16" rx="0.5"/></svg>
+			</button>
 			<!-- Speed control. Two distinct mechanisms surfaced side by side:
 			     - Playback rate (top section): client-side audio.playbackRate. Instant, free,
 			       applies to already-cached sentences. Use this for "I want this faster, now".
@@ -868,8 +879,9 @@
 	}
 
 	.edit-pencil {
-		background: none; border: none; color: #5a5a7a; font-size: 0.78rem;
-		margin-left: 0.05rem; padding: 0 0.15rem; cursor: pointer; opacity: 0.4;
+		background: none; border: none; color: #5a5a7a;
+		margin-left: 0.05rem; padding: 0 0.2rem; cursor: pointer; opacity: 0.4;
+		display: inline-flex; align-items: center; vertical-align: middle;
 	}
 	.edit-pencil:hover { opacity: 1; color: var(--text-muted); }
 
@@ -931,6 +943,9 @@
 	}
 	.float-pill.primary { background: var(--primary); border-color: var(--primary-hover); }
 	.float-pill:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+	/* When the pill is only an icon (scroll-to-top) shrink horizontal padding so the icon
+	   sits in a square 44×44 target instead of an awkwardly wide pill. */
+	.float-pill.icon-only { padding: 0.55rem; min-width: 44px; justify-content: center; }
 
 	/* Speed control: the popover sits above the player bar to the right of the skip controls. */
 	.speed-wrap { position: relative; flex-shrink: 0; }
