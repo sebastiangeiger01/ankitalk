@@ -5,6 +5,7 @@ import { getUserVoiceSettings } from '$lib/server/voice-settings';
 import { buildListenTtsSettings, type ListenDocumentRow } from '$lib/server/listen';
 import { getOrSynthesizeSentence } from '$lib/server/listen-tts';
 import { hashSentence } from '$lib/listen/sentences';
+import { enforceRateLimit, RATE_LIMITS } from '$lib/server/rate-limit';
 import type { RequestHandler } from './$types';
 
 /** ElevenLabs' supported speed range (per their docs). Stay strictly inside it. */
@@ -37,6 +38,8 @@ export const GET: RequestHandler = async ({ params, url, platform, locals }) => 
 	if (!locals.userId) throw error(401, 'Unauthorized');
 
 	const userId = locals.userId;
+	await enforceRateLimit(platform!.env.KV, userId, 'listen_stream', RATE_LIMITS.listen_stream_per_minute.limit, RATE_LIMITS.listen_stream_per_minute.windowSec);
+
 	const from = Math.max(0, Number(url.searchParams.get('from') ?? 0));
 	if (!Number.isFinite(from)) throw error(400, 'Invalid from');
 	const genSpeed = clampSpeed(url.searchParams.get('speed'));
