@@ -2,7 +2,7 @@
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 	import CardEditModal from '$lib/components/CardEditModal.svelte';
-	import { locale, t } from '$lib/i18n';
+	import { t } from '$lib/i18n';
 	import Spinner from '$lib/components/Spinner.svelte';
 	import { sanitizeCardHtml } from '$lib/sanitize';
 	import type { BrowseCard, NoteField } from '$lib/types';
@@ -21,8 +21,6 @@
 	let bulkLoading = $state(false);
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-	let loc = $state('en');
-	locale.subscribe((v) => { loc = v; });
 
 	// Edit modal state
 	let modalOpen = $state(false);
@@ -143,11 +141,11 @@
 	}
 
 	function stateName(s: number, suspended: number): string {
-		if (suspended) return t('state.suspended');
-		if (s === 0) return t('state.new');
-		if (s === 1 || s === 3) return t('state.learning');
-		if (s === 2) return t('state.review');
-		return t('state.unknown');
+		if (suspended) return $t('state.suspended');
+		if (s === 0) return $t('state.new');
+		if (s === 1 || s === 3) return $t('state.learning');
+		if (s === 2) return $t('state.review');
+		return $t('state.unknown');
 	}
 
 	function stateClass(s: number, suspended: number): string {
@@ -196,19 +194,19 @@
 
 <div class="browser">
 	<div class="header">
-		<a href="/" class="back-link">&larr; {t('cards.dashboard')}</a>
-		<h1>{deckName ? `${deckName} — ${t('cards.title')}` : t('cards.title')}</h1>
+		<a href="/" class="back-link">&larr; {$t('cards.dashboard')}</a>
+		<h1>{deckName ? `${deckName} — ${$t('cards.title')}` : $t('cards.title')}</h1>
 	</div>
 
 	<div class="controls">
 		<input
 			type="text"
 			class="search-input"
-			placeholder={t('cards.search')}
+			placeholder={$t('cards.search')}
 			bind:value={searchQuery}
 			oninput={handleSearch}
 		/>
-		<button class="new-card-btn" onclick={openCreateModal}>{t('cards.newCard')}</button>
+		<button class="new-card-btn" onclick={openCreateModal}>{$t('cards.newCard')}</button>
 	</div>
 
 	<div class="filters">
@@ -218,34 +216,34 @@
 				class:active={stateFilter === s}
 				onclick={() => setStateFilter(s)}
 			>
-				{t(`state.${s}`)}
+				{$t(`state.${s}`)}
 			</button>
 		{/each}
 	</div>
 
 	{#if selected.size > 0}
 		<div class="bulk-bar">
-			<span>{t('cards.selected', { count: selected.size })}</span>
-			<button class="bulk-btn" disabled={bulkLoading} onclick={() => bulkAction('suspend')}>{t('cards.suspendAction')}</button>
-			<button class="bulk-btn" disabled={bulkLoading} onclick={() => bulkAction('unsuspend')}>{t('cards.unsuspendAction')}</button>
+			<span>{$t('cards.selected', { count: selected.size })}</span>
+			<button class="bulk-btn" disabled={bulkLoading} onclick={() => bulkAction('suspend')}>{$t('cards.suspendAction')}</button>
+			<button class="bulk-btn" disabled={bulkLoading} onclick={() => bulkAction('unsuspend')}>{$t('cards.unsuspendAction')}</button>
 		</div>
 	{/if}
 
 	{#if loading}
 		<div class="loading-msg"><Spinner size={26} /></div>
 	{:else if cards.length === 0}
-		<p class="empty-msg">{t('cards.empty')}</p>
+		<p class="empty-msg">{$t('cards.empty')}</p>
 	{:else}
 		<div class="card-list">
 			<div class="card-list-header">
 				<label class="checkbox-cell">
 					<input type="checkbox" checked={selected.size === cards.length && cards.length > 0} onchange={toggleSelectAll} />
 				</label>
-				<span class="col-front">{t('cards.front')}</span>
-				<span class="col-state">{t('cards.state')}</span>
-				<span class="col-due">{t('cards.due')}</span>
-				<span class="col-reps">{t('cards.reps')}</span>
-				<span class="col-lapses">{t('cards.lapses')}</span>
+				<span class="col-front">{$t('cards.front')}</span>
+				<span class="col-state">{$t('cards.state')}</span>
+				<span class="col-due">{$t('cards.due')}</span>
+				<span class="col-reps">{$t('cards.reps')}</span>
+				<span class="col-lapses">{$t('cards.lapses')}</span>
 			</div>
 
 			{#each cards as card (card.id)}
@@ -263,9 +261,9 @@
 		</div>
 
 		<div class="pagination">
-			<button class="page-btn" disabled={currentPage <= 1} onclick={prevPage}>{t('cards.prev')}</button>
+			<button class="page-btn" disabled={currentPage <= 1} onclick={prevPage}>{$t('cards.prev')}</button>
 			<span class="page-info">{currentPage} / {totalPages}</span>
-			<button class="page-btn" disabled={currentPage >= totalPages} onclick={nextPage}>{t('cards.next')}</button>
+			<button class="page-btn" disabled={currentPage >= totalPages} onclick={nextPage}>{$t('cards.next')}</button>
 		</div>
 	{/if}
 </div>

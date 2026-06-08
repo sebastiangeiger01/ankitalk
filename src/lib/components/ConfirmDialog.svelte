@@ -1,0 +1,94 @@
+<script lang="ts">
+	import { tick } from 'svelte';
+	import { t } from '$lib/i18n';
+
+	interface Props {
+		open: boolean;
+		title: string;
+		message?: string;
+		/** Label for the action button; defaults to "Confirm". */
+		confirmLabel?: string;
+		/** Label for the cancel button; defaults to "Cancel". */
+		cancelLabel?: string;
+		/** Style the action button as destructive (red). */
+		danger?: boolean;
+		onconfirm: () => void;
+		oncancel: () => void;
+	}
+
+	let { open, title, message, confirmLabel, cancelLabel, danger = false, onconfirm, oncancel }: Props = $props();
+
+	let confirmBtn = $state<HTMLButtonElement | null>(null);
+	let previouslyFocused: HTMLElement | null = null;
+
+	// Move focus into the dialog when it opens; restore on close. Avoids the "tabbing behind the
+	// modal" trap that the previous native confirm()/prompt() didn't have to worry about.
+	$effect(() => {
+		if (open) {
+			previouslyFocused = document.activeElement as HTMLElement | null;
+			tick().then(() => confirmBtn?.focus());
+		} else if (previouslyFocused) {
+			previouslyFocused.focus();
+			previouslyFocused = null;
+		}
+	});
+
+	function onKey(e: KeyboardEvent) {
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			oncancel();
+		} else if (e.key === 'Enter' && document.activeElement === confirmBtn) {
+			e.preventDefault();
+			onconfirm();
+		}
+	}
+</script>
+
+{#if open}
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+	<div class="backdrop" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" onkeydown={onKey}>
+		<div class="modal">
+			<h2>{title}</h2>
+			{#if message}<p>{message}</p>{/if}
+			<div class="actions">
+				<button type="button" class="btn-secondary" onclick={oncancel}>
+					{cancelLabel ?? $t('common.cancel')}
+				</button>
+				<button
+					type="button"
+					class={danger ? 'btn-danger' : 'btn-primary'}
+					bind:this={confirmBtn}
+					onclick={onconfirm}
+				>
+					{confirmLabel ?? $t('common.confirm')}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<style>
+	.backdrop {
+		position: fixed; inset: 0;
+		background: rgba(0, 0, 0, 0.7);
+		display: flex; align-items: center; justify-content: center;
+		z-index: 200; padding: 1rem;
+	}
+	.modal {
+		background: #1a1a2e; border: 1px solid #3a3a5e; border-radius: 12px;
+		padding: 1.25rem; max-width: 420px; width: 100%;
+	}
+	h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+	p { color: #a0a0c0; font-size: 0.88rem; line-height: 1.45; margin: 0 0 1rem; white-space: pre-line; }
+	.actions { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: flex-end; }
+	.btn-primary, .btn-secondary, .btn-danger {
+		padding: 0.5rem 1rem; border-radius: 7px;
+		font-size: 0.9rem; font-weight: 600; cursor: pointer; border: none;
+	}
+	.btn-primary { background: #4a4a8e; color: #e0e0ff; }
+	.btn-primary:hover { background: #5a5aae; }
+	.btn-secondary { background: transparent; border: 1px solid #3a3a5e; color: #c8c8e0; }
+	.btn-secondary:hover { border-color: #5a5a8e; color: #e0e0ff; }
+	.btn-danger { background: #a8344c; color: #fff; }
+	.btn-danger:hover { background: #c63d59; }
+</style>

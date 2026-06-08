@@ -146,14 +146,14 @@
 			if (res.ok) {
 				const data = await res.json() as { settings: UserVoiceSettings };
 				voiceSettings = data.settings;
-				voiceSettingsMessage = { text: t('settings.voice.saved'), ok: true };
+				voiceSettingsMessage = { text: $t('settings.voice.saved'), ok: true };
 				setTimeout(() => { voiceSettingsMessage = null; }, 2000);
 			} else {
 				throw new Error('Failed to save voice settings');
 			}
 		} catch {
 			voiceSettings = previousSettings;
-			voiceSettingsMessage = { text: t('settings.voice.saveFailed'), ok: false };
+			voiceSettingsMessage = { text: $t('settings.voice.saveFailed'), ok: false };
 		} finally {
 			savingVoiceSettings = false;
 		}
@@ -197,7 +197,7 @@
 				keyStatus[service] = true;
 				keyInputs[service] = '';
 				expanded[service] = false;
-				messages[service] = { text: t('settings.apiKeys.saved'), ok: true };
+				messages[service] = { text: $t('settings.apiKeys.saved'), ok: true };
 			} else {
 				const errKey = res.status === 429
 					? 'settings.apiKeys.rateLimited'
@@ -206,10 +206,10 @@
 						: res.status === 403 && service === 'elevenlabs'
 							? 'settings.apiKeys.elevenlabsPermissions'
 							: 'settings.apiKeys.invalid';
-				messages[service] = { text: t(errKey), ok: false };
+				messages[service] = { text: $t(errKey), ok: false };
 			}
 		} catch {
-			messages[service] = { text: t('settings.apiKeys.invalid'), ok: false };
+			messages[service] = { text: $t('settings.apiKeys.invalid'), ok: false };
 		} finally {
 			saving[service] = false;
 		}
@@ -226,7 +226,7 @@
 			});
 			if (res.ok) {
 				keyStatus[service] = false;
-				messages[service] = { text: t('settings.apiKeys.removed'), ok: true };
+				messages[service] = { text: $t('settings.apiKeys.removed'), ok: true };
 			}
 		} catch {
 			// silently ignore
@@ -251,24 +251,24 @@
 	const voiceCommandLanguages: VoiceCommandLanguage[] = ['auto', 'en', 'de'];
 
 	function serviceLabel(s: Service): string {
-		return t(`settings.apiKeys.${s}`);
+		return $t(`settings.apiKeys.${s}`);
 	}
 	function serviceDesc(s: Service): string {
-		return t(`settings.apiKeys.${s}Desc`);
+		return $t(`settings.apiKeys.${s}Desc`);
 	}
 	function serviceCost(s: Service): string {
-		return t(`settings.apiKeys.${s}Cost`);
+		return $t(`settings.apiKeys.${s}Cost`);
 	}
 </script>
 
 {#key current}
 <div class="settings-page">
-	<a href="/" class="back-link">&larr; {t('appSettings.dashboard')}</a>
+	<a href="/" class="back-link">&larr; {$t('appSettings.dashboard')}</a>
 
-	<h1>{t('appSettings.title')}</h1>
+	<h1>{$t('appSettings.title')}</h1>
 
 	<section class="section">
-		<h2>{t('appSettings.language')}</h2>
+		<h2>{$t('appSettings.language')}</h2>
 		<div class="lang-options">
 			<button class="lang-btn" class:active={current === 'en'} onclick={() => setLocale('en')}>
 				English
@@ -280,11 +280,11 @@
 	</section>
 
 	<section class="section">
-		<h2>{t('appSettings.audio')}</h2>
-		<div class="voice-provider-group" aria-label={t('settings.voice.title')}>
+		<h2>{$t('appSettings.audio')}</h2>
+		<div class="voice-provider-group" aria-label={$t('settings.voice.title')}>
 			<div class="voice-provider-copy">
-				<span class="preference-title">{t('settings.voice.title')}</span>
-				<span class="preference-desc">{t('settings.voice.desc')}</span>
+				<span class="preference-title">{$t('settings.voice.title')}</span>
+				<span class="preference-desc">{$t('settings.voice.desc')}</span>
 			</div>
 			<div class="provider-options">
 				<label class="provider-option" class:active={voiceSettings.voice_provider === 'elevenlabs'}>
@@ -297,8 +297,8 @@
 						onchange={() => updateVoiceProvider('elevenlabs')}
 					/>
 					<span>
-						<strong>{t('settings.voice.elevenlabs')}</strong>
-						<small>{t('settings.voice.elevenlabsDesc')}</small>
+						<strong>{$t('settings.voice.elevenlabs')}</strong>
+						<small>{$t('settings.voice.elevenlabsDesc')}</small>
 					</span>
 				</label>
 				<label class="provider-option" class:active={voiceSettings.voice_provider === 'openai_deepgram'}>
@@ -311,8 +311,8 @@
 						onchange={() => updateVoiceProvider('openai_deepgram')}
 					/>
 					<span>
-						<strong>{t('settings.voice.legacy')}</strong>
-						<small>{t('settings.voice.legacyDesc')}</small>
+						<strong>{$t('settings.voice.legacy')}</strong>
+						<small>{$t('settings.voice.legacyDesc')}</small>
 					</span>
 				</label>
 			</div>
@@ -331,13 +331,13 @@
 				onUpdate={updateElevenLabsSettings}
 			/>
 		{/if}
-		<div class="voice-language-group" aria-label={t('settings.voice.commandLanguage')}>
+		<div class="voice-language-group" aria-label={$t('settings.voice.commandLanguage')}>
 			<div class="voice-provider-copy">
-				<span class="preference-title">{t('settings.voice.commandLanguage')}</span>
+				<span class="preference-title">{$t('settings.voice.commandLanguage')}</span>
 				<span class="preference-desc">
 					{voiceSettings.voice_command_language === 'auto'
-						? t('settings.voice.commandLanguageAutoDesc')
-						: t('settings.voice.commandLanguageFixedDesc')}
+						? $t('settings.voice.commandLanguageAutoDesc')
+						: $t('settings.voice.commandLanguageFixedDesc')}
 				</span>
 			</div>
 			<div class="segmented-control">
@@ -351,15 +351,15 @@
 							disabled={savingVoiceSettings}
 							onchange={() => updateVoiceCommandLanguage(language)}
 						/>
-						<span>{t(`settings.voice.commandLanguage.${language}`)}</span>
+						<span>{$t(`settings.voice.commandLanguage.${language}`)}</span>
 					</label>
 				{/each}
 			</div>
 		</div>
 		<label class="preference-row">
 			<span class="preference-copy">
-				<span class="preference-title">{t('appSettings.prepareAudioAhead')}</span>
-				<span class="preference-desc">{t('appSettings.prepareAudioAheadDesc')}</span>
+				<span class="preference-title">{$t('appSettings.prepareAudioAhead')}</span>
+				<span class="preference-desc">{$t('appSettings.prepareAudioAheadDesc')}</span>
 			</span>
 			<input
 				class="preference-toggle"
@@ -372,10 +372,10 @@
 	</section>
 
 	<section class="section">
-		<h2>{t('settings.apiKeys.title')}</h2>
-		<p class="section-desc">{t('settings.apiKeys.description')}</p>
+		<h2>{$t('settings.apiKeys.title')}</h2>
+		<p class="section-desc">{$t('settings.apiKeys.description')}</p>
 
-		<h3 class="subsection-label">{t('settings.apiKeys.voiceSection')}</h3>
+		<h3 class="subsection-label">{$t('settings.apiKeys.voiceSection')}</h3>
 		{#each primaryServices as service}
 			<div class="key-row">
 				<div class="key-row-header">
@@ -386,9 +386,9 @@
 					</div>
 					<div class="key-row-actions">
 						{#if keyStatus[service]}
-							<span class="badge badge--configured">{t('settings.apiKeys.configured')}</span>
+							<span class="badge badge--configured">{$t('settings.apiKeys.configured')}</span>
 						{:else}
-							<span class="badge badge--not-configured">{t('settings.apiKeys.notConfigured')}</span>
+							<span class="badge badge--not-configured">{$t('settings.apiKeys.notConfigured')}</span>
 						{/if}
 						<button class="action-btn" type="button" onclick={() => toggleExpanded(service)}>
 							{expanded[service] ? '×' : keyStatus[service] ? '✎' : '+'}
@@ -410,7 +410,7 @@
 							onclick={() => removeKey(service)}
 						>
 							{#if removing[service]}<Spinner size={13} />{/if}
-							{removing[service] ? t('settings.apiKeys.removing') : t('settings.apiKeys.remove')}
+							{removing[service] ? $t('settings.apiKeys.removing') : $t('settings.apiKeys.remove')}
 						</button>
 					</div>
 				{/if}
@@ -420,25 +420,25 @@
 						<input
 							class="key-input"
 							type="password"
-							placeholder={t('settings.apiKeys.placeholder')}
+							placeholder={$t('settings.apiKeys.placeholder')}
 							bind:value={keyInputs[service]}
 							onkeydown={(e) => { if (e.key === 'Enter') saveKey(service); }}
 						/>
 						{#if service === 'elevenlabs'}
 							<div class="perm-hint">
-								<span class="perm-hint-title">{t('settings.apiKeys.elevenlabsPerms.title')}</span>
-								<span class="perm-hint-intro">{t('settings.apiKeys.elevenlabsPerms.intro')}</span>
+								<span class="perm-hint-title">{$t('settings.apiKeys.elevenlabsPerms.title')}</span>
+								<span class="perm-hint-intro">{$t('settings.apiKeys.elevenlabsPerms.intro')}</span>
 								<ul class="perm-list">
-									<li>{t('settings.apiKeys.elevenlabsPerms.tts')}</li>
-									<li>{t('settings.apiKeys.elevenlabsPerms.stt')}</li>
-									<li>{t('settings.apiKeys.elevenlabsPerms.voices')}</li>
-									<li>{t('settings.apiKeys.elevenlabsPerms.user')}</li>
+									<li>{$t('settings.apiKeys.elevenlabsPerms.tts')}</li>
+									<li>{$t('settings.apiKeys.elevenlabsPerms.stt')}</li>
+									<li>{$t('settings.apiKeys.elevenlabsPerms.voices')}</li>
+									<li>{$t('settings.apiKeys.elevenlabsPerms.user')}</li>
 								</ul>
 							</div>
 						{/if}
 						<div class="key-input-footer">
 							<span class="key-link-hint">
-								{t('settings.apiKeys.getKey')}
+								{$t('settings.apiKeys.getKey')}
 								<a href={serviceHrefs[service]} target="_blank" rel="noopener noreferrer">
 									{serviceLinks[service]}
 								</a>
@@ -449,7 +449,7 @@
 								onclick={() => saveKey(service)}
 							>
 								{#if saving[service]}<Spinner size={13} />{/if}
-							{saving[service] ? t('settings.apiKeys.validating') : t('settings.apiKeys.save')}
+							{saving[service] ? $t('settings.apiKeys.validating') : $t('settings.apiKeys.save')}
 							</button>
 						</div>
 					</div>
@@ -457,8 +457,8 @@
 			</div>
 		{/each}
 
-		<h3 class="subsection-label subsection-label--optional">{t('settings.apiKeys.advancedSection')}</h3>
-		<p class="section-desc">{t('settings.apiKeys.advancedDesc')}</p>
+		<h3 class="subsection-label subsection-label--optional">{$t('settings.apiKeys.advancedSection')}</h3>
+		<p class="section-desc">{$t('settings.apiKeys.advancedDesc')}</p>
 		{#each advancedServices as service}
 			<div class="key-row">
 				<div class="key-row-header">
@@ -469,9 +469,9 @@
 					</div>
 					<div class="key-row-actions">
 						{#if keyStatus[service]}
-							<span class="badge badge--configured">{t('settings.apiKeys.configured')}</span>
+							<span class="badge badge--configured">{$t('settings.apiKeys.configured')}</span>
 						{:else}
-							<span class="badge badge--not-configured">{t('settings.apiKeys.notConfigured')}</span>
+							<span class="badge badge--not-configured">{$t('settings.apiKeys.notConfigured')}</span>
 						{/if}
 						<button class="action-btn" type="button" onclick={() => toggleExpanded(service)}>
 							{expanded[service] ? '×' : keyStatus[service] ? '✎' : '+'}
@@ -493,7 +493,7 @@
 							onclick={() => removeKey(service)}
 						>
 							{#if removing[service]}<Spinner size={13} />{/if}
-							{removing[service] ? t('settings.apiKeys.removing') : t('settings.apiKeys.remove')}
+							{removing[service] ? $t('settings.apiKeys.removing') : $t('settings.apiKeys.remove')}
 						</button>
 					</div>
 				{/if}
@@ -503,25 +503,25 @@
 						<input
 							class="key-input"
 							type="password"
-							placeholder={t('settings.apiKeys.placeholder')}
+							placeholder={$t('settings.apiKeys.placeholder')}
 							bind:value={keyInputs[service]}
 							onkeydown={(e) => { if (e.key === 'Enter') saveKey(service); }}
 						/>
 						{#if service === 'elevenlabs'}
 							<div class="perm-hint">
-								<span class="perm-hint-title">{t('settings.apiKeys.elevenlabsPerms.title')}</span>
-								<span class="perm-hint-intro">{t('settings.apiKeys.elevenlabsPerms.intro')}</span>
+								<span class="perm-hint-title">{$t('settings.apiKeys.elevenlabsPerms.title')}</span>
+								<span class="perm-hint-intro">{$t('settings.apiKeys.elevenlabsPerms.intro')}</span>
 								<ul class="perm-list">
-									<li>{t('settings.apiKeys.elevenlabsPerms.tts')}</li>
-									<li>{t('settings.apiKeys.elevenlabsPerms.stt')}</li>
-									<li>{t('settings.apiKeys.elevenlabsPerms.voices')}</li>
-									<li>{t('settings.apiKeys.elevenlabsPerms.user')}</li>
+									<li>{$t('settings.apiKeys.elevenlabsPerms.tts')}</li>
+									<li>{$t('settings.apiKeys.elevenlabsPerms.stt')}</li>
+									<li>{$t('settings.apiKeys.elevenlabsPerms.voices')}</li>
+									<li>{$t('settings.apiKeys.elevenlabsPerms.user')}</li>
 								</ul>
 							</div>
 						{/if}
 						<div class="key-input-footer">
 							<span class="key-link-hint">
-								{t('settings.apiKeys.getKey')}
+								{$t('settings.apiKeys.getKey')}
 								<a href={serviceHrefs[service]} target="_blank" rel="noopener noreferrer">
 									{serviceLinks[service]}
 								</a>
@@ -532,7 +532,7 @@
 								onclick={() => saveKey(service)}
 							>
 								{#if saving[service]}<Spinner size={13} />{/if}
-							{saving[service] ? t('settings.apiKeys.validating') : t('settings.apiKeys.save')}
+							{saving[service] ? $t('settings.apiKeys.validating') : $t('settings.apiKeys.save')}
 							</button>
 						</div>
 					</div>
@@ -542,19 +542,19 @@
 	</section>
 
 	<section class="section">
-		<h2>{t('settings.usage.title')}</h2>
+		<h2>{$t('settings.usage.title')}</h2>
 		{#if loadingUsage}
 			<div class="usage-loading"><Spinner size={22} /></div>
 		{:else if !usageData || allZero(usageData)}
-			<p class="muted">{t('settings.usage.noUsage')}</p>
+			<p class="muted">{$t('settings.usage.noUsage')}</p>
 		{:else}
 			<div class="usage-table-wrap">
 				<div class="usage-table">
 					<div class="usage-head">
 						<span></span>
-						<span>{t('settings.usage.today')}</span>
-						<span>{t('settings.usage.week')}</span>
-						<span>{t('settings.usage.month')}</span>
+						<span>{$t('settings.usage.today')}</span>
+						<span>{$t('settings.usage.week')}</span>
+						<span>{$t('settings.usage.month')}</span>
 					</div>
 					{#each usageServices as s}
 						<div class="usage-row">
@@ -565,14 +565,14 @@
 						</div>
 					{/each}
 					<div class="usage-row usage-row--total">
-						<span>{t('settings.usage.total')}</span>
+						<span>{$t('settings.usage.total')}</span>
 						<span>{formatCost(usageData!.today.total)}</span>
 						<span>{formatCost(usageData!.week.total)}</span>
 						<span>{formatCost(usageData!.month.total)}</span>
 					</div>
 				</div>
 			</div>
-			<p class="usage-note">{t('settings.usage.note')}</p>
+			<p class="usage-note">{$t('settings.usage.note')}</p>
 		{/if}
 	</section>
 </div>

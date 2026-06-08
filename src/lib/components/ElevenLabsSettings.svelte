@@ -151,15 +151,15 @@
 	}
 
 	function modelLabel(id: string): string {
-		return t(`settings.elevenlabs.model.${id}`);
+		return $t(`settings.elevenlabs.model.${id}`);
 	}
 	function modelDesc(id: string): string {
-		return t(`settings.elevenlabs.model.${id}.desc`);
+		return $t(`settings.elevenlabs.model.${id}.desc`);
 	}
 	function creditBadge(id: string): string {
 		return elevenLabsModelCreditMultiplier(id) < 1
-			? t('settings.elevenlabs.halfCredits')
-			: t('settings.elevenlabs.fullCredits');
+			? $t('settings.elevenlabs.halfCredits')
+			: $t('settings.elevenlabs.fullCredits');
 	}
 
 	function resetTuning() {
@@ -184,12 +184,12 @@
 </script>
 
 {#if !keyConfigured}
-	<p class="el-hint">{t('settings.elevenlabs.needKey')}</p>
+	<p class="el-hint">{$t('settings.elevenlabs.needKey')}</p>
 {:else}
 	<!-- Credit balance -->
 	<div class="el-card">
 		<div class="el-card-head">
-			<span class="el-card-title">{t('settings.elevenlabs.credits')}</span>
+			<span class="el-card-title">{$t('settings.elevenlabs.credits')}</span>
 			{#if subscription}
 				<span class="el-tier">{subscription.tier}</span>
 			{/if}
@@ -197,26 +197,26 @@
 		{#if loadingSubscription}
 			<div class="el-center"><Spinner size={18} /></div>
 		{:else if subscriptionError || !subscription}
-			<p class="el-muted">{t('settings.elevenlabs.creditsError')}</p>
+			<p class="el-muted">{$t('settings.elevenlabs.creditsError')}</p>
 		{:else}
 			<div class="el-credit-bar" role="progressbar" aria-valuenow={creditUsedPct} aria-valuemin={0} aria-valuemax={100}>
 				<div class="el-credit-fill" class:el-credit-fill--high={creditUsedPct >= 90} style={`width:${creditUsedPct}%`}></div>
 			</div>
 			<div class="el-credit-stats">
-				<span>{t('settings.elevenlabs.creditsUsed', {
+				<span>{$t('settings.elevenlabs.creditsUsed', {
 					used: subscription.characterCount.toLocaleString(),
 					limit: subscription.characterLimit.toLocaleString()
 				})}</span>
 				<span>{creditUsedPct}%</span>
 			</div>
-			<p class="el-muted el-reset">{t('settings.elevenlabs.creditsReset', { date: formatResetDate(subscription.nextResetUnix) })}</p>
+			<p class="el-muted el-reset">{$t('settings.elevenlabs.creditsReset', { date: formatResetDate(subscription.nextResetUnix) })}</p>
 		{/if}
 	</div>
 
 	<!-- Model / version picker -->
 	<div class="el-group">
-		<span class="el-group-title">{t('settings.elevenlabs.model')}</span>
-		<span class="el-group-desc">{t('settings.elevenlabs.modelDesc')}</span>
+		<span class="el-group-title">{$t('settings.elevenlabs.model')}</span>
+		<span class="el-group-desc">{$t('settings.elevenlabs.modelDesc')}</span>
 		<div class="el-model-options">
 			{#each ELEVENLABS_TTS_MODELS as model}
 				<label class="el-model" class:active={settings.elevenlabs_tts_model === model.id}>
@@ -242,21 +242,21 @@
 
 	<!-- Voice picker -->
 	<div class="el-group">
-		<span class="el-group-title">{t('settings.elevenlabs.voice')}</span>
-		<span class="el-group-desc">{t('settings.elevenlabs.voiceDesc', { name: selectedVoiceName })}</span>
+		<span class="el-group-title">{$t('settings.elevenlabs.voice')}</span>
+		<span class="el-group-desc">{$t('settings.elevenlabs.voiceDesc', { name: selectedVoiceName })}</span>
 
 		{#if loadingVoices}
 			<div class="el-center"><Spinner size={18} /></div>
 		{:else if voicesError}
 			<p class="el-muted">
-				{t('settings.elevenlabs.voicesError')}
-				<button type="button" class="el-link-btn" onclick={loadVoices}>{t('settings.elevenlabs.retry')}</button>
+				{$t('settings.elevenlabs.voicesError')}
+				<button type="button" class="el-link-btn" onclick={loadVoices}>{$t('settings.elevenlabs.retry')}</button>
 			</p>
 		{:else}
 			<input
 				class="el-search"
 				type="search"
-				placeholder={t('settings.elevenlabs.searchVoices')}
+				placeholder={$t('settings.elevenlabs.searchVoices')}
 				bind:value={voiceSearch}
 			/>
 			<div class="el-voice-list">
@@ -281,7 +281,7 @@
 								type="button"
 								class="el-preview-btn"
 								class:playing={previewVoiceId === voice.voiceId}
-								aria-label={t('settings.elevenlabs.preview')}
+								aria-label={$t('settings.elevenlabs.preview')}
 								onclick={() => togglePreview(voice)}
 							>
 								{previewVoiceId === voice.voiceId ? '■' : '▶'}
@@ -290,7 +290,7 @@
 					</div>
 				{/each}
 				{#if filteredVoices.length === 0}
-					<p class="el-muted el-empty">{t('settings.elevenlabs.noVoices')}</p>
+					<p class="el-muted el-empty">{$t('settings.elevenlabs.noVoices')}</p>
 				{/if}
 			</div>
 		{/if}
@@ -299,14 +299,14 @@
 	<!-- Advanced tuning -->
 	<div class="el-group">
 		<button type="button" class="el-advanced-toggle" onclick={() => (advancedOpen = !advancedOpen)} aria-expanded={advancedOpen}>
-			<span class="el-group-title">{t('settings.elevenlabs.tuning')}</span>
+			<span class="el-group-title">{$t('settings.elevenlabs.tuning')}</span>
 			<span class="el-chevron">{advancedOpen ? '−' : '+'}</span>
 		</button>
 		{#if advancedOpen}
 			<div class="el-tuning">
 				<label class="el-slider">
 					<span class="el-slider-head">
-						<span>{t('settings.elevenlabs.speed')}</span>
+						<span>{$t('settings.elevenlabs.speed')}</span>
 						<span class="el-slider-val">{settings.elevenlabs_tts_speed.toFixed(2)}×</span>
 					</span>
 					<input type="range" min="0.7" max="1.2" step="0.05" value={settings.elevenlabs_tts_speed} {disabled}
@@ -314,40 +314,40 @@
 				</label>
 				<label class="el-slider">
 					<span class="el-slider-head">
-						<span>{t('settings.elevenlabs.stability')}</span>
+						<span>{$t('settings.elevenlabs.stability')}</span>
 						<span class="el-slider-val">{Math.round(settings.elevenlabs_stability * 100)}%</span>
 					</span>
 					<input type="range" min="0" max="1" step="0.05" value={settings.elevenlabs_stability} {disabled}
 						onchange={(e) => commitNumber('elevenlabs_stability', e)} />
-					<small>{t('settings.elevenlabs.stabilityDesc')}</small>
+					<small>{$t('settings.elevenlabs.stabilityDesc')}</small>
 				</label>
 				<label class="el-slider">
 					<span class="el-slider-head">
-						<span>{t('settings.elevenlabs.similarity')}</span>
+						<span>{$t('settings.elevenlabs.similarity')}</span>
 						<span class="el-slider-val">{Math.round(settings.elevenlabs_similarity * 100)}%</span>
 					</span>
 					<input type="range" min="0" max="1" step="0.05" value={settings.elevenlabs_similarity} {disabled}
 						onchange={(e) => commitNumber('elevenlabs_similarity', e)} />
-					<small>{t('settings.elevenlabs.similarityDesc')}</small>
+					<small>{$t('settings.elevenlabs.similarityDesc')}</small>
 				</label>
 				<label class="el-slider">
 					<span class="el-slider-head">
-						<span>{t('settings.elevenlabs.style')}</span>
+						<span>{$t('settings.elevenlabs.style')}</span>
 						<span class="el-slider-val">{Math.round(settings.elevenlabs_style * 100)}%</span>
 					</span>
 					<input type="range" min="0" max="1" step="0.05" value={settings.elevenlabs_style} {disabled}
 						onchange={(e) => commitNumber('elevenlabs_style', e)} />
-					<small>{t('settings.elevenlabs.styleDesc')}</small>
+					<small>{$t('settings.elevenlabs.styleDesc')}</small>
 				</label>
 				<label class="el-toggle-row">
 					<span>
-						<span class="el-toggle-title">{t('settings.elevenlabs.speakerBoost')}</span>
-						<small>{t('settings.elevenlabs.speakerBoostDesc')}</small>
+						<span class="el-toggle-title">{$t('settings.elevenlabs.speakerBoost')}</span>
+						<small>{$t('settings.elevenlabs.speakerBoostDesc')}</small>
 					</span>
 					<input type="checkbox" role="switch" checked={settings.elevenlabs_speaker_boost} {disabled}
 						onchange={(e) => onUpdate({ elevenlabs_speaker_boost: (e.currentTarget as HTMLInputElement).checked })} />
 				</label>
-				<button type="button" class="el-reset" onclick={resetTuning} {disabled}>{t('settings.elevenlabs.resetTuning')}</button>
+				<button type="button" class="el-reset" onclick={resetTuning} {disabled}>{$t('settings.elevenlabs.resetTuning')}</button>
 			</div>
 		{/if}
 	</div>

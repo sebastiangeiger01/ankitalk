@@ -14,13 +14,13 @@
 	let canStartReview = $derived(hasRequiredKeys && hasDecks);
 </script>
 
-<div class="checklist-card" role="complementary" aria-label={t('onboarding.title')}>
+<div class="checklist-card" role="complementary" aria-label={$t('onboarding.title')}>
 	<div class="checklist-header">
 		<div class="checklist-titles">
-			<h2>{t('onboarding.title')}</h2>
-			<p class="subtitle">{t('onboarding.subtitle')}</p>
+			<h2>{$t('onboarding.title')}</h2>
+			<p class="subtitle">{$t('onboarding.subtitle')}</p>
 		</div>
-		<button class="dismiss-btn" onclick={onDismiss} aria-label={t('onboarding.dismiss')} title={t('onboarding.dismiss')}>
+		<button class="dismiss-btn" onclick={onDismiss} aria-label={$t('onboarding.dismiss')} title={$t('onboarding.dismiss')}>
 			<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
 				<path d="M3 3L13 13M13 3L3 13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
 			</svg>
@@ -36,7 +36,7 @@
 					<path d="M4.5 8.5L7 11L11.5 6" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
 				</svg>
 			</span>
-			<span class="step-label">{t('onboarding.createAccount')}</span>
+			<span class="step-label">{$t('onboarding.createAccount')}</span>
 		</li>
 
 		<!-- Step 2: Add API keys -->
@@ -54,11 +54,11 @@
 				{/if}
 			</span>
 			{#if hasRequiredKeys}
-				<span class="step-label">{t('onboarding.addApiKeys')}</span>
+				<span class="step-label">{$t('onboarding.addApiKeys')}</span>
 			{:else}
 				<a href="/settings" class="step-link">
-					<span class="step-label step-label--action">{t('onboarding.addApiKeys')}</span>
-					<span class="step-desc">{t('onboarding.addApiKeysDesc')}</span>
+					<span class="step-label step-label--action">{$t('onboarding.addApiKeys')}</span>
+					<span class="step-desc">{$t('onboarding.addApiKeysDesc')}</span>
 					<span class="step-arrow" aria-hidden="true">&rsaquo;</span>
 				</a>
 			{/if}
@@ -79,9 +79,9 @@
 				{/if}
 			</span>
 			{#if hasDecks}
-				<span class="step-label">{t('onboarding.importDeck')}</span>
+				<span class="step-label">{$t('onboarding.importDeck')}</span>
 			{:else}
-				<span class="step-label">{t('onboarding.importDeck')}</span>
+				<span class="step-label">{$t('onboarding.importDeck')}</span>
 			{/if}
 		</li>
 
@@ -99,7 +99,7 @@
 					</svg>
 				{/if}
 			</span>
-			<span class="step-label">{t('onboarding.startReview')}</span>
+			<span class="step-label">{$t('onboarding.startReview')}</span>
 		</li>
 	</ul>
 </div>

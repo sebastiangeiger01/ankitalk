@@ -39,8 +39,6 @@
 	let counts = $state<QueueCounts>({ new: 0, learning: 0, review: 0 });
 	let helpOpen = $state(false);
 	let shortcutsOpen = $state(false);
-	let loc = $state('en');
-	locale.subscribe((v) => { loc = v; });
 	let prefetchedCards = $state<PrefetchedCards | null>(null);
 	let highlightRating = $state<string>('');
 	let highlightTimer: ReturnType<typeof setTimeout> | null = null;
@@ -160,7 +158,7 @@
 				break;
 			}
 			case 'card_suspended': {
-				suspendedNotice = t('review.cardSuspended');
+				suspendedNotice = $t('review.cardSuspended');
 				if (suspendedTimer) clearTimeout(suspendedTimer);
 				suspendedTimer = setTimeout(() => { suspendedNotice = ''; }, 3000);
 				break;
@@ -263,7 +261,7 @@
 		// Check API key status first
 		Promise.all([
 			fetch('/api/settings/api-keys').then((r) => r.ok ? r.json() : null),
-			fetch(`/api/settings/voice?locale=${encodeURIComponent(loc)}`).then((r) => r.ok ? r.json() : null)
+			fetch(`/api/settings/voice?locale=${encodeURIComponent($locale)}`).then((r) => r.ok ? r.json() : null)
 		])
 			.then(([keys, voice]) => {
 				if (keys) keyStatus = keys as ApiKeyStatus;
@@ -335,48 +333,48 @@
 			<div class="missing-keys-icon">
 				<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><circle cx="12" cy="16" r="0.5" fill="currentColor" stroke="none"/></svg>
 			</div>
-			<h2>{t('review.missingKeys')}</h2>
-			<p>{t('review.missingKeysDetail')}</p>
-			<a href="/settings" class="settings-btn">{t('review.goToSettings')}</a>
+			<h2>{$t('review.missingKeys')}</h2>
+			<p>{$t('review.missingKeysDetail')}</p>
+			<a href="/settings" class="settings-btn">{$t('review.goToSettings')}</a>
 		</div>
 	</div>
 {:else if !started}
 	<div class="review-container">
 		<div class="start-screen">
 			<div class="start-header">
-				<h1>{t('review.readyTitle')}</h1>
+				<h1>{$t('review.readyTitle')}</h1>
 				{#if deckName}
 					<p class="deck-name">{deckName}</p>
 				{:else}
 					<div class="deck-name-skeleton"></div>
 				{/if}
 			</div>
-			<p class="start-hint">{t('review.startHint')}</p>
+			<p class="start-hint">{$t('review.startHint')}</p>
 			{#if errorMsg}
 				<p class="start-error">{errorMsg}</p>
 			{/if}
 
-			<button class="start-btn" onclick={startReview}>{cramMode ? t('review.startCram') : t('review.startReview')}</button>
+			<button class="start-btn" onclick={startReview}>{cramMode ? $t('review.startCram') : $t('review.startReview')}</button>
 
 			<div class="review-options">
 				<label class="option-label">
-					{t('review.filterTags')}
-					<input type="text" class="option-input" bind:value={tagFilter} placeholder={t('review.tagPlaceholder')} />
+					{$t('review.filterTags')}
+					<input type="text" class="option-input" bind:value={tagFilter} placeholder={$t('review.tagPlaceholder')} />
 				</label>
 
 				<label class="option-checkbox">
 					<input type="checkbox" bind:checked={cramMode} />
-					{t('review.cramMode')} <span class="option-hint">{t('review.cramHint')}</span>
+					{$t('review.cramMode')} <span class="option-hint">{$t('review.cramHint')}</span>
 				</label>
 
 				{#if cramMode}
 					<label class="option-label">
-						{t('review.cramStateFilter')}
+						{$t('review.cramStateFilter')}
 						<select class="option-input" bind:value={cramState}>
-							<option value="">{t('review.allStates')}</option>
-							<option value="new">{t('review.newOnly')}</option>
-							<option value="learning">{t('review.learningOnly')}</option>
-							<option value="review">{t('review.reviewOnly')}</option>
+							<option value="">{$t('review.allStates')}</option>
+							<option value="new">{$t('review.newOnly')}</option>
+							<option value="learning">{$t('review.learningOnly')}</option>
+							<option value="review">{$t('review.reviewOnly')}</option>
 						</select>
 					</label>
 				{/if}
@@ -384,18 +382,18 @@
 
 			<button class="help-toggle" onclick={() => helpOpen = !helpOpen}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-				{helpOpen ? t('review.hideHelp') : t('review.showHelp')}
+				{helpOpen ? $t('review.hideHelp') : $t('review.showHelp')}
 				<svg class="help-chevron" class:open={helpOpen} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
 			</button>
 			{#if helpOpen}
 				<div class="commands-help">
 					<ul>
-						<li><strong>{t('help.answer')}</strong> — {t('help.answerDesc')} <kbd>Space</kbd></li>
-						<li><strong>{t('help.hint')}</strong> — {t('help.hintDesc')} <kbd>H</kbd></li>
-						<li><strong>{t('help.ratings')}</strong> — {t('help.ratingsDesc')} <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></li>
-						<li><strong>{t('help.repeat')}</strong> — {t('help.repeatDesc')} <kbd>R</kbd></li>
-						<li><strong>{t('help.explain')}</strong> — {t('help.explainDesc')} <kbd>E</kbd></li>
-						<li><strong>{t('help.stop')}</strong> — {t('help.stopDesc')} <kbd>Esc</kbd></li>
+						<li><strong>{$t('help.answer')}</strong> — {$t('help.answerDesc')} <kbd>Space</kbd></li>
+						<li><strong>{$t('help.hint')}</strong> — {$t('help.hintDesc')} <kbd>H</kbd></li>
+						<li><strong>{$t('help.ratings')}</strong> — {$t('help.ratingsDesc')} <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></li>
+						<li><strong>{$t('help.repeat')}</strong> — {$t('help.repeatDesc')} <kbd>R</kbd></li>
+						<li><strong>{$t('help.explain')}</strong> — {$t('help.explainDesc')} <kbd>E</kbd></li>
+						<li><strong>{$t('help.stop')}</strong> — {$t('help.stopDesc')} <kbd>Esc</kbd></li>
 					</ul>
 				</div>
 			{/if}
@@ -404,24 +402,24 @@
 {:else if sessionEnded && stats}
 	<div class="review-container">
 		<div class="summary">
-			<h1>{t('session.completeTitle')}{deckName ? ` — ${deckName}` : ''}</h1>
+			<h1>{$t('session.completeTitle')}{deckName ? ` — ${deckName}` : ''}</h1>
 			<div class="stat-grid">
 				<div class="stat">
 					<span class="stat-value">{stats.cardsReviewed}</span>
-					<span class="stat-label">{t('session.cardsReviewed')}</span>
+					<span class="stat-label">{$t('session.cardsReviewed')}</span>
 				</div>
 				<div class="stat">
 					<span class="stat-value">{formatDuration(stats.durationMs)}</span>
-					<span class="stat-label">{t('session.duration')}</span>
+					<span class="stat-label">{$t('session.duration')}</span>
 				</div>
 			</div>
 			<div class="ratings-summary">
-				<span class="rating again">{t('rating.again')}: {stats.ratings.again}</span>
-				<span class="rating hard">{t('rating.hard')}: {stats.ratings.hard}</span>
-				<span class="rating good">{t('rating.good')}: {stats.ratings.good}</span>
-				<span class="rating easy">{t('rating.easy')}: {stats.ratings.easy}</span>
+				<span class="rating again">{$t('rating.again')}: {stats.ratings.again}</span>
+				<span class="rating hard">{$t('rating.hard')}: {stats.ratings.hard}</span>
+				<span class="rating good">{$t('rating.good')}: {stats.ratings.good}</span>
+				<span class="rating easy">{$t('rating.easy')}: {stats.ratings.easy}</span>
 			</div>
-			<a href="/" class="back-link">{t('session.backToDashboard')}</a>
+			<a href="/" class="back-link">{$t('session.backToDashboard')}</a>
 		</div>
 	</div>
 {:else}
@@ -439,14 +437,14 @@
 	<!-- Top bar -->
 	<div class="top-bar">
 		<div class="top-left">
-			<button class="toolbar-btn" class:off={!audioOn} onclick={() => engine.toggleAudio()} aria-label={audioOn ? t('review.muteAudio') : t('review.unmuteAudio')} title={audioOn ? t('review.muteAudio') : t('review.unmuteAudio')}>
+			<button class="toolbar-btn" class:off={!audioOn} onclick={() => engine.toggleAudio()} aria-label={audioOn ? $t('review.muteAudio') : $t('review.unmuteAudio')} title={audioOn ? $t('review.muteAudio') : $t('review.unmuteAudio')}>
 				{#if audioOn}
 					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
 				{:else}
 					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
 				{/if}
 			</button>
-			<button class="toolbar-btn" class:off={!micOn} onclick={() => engine.toggleMic()} aria-label={micOn ? t('review.muteMic') : t('review.unmuteMic')} title={micOn ? t('review.muteMic') : t('review.unmuteMic')}>
+			<button class="toolbar-btn" class:off={!micOn} onclick={() => engine.toggleMic()} aria-label={micOn ? $t('review.muteMic') : $t('review.unmuteMic')} title={micOn ? $t('review.muteMic') : $t('review.unmuteMic')}>
 				{#if micOn}
 					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
 				{:else}
@@ -454,19 +452,19 @@
 				{/if}
 			</button>
 			{#if phase === 'question'}
-				<button class="toolbar-btn" onclick={() => engine.executeCommand('hint')} title="{t('review.hint')} (H)" aria-label={t('review.hint')}>
+				<button class="toolbar-btn" onclick={() => engine.executeCommand('hint')} title="{$t('review.hint')} (H)" aria-label={$t('review.hint')}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/></svg>
 				</button>
 			{:else}
-				<button class="toolbar-btn" onclick={() => engine.executeCommand('explain')} title="{t('review.explain')} (E)" aria-label={t('review.explain')}>
+				<button class="toolbar-btn" onclick={() => engine.executeCommand('explain')} title="{$t('review.explain')} (E)" aria-label={$t('review.explain')}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor" stroke="none"/></svg>
 				</button>
 			{/if}
-			<button class="toolbar-btn" onclick={() => shortcutsOpen = !shortcutsOpen} title="{t('help.keyHelp')} (?)" aria-label={t('help.keyboardTitle')} aria-pressed={shortcutsOpen}>
+			<button class="toolbar-btn" onclick={() => shortcutsOpen = !shortcutsOpen} title="{$t('help.keyHelp')} (?)" aria-label={$t('help.keyboardTitle')} aria-pressed={shortcutsOpen}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor" stroke="none"/></svg>
 			</button>
-			<button class="toolbar-btn stop" onclick={() => engine.executeCommand('stop')} title="{t('review.stop')} (Esc)" aria-label={t('review.stop')}>
-				{t('review.stop')}
+			<button class="toolbar-btn stop" onclick={() => engine.executeCommand('stop')} title="{$t('review.stop')} (Esc)" aria-label={$t('review.stop')}>
+				{$t('review.stop')}
 			</button>
 			{#if status === 'loading' || status === 'speaking' || status === 'listening' || status === 'explaining' || status === 'hinting'}
 				<span class="voice-dot" class:loading={status === 'loading'} class:speaking={status === 'speaking'} class:listening={status === 'listening'} class:explaining={status === 'explaining'} class:hinting={status === 'hinting'}></span>
@@ -484,7 +482,7 @@
 	<!-- Card content area -->
 	<div class="card-area">
 		{#if status === 'waiting'}
-			<p class="waiting-text">{t('review.waitingCard', { seconds: learningCountdown })}</p>
+			<p class="waiting-text">{$t('review.waitingCard', { seconds: learningCountdown })}</p>
 		{:else}
 			<div class="card-content" role="region" aria-label="Flashcard">
 				<div class="question-text">{@html frontHtml}</div>
@@ -499,11 +497,11 @@
 	<!-- Fixed bottom actions -->
 	<div class="bottom-bar">
 		{#if undoAvailable}
-			<button class="undo-link" onclick={() => engine.undo()}>{t('review.undo')} <kbd>Z</kbd></button>
+			<button class="undo-link" onclick={() => engine.undo()}>{$t('review.undo')} <kbd>Z</kbd></button>
 		{/if}
 		{#if phase === 'question' && status !== 'waiting'}
 			<div class="bottom-actions">
-				<button class="show-answer-btn" onclick={() => engine.executeCommand('answer')}>{t('review.showAnswer')}</button>
+				<button class="show-answer-btn" onclick={() => engine.executeCommand('answer')}>{$t('review.showAnswer')}</button>
 			</div>
 		{:else if phase === 'rating'}
 			<div class="interval-labels">
@@ -513,44 +511,44 @@
 				<span class="interval">{intervals.easy}</span>
 			</div>
 			<div class="rating-buttons">
-				<button class="rate-btn again" class:voice-picked={highlightRating === 'again'} onclick={() => engine.executeCommand('again')}>{t('rating.again')}</button>
-				<button class="rate-btn hard" class:voice-picked={highlightRating === 'hard'} onclick={() => engine.executeCommand('hard')}>{t('rating.hard')}</button>
-				<button class="rate-btn good" class:voice-picked={highlightRating === 'good'} onclick={() => engine.executeCommand('good')}>{t('rating.good')}</button>
-				<button class="rate-btn easy" class:voice-picked={highlightRating === 'easy'} onclick={() => engine.executeCommand('easy')}>{t('rating.easy')}</button>
+				<button class="rate-btn again" class:voice-picked={highlightRating === 'again'} onclick={() => engine.executeCommand('again')}>{$t('rating.again')}</button>
+				<button class="rate-btn hard" class:voice-picked={highlightRating === 'hard'} onclick={() => engine.executeCommand('hard')}>{$t('rating.hard')}</button>
+				<button class="rate-btn good" class:voice-picked={highlightRating === 'good'} onclick={() => engine.executeCommand('good')}>{$t('rating.good')}</button>
+				<button class="rate-btn easy" class:voice-picked={highlightRating === 'easy'} onclick={() => engine.executeCommand('easy')}>{$t('rating.easy')}</button>
 			</div>
 		{/if}
 	</div>
 
 	<!-- Keyboard shortcuts overlay -->
 	{#if shortcutsOpen}
-		<button class="shortcuts-backdrop" onclick={() => shortcutsOpen = false} aria-label={t('help.closeOverlay')}></button>
-		<div class="shortcuts-overlay" role="dialog" aria-modal="true" aria-label={t('help.keyboardTitle')}>
+		<button class="shortcuts-backdrop" onclick={() => shortcutsOpen = false} aria-label={$t('help.closeOverlay')}></button>
+		<div class="shortcuts-overlay" role="dialog" aria-modal="true" aria-label={$t('help.keyboardTitle')}>
 			<div class="shortcuts-header">
-				<span class="shortcuts-title">{t('help.keyboardTitle')}</span>
-				<button class="shortcuts-close" onclick={() => shortcutsOpen = false} aria-label={t('help.closeOverlay')}>
+				<span class="shortcuts-title">{$t('help.keyboardTitle')}</span>
+				<button class="shortcuts-close" onclick={() => shortcutsOpen = false} aria-label={$t('help.closeOverlay')}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
 				</button>
 			</div>
 			<table class="shortcuts-table">
 				<tbody>
-					<tr><td><kbd>Space</kbd> / <kbd>Enter</kbd></td><td>{t('help.keyAnswer')}</td></tr>
-					<tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></td><td>{t('help.keyRatings')}</td></tr>
-					<tr><td><kbd>R</kbd></td><td>{t('help.keyRepeat')}</td></tr>
-					<tr><td><kbd>E</kbd></td><td>{t('help.keyExplain')}</td></tr>
-					<tr><td><kbd>H</kbd></td><td>{t('help.keyHint')}</td></tr>
-					<tr><td><kbd>Z</kbd></td><td>{t('help.keyUndo')}</td></tr>
-					<tr><td><kbd>Esc</kbd></td><td>{t('help.keyStop')}</td></tr>
-					<tr><td><kbd>?</kbd></td><td>{t('help.keyHelp')}</td></tr>
+					<tr><td><kbd>Space</kbd> / <kbd>Enter</kbd></td><td>{$t('help.keyAnswer')}</td></tr>
+					<tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></td><td>{$t('help.keyRatings')}</td></tr>
+					<tr><td><kbd>R</kbd></td><td>{$t('help.keyRepeat')}</td></tr>
+					<tr><td><kbd>E</kbd></td><td>{$t('help.keyExplain')}</td></tr>
+					<tr><td><kbd>H</kbd></td><td>{$t('help.keyHint')}</td></tr>
+					<tr><td><kbd>Z</kbd></td><td>{$t('help.keyUndo')}</td></tr>
+					<tr><td><kbd>Esc</kbd></td><td>{$t('help.keyStop')}</td></tr>
+					<tr><td><kbd>?</kbd></td><td>{$t('help.keyHelp')}</td></tr>
 				</tbody>
 			</table>
-			<div class="shortcuts-section-title">{t('help.voiceTitle')}</div>
+			<div class="shortcuts-section-title">{$t('help.voiceTitle')}</div>
 			<ul class="shortcuts-voice">
-				<li><strong>{t('help.answer')}</strong> — {t('help.answerDesc')}</li>
-				<li><strong>{t('help.ratings')}</strong> — {t('help.ratingsDesc')}</li>
-				<li><strong>{t('help.repeat')}</strong> — {t('help.repeatDesc')}</li>
-				<li><strong>{t('help.explain')}</strong> — {t('help.explainDesc')}</li>
-				<li><strong>{t('help.hint')}</strong> — {t('help.hintDesc')}</li>
-				<li><strong>{t('help.stop')}</strong> — {t('help.stopDesc')}</li>
+				<li><strong>{$t('help.answer')}</strong> — {$t('help.answerDesc')}</li>
+				<li><strong>{$t('help.ratings')}</strong> — {$t('help.ratingsDesc')}</li>
+				<li><strong>{$t('help.repeat')}</strong> — {$t('help.repeatDesc')}</li>
+				<li><strong>{$t('help.explain')}</strong> — {$t('help.explainDesc')}</li>
+				<li><strong>{$t('help.hint')}</strong> — {$t('help.hintDesc')}</li>
+				<li><strong>{$t('help.stop')}</strong> — {$t('help.stopDesc')}</li>
 			</ul>
 		</div>
 	{/if}

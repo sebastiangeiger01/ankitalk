@@ -373,4 +373,32 @@ export const en: Record<string, string> = {
 	// Common
 	'common.loading': 'Loading...',
 	'common.error': 'Error',
+	'common.cancel': 'Cancel',
+	'common.save': 'Save',
+	'common.saving': 'Saving...',
+	'common.delete': 'Delete',
+	'common.confirm': 'Confirm',
+	'common.dismiss': 'Dismiss',
+	'common.close': 'Close',
+	'common.ok': 'OK',
+
+	// Card editor (modal)
+	'cards.editor.new': 'New Card',
+	'cards.editor.edit': 'Edit Card',
+	'cards.editor.createAriaLabel': 'Create card',
+	'cards.editor.editAriaLabel': 'Edit card',
+	'cards.editor.tags': 'Tags',
+	'cards.editor.tagsPlaceholder': 'tag1 tag2 tag3',
+	'cards.editor.cardType': 'Card Type',
+	'cards.editor.cardTypeBasic': 'Basic',
+	'cards.editor.cardTypeCloze': 'Cloze',
+	'cards.editor.emptyError': 'At least one field must have content',
+	'cards.editor.createFailed': 'Failed to create card',
+	'cards.editor.updateFailed': 'Failed to update card',
+	'cards.editor.saveFailed': 'Save failed',
+
+	// Rename dialog
+	'rename.title': 'Rename',
+	'rename.label': 'New title',
+	'rename.empty': 'Title cannot be empty',
 };

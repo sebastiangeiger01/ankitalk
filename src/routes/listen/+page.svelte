@@ -3,14 +3,13 @@
 	import { goto } from '$app/navigation';
 	import { locale, t } from '$lib/i18n';
 	import Spinner from '$lib/components/Spinner.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import { splitIntoSentences } from '$lib/listen/sentences';
 	import { estimateCredits } from '$lib/listen/estimate';
 	import { LISTEN_LANGUAGES } from '$lib/listen/languages';
 	import { ELEVENLABS_TTS_MODELS } from '$lib/voice';
 	import type { ListenDocumentSummary } from '$lib/listen/types';
 
-	let loc = $state('en');
-	locale.subscribe((v) => { loc = v; });
 
 	let text = $state('');
 	let title = $state('');
@@ -34,7 +33,7 @@
 
 	onMount(async () => {
 		try {
-			const r = await fetch(`/api/settings/voice?locale=${encodeURIComponent(loc)}`);
+			const r = await fetch(`/api/settings/voice?locale=${encodeURIComponent($locale)}`);
 			if (r.ok) {
 				const d = (await r.json()) as { settings: { elevenlabs_tts_model: string; elevenlabs_voice_id: string } };
 				modelId = d.settings.elevenlabs_tts_model;
@@ -86,7 +85,7 @@
 				body: JSON.stringify({ text, title, voiceId, modelId, language: language === 'auto' ? null : language, force })
 			});
 			if (!res.ok) {
-				errorMsg = t('listen.error');
+				errorMsg = $t('listen.error');
 				return;
 			}
 			const data = (await res.json()) as { id?: string; duplicate?: boolean; existingDocumentId?: string };
@@ -95,12 +94,12 @@
 				return;
 			}
 			if (!data.id) {
-				errorMsg = t('listen.error');
+				errorMsg = $t('listen.error');
 				return;
 			}
 			await goto(`/listen/${data.id}`);
 		} catch {
-			errorMsg = t('listen.error');
+			errorMsg = $t('listen.error');
 		} finally {
 			submitting = false;
 		}
@@ -111,39 +110,46 @@
 		return Math.max(0, Math.ceil(ms / 86_400_000));
 	}
 
-	async function deleteDoc(id: string, docTitle: string) {
-		if (!confirm(t('listen.deleteConfirm', { title: docTitle }))) return;
+	let confirmDelete = $state<{ id: string; title: string } | null>(null);
+
+	function askDelete(id: string, docTitle: string) {
+		confirmDelete = { id, title: docTitle };
+	}
+
+	async function performDelete() {
+		if (!confirmDelete) return;
+		const { id } = confirmDelete;
+		confirmDelete = null;
 		const res = await fetch(`/api/listen/${id}`, { method: 'DELETE' });
 		if (res.ok) await loadHistory();
 	}
 </script>
 
-{#key loc}
 <div class="listen-page">
-	<a href="/" class="back-link">&larr; {t('appSettings.dashboard')}</a>
-	<h1>{t('listen.title')}</h1>
-	<p class="subtitle">{t('listen.subtitleV2')}</p>
+	<a href="/" class="back-link">&larr; {$t('appSettings.dashboard')}</a>
+	<h1>{$t('listen.title')}</h1>
+	<p class="subtitle">{$t('listen.subtitleV2')}</p>
 
 	<section class="card">
-		<label class="field-label" for="listen-text">{t('listen.inputLabel')}</label>
+		<label class="field-label" for="listen-text">{$t('listen.inputLabel')}</label>
 		<textarea
 			id="listen-text"
 			class="text-input"
 			rows="8"
-			placeholder={t('listen.pastePlaceholder')}
+			placeholder={$t('listen.pastePlaceholder')}
 			bind:value={text}
 			disabled={submitting}
 		></textarea>
 
 		<div class="row">
 			<label class="upload-btn" class:disabled={submitting}>
-				{t('listen.uploadTxt')}
+				{$t('listen.uploadTxt')}
 				<input type="file" accept=".txt,text/plain" onchange={handleFile} hidden disabled={submitting} />
 			</label>
 			<input
 				class="title-input"
 				type="text"
-				placeholder={t('listen.titlePlaceholder')}
+				placeholder={$t('listen.titlePlaceholder')}
 				bind:value={title}
 				disabled={submitting}
 			/>
@@ -151,16 +157,16 @@
 
 		<div class="row override">
 			<label class="override-field">
-				<span>{t('listen.model')}</span>
+				<span>{$t('listen.model')}</span>
 				<select bind:value={modelId} disabled={submitting}>
 					{#each ELEVENLABS_TTS_MODELS as m}
-						<option value={m.id}>{t(`settings.elevenlabs.model.${m.id}`)}</option>
+						<option value={m.id}>{$t(`settings.elevenlabs.model.${m.id}`)}</option>
 					{/each}
 				</select>
 			</label>
 			{#if voices.length}
 				<label class="override-field">
-					<span>{t('listen.voice')}</span>
+					<span>{$t('listen.voice')}</span>
 					<select bind:value={voiceId} disabled={submitting}>
 						{#each voices as v}
 							<option value={v.voiceId}>{v.name}</option>
@@ -169,35 +175,35 @@
 				</label>
 			{/if}
 			<label class="override-field">
-				<span>{t('listen.language')}</span>
+				<span>{$t('listen.language')}</span>
 				<select bind:value={language} disabled={submitting}>
-					<option value="auto">{t('listen.languageAuto')}</option>
+					<option value="auto">{$t('listen.languageAuto')}</option>
 					{#each LISTEN_LANGUAGES as lang}
 						<option value={lang.code}>{lang.name}</option>
 					{/each}
 				</select>
 			</label>
 		</div>
-		<p class="override-hint">{t('listen.languageHint')}</p>
+		<p class="override-hint">{$t('listen.languageHint')}</p>
 
 		{#if charCount > 0}
 			<div class="estimate" class:warn={insufficient}>
-				<span>{t('listen.characters', { count: charCount.toLocaleString() })}</span>
-				<span>{t('listen.sentenceCount', { count: sentences.length })}</span>
-				<span class="credits">{t('listen.creditsMax', { count: credits.toLocaleString() })}</span>
+				<span>{$t('listen.characters', { count: charCount.toLocaleString() })}</span>
+				<span>{$t('listen.sentenceCount', { count: sentences.length })}</span>
+				<span class="credits">{$t('listen.creditsMax', { count: credits.toLocaleString() })}</span>
 				{#if balanceRemaining !== null}
-					<span class="balance">{t('listen.balanceRemaining', { count: balanceRemaining.toLocaleString() })}</span>
+					<span class="balance">{$t('listen.balanceRemaining', { count: balanceRemaining.toLocaleString() })}</span>
 				{/if}
 			</div>
-			<p class="hint">{t('listen.payAsYouHear')}</p>
+			<p class="hint">{$t('listen.payAsYouHear')}</p>
 			{#if insufficient}
-				<p class="warn-text">{t('listen.insufficient')}</p>
+				<p class="warn-text">{$t('listen.insufficient')}</p>
 			{/if}
 		{/if}
 
 		<button class="generate-btn" onclick={() => submit(false)} disabled={!text.trim() || submitting}>
 			{#if submitting}<Spinner size={14} />{/if}
-			{submitting ? t('listen.preparing') : t('listen.openReader')}
+			{submitting ? $t('listen.preparing') : $t('listen.openReader')}
 		</button>
 
 		{#if errorMsg}
@@ -208,23 +214,33 @@
 	{#if duplicateDocId}
 		<div class="modal-backdrop">
 			<div class="modal" role="dialog" aria-modal="true" tabindex="-1">
-				<h2>{t('listen.duplicateTitle')}</h2>
-				<p>{t('listen.duplicateBody')}</p>
+				<h2>{$t('listen.duplicateTitle')}</h2>
+				<p>{$t('listen.duplicateBody')}</p>
 				<div class="modal-actions">
-					<a class="btn-secondary" href={`/listen/${duplicateDocId}`}>{t('listen.openExisting')}</a>
-					<button class="btn-secondary" onclick={() => (duplicateDocId = null)}>{t('listen.cancel')}</button>
-					<button class="btn-primary" onclick={() => submit(true)}>{t('listen.generateAnyway')}</button>
+					<a class="btn-secondary" href={`/listen/${duplicateDocId}`}>{$t('listen.openExisting')}</a>
+					<button class="btn-secondary" onclick={() => (duplicateDocId = null)}>{$t('listen.cancel')}</button>
+					<button class="btn-primary" onclick={() => submit(true)}>{$t('listen.generateAnyway')}</button>
 				</div>
 			</div>
 		</div>
 	{/if}
 
+	<ConfirmDialog
+		open={confirmDelete !== null}
+		title={$t('listen.delete')}
+		message={confirmDelete ? $t('listen.deleteConfirm', { title: confirmDelete.title }) : ''}
+		confirmLabel={$t('common.delete')}
+		danger
+		onconfirm={performDelete}
+		oncancel={() => (confirmDelete = null)}
+	/>
+
 	<section class="card">
-		<h2 class="history-title">{t('listen.historyTitle')}</h2>
+		<h2 class="history-title">{$t('listen.historyTitle')}</h2>
 		{#if loadingHistory}
 			<div class="center"><Spinner size={20} /></div>
 		{:else if documents.length === 0}
-			<p class="muted">{t('listen.empty')}</p>
+			<p class="muted">{$t('listen.empty')}</p>
 		{:else}
 			<ul class="doc-list">
 				{#each documents as doc (doc.id)}
@@ -232,19 +248,18 @@
 						<a class="doc-link" href={`/listen/${doc.id}`}>
 							<span class="doc-title">{doc.title}</span>
 							<span class="doc-meta">
-								<span>{t('listen.cachedCount', { cached: doc.done_count, total: doc.segment_count })}</span>
-								<span>{t('listen.charsLabel', { count: doc.total_chars.toLocaleString() })}</span>
-								<span class="expiry">{t('listen.expiresIn', { days: expiryDays(doc.expires_at) })}</span>
+								<span>{$t('listen.cachedCount', { cached: doc.done_count, total: doc.segment_count })}</span>
+								<span>{$t('listen.charsLabel', { count: doc.total_chars.toLocaleString() })}</span>
+								<span class="expiry">{$t('listen.expiresIn', { days: expiryDays(doc.expires_at) })}</span>
 							</span>
 						</a>
-						<button class="doc-action" aria-label={t('listen.delete')} onclick={() => deleteDoc(doc.id, doc.title)}>🗑</button>
+						<button class="doc-action" aria-label={$t('listen.delete')} onclick={() => askDelete(doc.id, doc.title)}>🗑</button>
 					</li>
 				{/each}
 			</ul>
 		{/if}
 	</section>
 </div>
-{/key}
 
 <style>
 	.listen-page { max-width: 640px; margin: 0 auto; }

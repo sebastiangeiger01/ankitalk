@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { locale, t } from '$lib/i18n';
+	import { t } from '$lib/i18n';
 	import Spinner from '$lib/components/Spinner.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
 	const deckId = $derived($page.params.id);
 
@@ -19,8 +20,6 @@
 	let learningSteps = $state('1,10');
 	let relearningSteps = $state('10');
 
-	let loc = $state('en');
-	locale.subscribe((v) => { loc = v; });
 
 	async function loadSettings() {
 		try {
@@ -46,7 +45,7 @@
 				relearningSteps = (s.relearning_steps as string) ?? '10';
 			}
 		} catch {
-			saveStatus = t('settings.loadFailed');
+			saveStatus = $t('settings.loadFailed');
 		}
 		loading = false;
 	}
@@ -71,13 +70,13 @@
 			});
 
 			if (res.ok) {
-				saveStatus = t('settings.saved');
+				saveStatus = $t('settings.saved');
 				setTimeout(() => { saveStatus = ''; }, 2000);
 			} else {
-				saveStatus = t('settings.saveFailed');
+				saveStatus = $t('settings.saveFailed');
 			}
 		} catch {
-			saveStatus = t('settings.saveFailed');
+			saveStatus = $t('settings.saveFailed');
 		}
 		saving = false;
 	}
@@ -85,9 +84,11 @@
 	let resetting = $state(false);
 	let deleting = $state(false);
 
-	async function deleteDeck() {
-		if (!confirm(t('settings.deleteConfirm', { name: deckName }))) return;
+	let confirmDelete = $state(false);
+	let confirmReset = $state(false);
 
+	async function performDelete() {
+		confirmDelete = false;
 		deleting = true;
 		try {
 			const res = await fetch(`/api/decks/${deckId}`, { method: 'DELETE' });
@@ -95,14 +96,13 @@
 				goto('/');
 			}
 		} catch {
-			saveStatus = t('settings.saveFailed');
+			saveStatus = $t('settings.saveFailed');
 		}
 		deleting = false;
 	}
 
-	async function resetProgress() {
-		if (!confirm(t('settings.resetConfirm', { name: deckName }))) return;
-
+	async function performReset() {
+		confirmReset = false;
 		resetting = true;
 		try {
 			const res = await fetch(`/api/decks/${deckId}`, {
@@ -111,11 +111,11 @@
 				body: JSON.stringify({ action: 'reset' })
 			});
 			if (res.ok) {
-				saveStatus = t('settings.resetDone');
+				saveStatus = $t('settings.resetDone');
 				setTimeout(() => { saveStatus = ''; }, 3000);
 			}
 		} catch {
-			saveStatus = t('settings.saveFailed');
+			saveStatus = $t('settings.saveFailed');
 		}
 		resetting = false;
 	}
@@ -126,87 +126,107 @@
 </script>
 
 <div class="settings-page">
-	<a href="/" class="back-link">&larr; {t('settings.dashboard')}</a>
+	<a href="/" class="back-link">&larr; {$t('settings.dashboard')}</a>
 
-	<h1>{t('settings.title')}{deckName ? ` — ${deckName}` : ''}</h1>
+	<h1>{$t('settings.title')}{deckName ? ` — ${deckName}` : ''}</h1>
 
 	{#if loading}
 		<div class="page-spinner"><Spinner size={28} /></div>
 	{:else}
 		<form onsubmit={(e) => { e.preventDefault(); save(); }}>
 			<div class="field">
-				<label for="newPerDay">{t('settings.newPerDay')}</label>
+				<label for="newPerDay">{$t('settings.newPerDay')}</label>
 				<input id="newPerDay" type="number" min="0" max="9999" bind:value={newCardsPerDay} />
 			</div>
 
 			<div class="field">
-				<label for="maxReviews">{t('settings.maxReviews')}</label>
+				<label for="maxReviews">{$t('settings.maxReviews')}</label>
 				<input id="maxReviews" type="number" min="0" max="9999" bind:value={maxReviewsPerDay} />
 			</div>
 
 			<div class="field">
-				<label for="retention">{t('settings.retention', { pct: Math.round(desiredRetention * 100) })}</label>
+				<label for="retention">{$t('settings.retention', { pct: Math.round(desiredRetention * 100) })}</label>
 				<input id="retention" type="range" min="0.5" max="0.99" step="0.01" bind:value={desiredRetention} />
-				<span class="helper">{t('settings.retentionHelper')}</span>
+				<span class="helper">{$t('settings.retentionHelper')}</span>
 			</div>
 
 			<div class="field">
-				<label for="maxInterval">{t('settings.maxInterval')}</label>
+				<label for="maxInterval">{$t('settings.maxInterval')}</label>
 				<input id="maxInterval" type="number" min="1" max="36500" bind:value={maxInterval} />
-				<span class="helper">{maxInterval >= 365 ? t('settings.maxIntervalYears', { years: (maxInterval / 365).toFixed(1) }) : t('settings.maxIntervalDays', { days: maxInterval })}</span>
+				<span class="helper">{maxInterval >= 365 ? $t('settings.maxIntervalYears', { years: (maxInterval / 365).toFixed(1) }) : $t('settings.maxIntervalDays', { days: maxInterval })}</span>
 			</div>
 
 			<div class="field">
-				<label for="leechThreshold">{t('settings.leechThreshold')}</label>
+				<label for="leechThreshold">{$t('settings.leechThreshold')}</label>
 				<input id="leechThreshold" type="number" min="1" max="99" bind:value={leechThreshold} />
-				<span class="helper">{t('settings.leechHelper')}</span>
+				<span class="helper">{$t('settings.leechHelper')}</span>
 			</div>
 
 			<div class="field">
-				<label for="learningSteps">{t('settings.learningSteps')}</label>
+				<label for="learningSteps">{$t('settings.learningSteps')}</label>
 				<input id="learningSteps" type="text" bind:value={learningSteps} placeholder="1, 10" />
-				<span class="helper">{t('settings.learningStepsHelper')}</span>
+				<span class="helper">{$t('settings.learningStepsHelper')}</span>
 			</div>
 
 			<div class="field">
-				<label for="relearningSteps">{t('settings.relearningSteps')}</label>
+				<label for="relearningSteps">{$t('settings.relearningSteps')}</label>
 				<input id="relearningSteps" type="text" bind:value={relearningSteps} placeholder="10" />
-				<span class="helper">{t('settings.relearningStepsHelper')}</span>
+				<span class="helper">{$t('settings.relearningStepsHelper')}</span>
 			</div>
 
 			<button type="submit" class="save-btn" disabled={saving}>
 				{#if saving}<Spinner size={14} />{/if}
-				{saving ? t('settings.saving') : t('settings.save')}
+				{saving ? $t('settings.saving') : $t('settings.save')}
 			</button>
 
 			{#if saveStatus}
-				<span class="save-status" class:success={saveStatus === t('settings.saved')} class:error={saveStatus !== t('settings.saved')}>{saveStatus}</span>
+				<span class="save-status" class:success={saveStatus === $t('settings.saved')} class:error={saveStatus !== $t('settings.saved')}>{saveStatus}</span>
 			{/if}
 		</form>
 
 		<div class="danger-zone">
-			<h2>{t('settings.dangerZone')}</h2>
+			<h2>{$t('settings.dangerZone')}</h2>
 			<div class="danger-item">
 				<div>
-					<strong>{t('settings.resetTitle')}</strong>
-					<p class="helper">{t('settings.resetHelper')}</p>
+					<strong>{$t('settings.resetTitle')}</strong>
+					<p class="helper">{$t('settings.resetHelper')}</p>
 				</div>
-				<button class="reset-btn" disabled={resetting} onclick={resetProgress}>
-					{resetting ? t('common.loading') : t('settings.resetButton')}
+				<button class="reset-btn" disabled={resetting} onclick={() => (confirmReset = true)}>
+					{resetting ? $t('common.loading') : $t('settings.resetButton')}
 				</button>
 			</div>
 			<div class="danger-item">
 				<div>
-					<strong>{t('settings.deleteTitle')}</strong>
-					<p class="helper">{t('settings.deleteHelper')}</p>
+					<strong>{$t('settings.deleteTitle')}</strong>
+					<p class="helper">{$t('settings.deleteHelper')}</p>
 				</div>
-				<button class="reset-btn" disabled={deleting} onclick={deleteDeck}>
-					{deleting ? t('common.loading') : t('settings.deleteButton')}
+				<button class="reset-btn" disabled={deleting} onclick={() => (confirmDelete = true)}>
+					{deleting ? $t('common.loading') : $t('settings.deleteButton')}
 				</button>
 			</div>
 		</div>
 	{/if}
 </div>
+
+<ConfirmDialog
+	open={confirmReset}
+	title={$t('settings.resetButton')}
+	message={$t('settings.resetConfirm', { name: deckName })}
+	confirmLabel={$t('settings.resetButton')}
+	danger
+	onconfirm={performReset}
+	oncancel={() => (confirmReset = false)}
+/>
+
+<ConfirmDialog
+	open={confirmDelete}
+	title={$t('settings.deleteButton')}
+	message={$t('settings.deleteConfirm', { name: deckName })}
+	confirmLabel={$t('common.delete')}
+	danger
+	onconfirm={performDelete}
+	oncancel={() => (confirmDelete = false)}
+/>
 
 <style>
 	.settings-page {

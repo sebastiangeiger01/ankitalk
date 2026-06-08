@@ -21,13 +21,13 @@
 </script>
 
 <div class="login-container">
-	<h1>{t('login.title')}</h1>
-	<p class="subtitle">{t('login.subtitle')}</p>
+	<h1>{$t('login.title')}</h1>
+	<p class="subtitle">{$t('login.subtitle')}</p>
 
 	{#if mounted}
 		<hanko-auth></hanko-auth>
 	{:else}
-		<p>{t('login.loading')}</p>
+		<p>{$t('login.loading')}</p>
 	{/if}
 </div>
 

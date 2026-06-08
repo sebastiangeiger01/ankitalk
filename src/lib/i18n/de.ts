@@ -373,4 +373,32 @@ export const de: Record<string, string> = {
 	// Common
 	'common.loading': 'Laden...',
 	'common.error': 'Fehler',
+	'common.cancel': 'Abbrechen',
+	'common.save': 'Speichern',
+	'common.saving': 'Speichere...',
+	'common.delete': 'Löschen',
+	'common.confirm': 'Bestätigen',
+	'common.dismiss': 'Schließen',
+	'common.close': 'Schließen',
+	'common.ok': 'OK',
+
+	// Card editor (modal)
+	'cards.editor.new': 'Neue Karte',
+	'cards.editor.edit': 'Karte bearbeiten',
+	'cards.editor.createAriaLabel': 'Karte erstellen',
+	'cards.editor.editAriaLabel': 'Karte bearbeiten',
+	'cards.editor.tags': 'Tags',
+	'cards.editor.tagsPlaceholder': 'tag1 tag2 tag3',
+	'cards.editor.cardType': 'Kartentyp',
+	'cards.editor.cardTypeBasic': 'Standard',
+	'cards.editor.cardTypeCloze': 'Lückentext',
+	'cards.editor.emptyError': 'Mindestens ein Feld muss ausgefüllt sein',
+	'cards.editor.createFailed': 'Karte konnte nicht erstellt werden',
+	'cards.editor.updateFailed': 'Karte konnte nicht aktualisiert werden',
+	'cards.editor.saveFailed': 'Speichern fehlgeschlagen',
+
+	// Rename dialog
+	'rename.title': 'Umbenennen',
+	'rename.label': 'Neuer Titel',
+	'rename.empty': 'Titel darf nicht leer sein',
 };

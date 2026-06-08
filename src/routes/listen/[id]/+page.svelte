@@ -2,13 +2,13 @@
 	import { onDestroy, onMount, tick } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { locale, t } from '$lib/i18n';
+	import { t } from '$lib/i18n';
 	import Spinner from '$lib/components/Spinner.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import PromptDialog from '$lib/components/PromptDialog.svelte';
 	import { elevenLabsModelCreditMultiplier } from '$lib/voice';
 	import type { ListenSentenceInfo, ListenSentencesResponse } from '$lib/listen/types';
 
-	let loc = $state('en');
-	locale.subscribe((v) => { loc = v; });
 
 	const docId = $derived($page.params.id ?? '');
 
@@ -161,7 +161,7 @@
 		if (typeof navigator === 'undefined' || !('mediaSession' in navigator) || !doc) return;
 		try {
 			navigator.mediaSession.metadata = new MediaMetadata({
-				title: doc.title || t('listen.title'),
+				title: doc.title || $t('listen.title'),
 				artist: 'AnkiTalk',
 				album: sentences[activeSeq]?.text.slice(0, 60) ?? ''
 			});
@@ -255,7 +255,7 @@
 	}
 
 	function onAudioError() {
-		errorMsg = t('listen.streamError');
+		errorMsg = $t('listen.streamError');
 		playing = false;
 		stopPolling();
 	}
@@ -283,7 +283,7 @@
 				body: JSON.stringify({ text: next })
 			});
 			if (!res.ok) {
-				errorMsg = t('listen.editError');
+				errorMsg = $t('listen.editError');
 				return;
 			}
 			const data = (await res.json()) as { text: string; char_count: number; sentence_hash: string };
@@ -297,25 +297,47 @@
 			cachedInitially = init;
 			cancelEdit();
 		} catch {
-			errorMsg = t('listen.editError');
+			errorMsg = $t('listen.editError');
 		}
 	}
 
-	async function rename() {
+	let renameOpen = $state(false);
+	let renameError = $state('');
+	let confirmRemoveOpen = $state(false);
+
+	function rename() {
 		if (!doc) return;
-		const next = prompt(t('listen.rename'), doc.title);
-		if (!next || !next.trim()) return;
+		renameError = '';
+		renameOpen = true;
+	}
+
+	async function performRename(next: string) {
+		if (!doc) return;
+		const trimmed = next.trim();
+		if (!trimmed) {
+			renameError = $t('rename.empty');
+			return;
+		}
 		const res = await fetch(`/api/listen/${docId}`, {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ title: next.trim() })
+			body: JSON.stringify({ title: trimmed })
 		});
-		if (res.ok && doc) doc = { ...doc, title: next.trim() };
+		if (res.ok && doc) {
+			doc = { ...doc, title: trimmed };
+			renameOpen = false;
+		} else {
+			renameError = $t('common.error');
+		}
 	}
 
-	async function remove() {
+	function remove() {
 		if (!doc) return;
-		if (!confirm(t('listen.deleteConfirm', { title: doc.title }))) return;
+		confirmRemoveOpen = true;
+	}
+
+	async function performRemove() {
+		confirmRemoveOpen = false;
 		const res = await fetch(`/api/listen/${docId}`, { method: 'DELETE' });
 		if (res.ok) await goto('/listen');
 	}
@@ -326,33 +348,32 @@
 	}
 </script>
 
-{#key loc}
 <div class="reader">
-	<a href="/listen" class="back-link">&larr; {t('listen.back')}</a>
+	<a href="/listen" class="back-link">&larr; {$t('listen.back')}</a>
 
 	{#if loading}
 		<div class="center"><Spinner size={24} /></div>
 	{:else if notFound || !doc}
-		<p class="muted">{t('listen.notFound')}</p>
+		<p class="muted">{$t('listen.notFound')}</p>
 	{:else}
 		<div class="doc-head">
 			<h1>{doc.title}</h1>
 			<div class="head-actions">
-				<button class="text-btn" onclick={rename}>{t('listen.rename')}</button>
-				<button class="text-btn danger" onclick={remove}>{t('listen.delete')}</button>
+				<button class="text-btn" onclick={rename}>{$t('listen.rename')}</button>
+				<button class="text-btn danger" onclick={remove}>{$t('listen.delete')}</button>
 			</div>
 		</div>
 
 		<div class="doc-sub">
-			<span>{t('listen.cachedCount', { cached: cachedNowCount, total: sentenceCount })}</span>
-			<span>{t('listen.charsLabel', { count: totalChars.toLocaleString() })}</span>
-			<span class="expiry">{t('listen.expiresIn', { days: expiryDays(doc.expires_at) })}</span>
+			<span>{$t('listen.cachedCount', { cached: cachedNowCount, total: sentenceCount })}</span>
+			<span>{$t('listen.charsLabel', { count: totalChars.toLocaleString() })}</span>
+			<span class="expiry">{$t('listen.expiresIn', { days: expiryDays(doc.expires_at) })}</span>
 		</div>
 
 		<p class="legend">
-			<span class="dot dot--cached"></span> {t('listen.legendCached')}
-			<span class="dot dot--listened"></span> {t('listen.legendListened')}
-			<span class="dot dot--default"></span> {t('listen.legendDefault')}
+			<span class="dot dot--cached"></span> {$t('listen.legendCached')}
+			<span class="dot dot--listened"></span> {$t('listen.legendListened')}
+			<span class="dot dot--default"></span> {$t('listen.legendDefault')}
 		</p>
 
 		<div class="text-body">
@@ -361,8 +382,8 @@
 					<div class="sentence-edit">
 						<textarea class="edit-input" bind:value={editingText} rows="3"></textarea>
 						<div class="edit-actions">
-							<button class="edit-btn" onclick={() => saveEdit(s.seq)}>{t('listen.saveEdit')}</button>
-							<button class="edit-btn ghost" onclick={cancelEdit}>{t('listen.cancel')}</button>
+							<button class="edit-btn" onclick={() => saveEdit(s.seq)}>{$t('listen.saveEdit')}</button>
+							<button class="edit-btn ghost" onclick={cancelEdit}>{$t('listen.cancel')}</button>
 						</div>
 					</div>
 				{:else}
@@ -372,10 +393,10 @@
 						class:listened={listenedInSession.has(s.seq) && !s.cached}
 						class:active={s.seq === activeSeq && playing}
 						onclick={() => jumpTo(s.seq)}
-						title={t('listen.tapToJump')}
+						title={$t('listen.tapToJump')}
 					>{s.text}</button><button
 						class="edit-pencil"
-						aria-label={t('listen.edit')}
+						aria-label={$t('listen.edit')}
 						onclick={() => startEdit(s.seq)}
 					>✎</button> </span>
 				{/if}
@@ -387,19 +408,19 @@
 		{/if}
 
 		<div class="player-bar">
-			<button class="skip-btn" onclick={() => jumpTo(activeSeq - 1)} aria-label={t('listen.previous')} disabled={activeSeq <= 0}>⏮</button>
-			<button class="play-btn" onclick={() => togglePlay()} aria-label={playing ? t('listen.pause') : t('listen.play')}>
+			<button class="skip-btn" onclick={() => jumpTo(activeSeq - 1)} aria-label={$t('listen.previous')} disabled={activeSeq <= 0}>⏮</button>
+			<button class="play-btn" onclick={() => togglePlay()} aria-label={playing ? $t('listen.pause') : $t('listen.play')}>
 				{#if playing}❚❚{:else}▶{/if}
 			</button>
-			<button class="skip-btn" onclick={() => jumpTo(activeSeq + 1)} aria-label={t('listen.next')} disabled={activeSeq >= sentences.length - 1}>⏭</button>
+			<button class="skip-btn" onclick={() => jumpTo(activeSeq + 1)} aria-label={$t('listen.next')} disabled={activeSeq >= sentences.length - 1}>⏭</button>
 			<div class="progress">
 				<div class="progress-line">{activeSeq + 1} / {sentenceCount}</div>
 				<div class="bar">
 					<div class="fill" style={`width:${((activeSeq + 1) / sentenceCount) * 100}%`}></div>
 				</div>
 				<div class="credit-line">
-					<span class="spent">−{spentEstimate.toLocaleString()} {t('listen.creditsShort')}</span>
-					<span class="saved">{t('listen.savedLabel', { count: savedEstimate.toLocaleString() })}</span>
+					<span class="spent">−{spentEstimate.toLocaleString()} {$t('listen.creditsShort')}</span>
+					<span class="saved">{$t('listen.savedLabel', { count: savedEstimate.toLocaleString() })}</span>
 				</div>
 			</div>
 		</div>
@@ -414,7 +435,26 @@
 		></audio>
 	{/if}
 </div>
-{/key}
+
+<PromptDialog
+	open={renameOpen}
+	title={$t('rename.title')}
+	label={$t('rename.label')}
+	initialValue={doc?.title ?? ''}
+	errorMessage={renameError}
+	onsave={performRename}
+	oncancel={() => (renameOpen = false)}
+/>
+
+<ConfirmDialog
+	open={confirmRemoveOpen}
+	title={$t('listen.delete')}
+	message={doc ? $t('listen.deleteConfirm', { title: doc.title }) : ''}
+	confirmLabel={$t('common.delete')}
+	danger
+	onconfirm={performRemove}
+	oncancel={() => (confirmRemoveOpen = false)}
+/>
 
 <style>
 	.reader { max-width: 720px; margin: 0 auto; padding-bottom: 7rem; }
