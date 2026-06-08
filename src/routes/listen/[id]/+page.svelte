@@ -494,6 +494,12 @@
 	}
 
 	async function onAudioError() {
+		// Suppress the spurious error fired by closeStream() — when the user pauses we call
+		// removeAttribute('src') + load(), which raises a MEDIA_ERR_* with no real failure
+		// underneath. By that point streamSrc has already been cleared, so this check
+		// distinguishes "we intentionally tore down the element" from "a real load failed
+		// while we were trying to play". Same guard catches the initial-mount empty-src case.
+		if (!streamSrc) return;
 		// Hard-reset the element so the next play attempt opens a fresh stream instead of
 		// retrying the dead source (which would silently no-op until reload).
 		playing = false;
@@ -1073,16 +1079,22 @@
 		touch-action: manipulation;
 	}
 	.speed-btn:hover { border-color: var(--border-strong); }
+	/* Fixed to the viewport, not to the speed button. The button sits in the middle of the
+	   player bar, so anchoring `right: 0` to it pushed the 17rem popover off-screen on
+	   mobile. Docking to the bottom-right of the viewport keeps the whole panel visible
+	   regardless of how the player bar lays out. */
 	.speed-pop {
-		position: absolute; bottom: calc(100% + 0.5rem); right: 0;
+		position: fixed;
+		bottom: calc(5.4rem + env(safe-area-inset-bottom));
+		right: 0.6rem;
 		background: var(--surface);
 		border: 1px solid var(--border);
 		border-radius: var(--r-md);
 		padding: 0.6rem;
 		display: flex; flex-direction: column; gap: 0.5rem;
-		width: 17rem; max-width: calc(100vw - 1.5rem);
+		width: 17rem; max-width: calc(100vw - 1.2rem);
 		box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
-		z-index: 22;
+		z-index: 24;
 	}
 	.speed-section { display: flex; flex-direction: column; gap: 0.35rem; }
 	.speed-section + .speed-section { padding-top: 0.5rem; border-top: 1px solid var(--border-muted); }
