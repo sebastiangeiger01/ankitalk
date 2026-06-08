@@ -29,6 +29,35 @@
 	let editingText = $state('');
 	let pollHandle: ReturnType<typeof setInterval> | null = null;
 
+	// Per-document persisted progress: where you last paused (lastSeq) and the farthest you've
+	// ever reached (maxSeq, used for the "farthest ahead" marker the user asked for). Restored
+	// on mount so reopening a long document drops you back where you were instead of at the top.
+	const PROGRESS_KEY = $derived(`listen-progress:${docId}`);
+	let maxSeq = $state(0);
+	const RATE_KEY = 'listen-playback-rate';
+	let playbackRate = $state(1);
+	let showSpeed = $state(false);
+
+	// "Jump to current sentence" and "scroll to top" affordances. Both visibilities are derived
+	// from scroll position so the floating pills appear only when actually useful.
+	let activeSentenceEl = $state<HTMLElement | null>(null);
+	let scrolledAway = $state(false);
+	let activeOffScreen = $state(false);
+	// Throttle the auto-scroll so it doesn't fight the user mid-flick.
+	let lastAutoScrollSeq = -1;
+
+	// Track the DOM node of the currently-active sentence so the floating "jump to current"
+	// pill can scroll to it. Re-resolved whenever activeSeq or the sentence list changes;
+	// a querySelector pass is cheaper than a per-sentence bind:this for long documents.
+	$effect(() => {
+		void activeSeq;
+		void sentences;
+		activeSentenceEl =
+			document.querySelector<HTMLElement>(`.sentence-wrap[data-seq="${activeSeq}"]`) ?? null;
+		// Recompute off-screen flag after a layout change.
+		onScroll();
+	});
+
 	const totalChars = $derived(doc?.total_chars ?? 0);
 	const sentenceCount = $derived(sentences.length);
 	const multiplier = $derived(elevenLabsModelCreditMultiplier(doc?.tts_model ?? ''));
@@ -71,16 +100,82 @@
 	);
 
 	onMount(async () => {
+		// Restore the saved playback rate (a per-user pref) before mounting the audio element.
+		const savedRate = parseFloat(localStorage.getItem(RATE_KEY) ?? '1');
+		if (savedRate >= 0.5 && savedRate <= 3) playbackRate = savedRate;
 		await load();
 		setupMediaSession();
 		document.addEventListener('visibilitychange', onVisibility);
+		window.addEventListener('scroll', onScroll, { passive: true });
+		await restoreScrollToLastHeard();
 	});
 
 	onDestroy(() => {
 		if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility);
+		if (typeof window !== 'undefined') window.removeEventListener('scroll', onScroll);
 		stopPolling();
 		teardownMediaSession();
+		// Final flush of progress so a quick close after pause still persists.
+		persistProgress();
 	});
+
+	/**
+	 * On open, scroll the sentence the user was last on into view. If there's no saved progress
+	 * (first visit) we stay at the top. We don't auto-play — the user opted into reading,
+	 * not into listening.
+	 */
+	async function restoreScrollToLastHeard() {
+		try {
+			const raw = localStorage.getItem(PROGRESS_KEY);
+			if (!raw) return;
+			const data = JSON.parse(raw) as { lastSeq?: number; maxSeq?: number };
+			if (typeof data.maxSeq === 'number') maxSeq = data.maxSeq;
+			if (typeof data.lastSeq === 'number' && data.lastSeq > 0 && sentences[data.lastSeq]) {
+				// Also seed streamStartSeq so pressing play resumes from where the user left off
+				// (activeSeq is $derived from streamStartSeq + curTime, so this updates the
+				// active highlight too — the seek bar and "X / total" land on the right spot).
+				streamStartSeq = data.lastSeq;
+				await tick();
+				document
+					.querySelector<HTMLElement>(`[data-seq="${data.lastSeq}"]`)
+					?.scrollIntoView({ block: 'center', behavior: 'auto' });
+				lastAutoScrollSeq = data.lastSeq;
+			}
+		} catch {
+			/* corrupted localStorage entry — ignore */
+		}
+	}
+
+	/** Save current position + farthest-seen seq. Debounced via the polling/onEnded cadence. */
+	function persistProgress() {
+		try {
+			localStorage.setItem(
+				PROGRESS_KEY,
+				JSON.stringify({ lastSeq: activeSeq, maxSeq, savedAt: Date.now() })
+			);
+		} catch {
+			/* localStorage full / Safari private mode — silent */
+		}
+	}
+
+	function onScroll() {
+		scrolledAway = window.scrollY > 400;
+		if (!activeSentenceEl) {
+			activeOffScreen = false;
+			return;
+		}
+		const r = activeSentenceEl.getBoundingClientRect();
+		// Off-screen if outside the visible vertical band, accounting for the bottom player.
+		activeOffScreen = r.bottom < 80 || r.top > window.innerHeight - 140;
+	}
+
+	function scrollToTop() {
+		window.scrollTo({ top: 0, behavior: 'smooth' });
+	}
+
+	function scrollToActive() {
+		activeSentenceEl?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+	}
 
 	/**
 	 * Refresh sentence metadata (cache flags + actual durations) while playing. Browsers
@@ -92,6 +187,7 @@
 		if (pollHandle) return;
 		pollHandle = setInterval(() => {
 			if (!document.hidden) refreshSentences();
+			persistProgress();
 		}, 3000);
 	}
 
@@ -226,6 +322,7 @@
 			stopPolling();
 			closeStream();
 			updateMediaMetadata();
+			persistProgress();
 			refreshSentences();
 		}
 	}
@@ -307,10 +404,35 @@
 			next.add(activeSeq);
 			listenedInSession = next;
 		}
+		if (activeSeq > maxSeq) maxSeq = activeSeq;
+		// Auto-scroll the active sentence into view as playback advances — but only when it
+		// changes (not on every timeupdate tick) so we don't fight a user who deliberately
+		// scrolled elsewhere. If the user IS reading elsewhere they'll see the "current
+		// sentence" pill and can opt back in.
+		if (activeSeq !== lastAutoScrollSeq && !activeOffScreen) {
+			lastAutoScrollSeq = activeSeq;
+			activeSentenceEl?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+		}
 		updateMediaMetadata();
 	}
 
+	function onRateChange(value: number) {
+		playbackRate = value;
+		if (audioEl) audioEl.playbackRate = value;
+		try {
+			localStorage.setItem(RATE_KEY, String(value));
+		} catch {
+			/* private mode — silent */
+		}
+	}
+
+	/** Apply the saved rate every time the audio element reattaches (after pause/jump). */
+	function onAudioLoaded() {
+		if (audioEl) audioEl.playbackRate = playbackRate;
+	}
+
 	function onEnded() {
+		persistProgress();
 		playing = false;
 		stopPolling();
 		updateMediaMetadata();
@@ -450,7 +572,11 @@
 						</div>
 					</div>
 				{:else}
-					<span class="sentence-wrap"><button
+					<span
+						class="sentence-wrap"
+						class:farthest={maxSeq > 0 && s.seq === maxSeq}
+						data-seq={s.seq}
+					><button
 						class="sentence"
 						class:cached={s.cached}
 						class:listened={listenedInSession.has(s.seq) && !s.cached}
@@ -470,12 +596,50 @@
 			<p class="error-text">{errorMsg}</p>
 		{/if}
 
+		<!-- Floating affordances: surface "scroll to top" and "jump to current sentence" only
+		     when actually useful, so they never obstruct reading. -->
+		<div class="float-bar" aria-hidden={!(scrolledAway || (playing && activeOffScreen))}>
+			{#if scrolledAway}
+				<button class="float-pill" onclick={scrollToTop} aria-label={$t('listen.scrollToTop')} title={$t('listen.scrollToTop')}>↑</button>
+			{/if}
+			{#if playing && activeOffScreen}
+				<button class="float-pill primary" onclick={scrollToActive} aria-label={$t('listen.jumpToCurrent')}>
+					● {$t('listen.jumpToCurrent')}
+				</button>
+			{/if}
+		</div>
+
 		<div class="player-bar">
 			<button class="skip-btn" onclick={() => jumpTo(activeSeq - 1)} aria-label={$t('listen.previous')} disabled={activeSeq <= 0}>⏮</button>
 			<button class="play-btn" onclick={() => togglePlay()} aria-label={playing ? $t('listen.pause') : $t('listen.play')}>
 				{#if playing}❚❚{:else}▶{/if}
 			</button>
 			<button class="skip-btn" onclick={() => jumpTo(activeSeq + 1)} aria-label={$t('listen.next')} disabled={activeSeq >= sentences.length - 1}>⏭</button>
+			<!-- Speed control: client-side audio.playbackRate, so it's instant, free, and applies
+			     to already-cached sentences too. The popover stays open until the user dismisses
+			     or picks a value. -->
+			<div class="speed-wrap">
+				<button
+					class="speed-btn"
+					onclick={() => (showSpeed = !showSpeed)}
+					aria-haspopup="menu"
+					aria-expanded={showSpeed}
+					aria-label={$t('listen.speedAria')}
+				>{playbackRate}×</button>
+				{#if showSpeed}
+					<div class="speed-pop" role="menu">
+						{#each [0.75, 1, 1.25, 1.5, 1.75, 2] as r}
+							<button
+								class="speed-opt"
+								class:active={playbackRate === r}
+								role="menuitemradio"
+								aria-checked={playbackRate === r}
+								onclick={() => { onRateChange(r); showSpeed = false; }}
+							>{r}×</button>
+						{/each}
+					</div>
+				{/if}
+			</div>
 			<div class="progress">
 				<div class="progress-line">
 					<span>{activeSeq + 1} / {sentenceCount}</span>
@@ -511,6 +675,7 @@
 			ontimeupdate={onTimeUpdate}
 			onended={onEnded}
 			onerror={onAudioError}
+			onloadeddata={onAudioLoaded}
 			preload="none"
 		></audio>
 	{/if}
@@ -579,6 +744,20 @@
 
 	.sentence-wrap { display: inline; }
 
+	/**
+	 * "Farthest ahead" marker: a small caret/line in the left margin next to the highest seq
+	 * the user has ever reached. Subtle enough to read past, but visible when scanning back
+	 * to "where was I". `position: relative` on the inline wrap is fine — the pseudo is
+	 * absolute-positioned to the line, not the wrap.
+	 */
+	.sentence-wrap.farthest {
+		position: relative;
+		background: linear-gradient(to right, color-mix(in srgb, var(--warning) 28%, transparent), transparent 6em);
+		border-radius: var(--r-sm);
+		padding-left: 0.25rem;
+		box-shadow: inset 3px 0 0 var(--warning);
+	}
+
 	.sentence {
 		display: inline;
 		background: none;
@@ -645,6 +824,72 @@
 		display: flex; align-items: center; gap: 0.6rem;
 		z-index: 20;
 	}
+
+	/* Floating affordances above the player. Sits at the bottom-right above the player bar,
+	   never covers the seek progress, and respects iOS safe-area inset. */
+	.float-bar {
+		position: fixed;
+		right: 0.75rem;
+		bottom: calc(5.5rem + env(safe-area-inset-bottom));
+		display: flex; flex-direction: column; gap: 0.4rem; align-items: flex-end;
+		z-index: 21;
+		pointer-events: none;
+	}
+	.float-bar[aria-hidden='true'] { display: none; }
+	.float-pill {
+		pointer-events: auto;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		color: var(--text);
+		padding: 0.55rem 0.85rem;
+		border-radius: var(--r-pill);
+		font-size: 0.82rem; font-weight: 600;
+		cursor: pointer;
+		box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+		min-height: 44px;
+		display: inline-flex; align-items: center; gap: 0.35rem;
+		touch-action: manipulation;
+	}
+	.float-pill.primary { background: var(--primary); border-color: var(--primary-hover); }
+	.float-pill:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+
+	/* Speed control: the popover sits above the player bar to the right of the skip controls. */
+	.speed-wrap { position: relative; flex-shrink: 0; }
+	.speed-btn {
+		min-width: 44px; min-height: 44px;
+		padding: 0 0.7rem;
+		border-radius: var(--r-pill);
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: var(--text);
+		font-size: 0.82rem; font-weight: 600;
+		cursor: pointer;
+		font-variant-numeric: tabular-nums;
+		touch-action: manipulation;
+	}
+	.speed-btn:hover { border-color: var(--border-strong); }
+	.speed-pop {
+		position: absolute; bottom: calc(100% + 0.5rem); right: 0;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--r-md);
+		padding: 0.35rem;
+		display: flex; flex-direction: column; gap: 0.15rem;
+		min-width: 5rem;
+		box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+		z-index: 22;
+	}
+	.speed-opt {
+		background: none; border: none; color: var(--text);
+		padding: 0.5rem 0.7rem;
+		text-align: left;
+		border-radius: var(--r-sm);
+		font-size: 0.9rem; cursor: pointer;
+		font-variant-numeric: tabular-nums;
+		min-height: 36px;
+	}
+	.speed-opt:hover { background: var(--surface-elevated); }
+	.speed-opt.active { background: var(--primary); color: var(--text); font-weight: 600; }
 
 	.play-btn {
 		flex-shrink: 0;

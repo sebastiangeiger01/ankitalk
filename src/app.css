@@ -46,6 +46,18 @@
 }
 
 /**
+ * iOS Safari zooms into form controls whose computed font-size is < 16px on focus, with no
+ * documented way to opt out — only making the font ≥ 16px reliably suppresses it. Bumping it
+ * only on touch-class viewports keeps desktop layouts visually intact. Desktop users barely
+ * notice the 1–2px bump; mobile users no longer get the page yanked under their finger.
+ */
+@media (max-width: 768px) {
+	input, textarea, select {
+		font-size: 16px;
+	}
+}
+
+/**
  * Honor the OS-level "reduce motion" setting. Keeps animations functional (so opacity fades
  * still happen) but compresses their duration to effectively instant, killing the infinite
  * shimmer/pulse/spinner loops that cause vestibular discomfort.

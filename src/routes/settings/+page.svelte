@@ -990,6 +990,10 @@
 	.key-link-hint a {
 		color: #7a7aaa;
 		text-decoration: underline;
+		/* Long provider URLs (console.anthropic.com/..., elevenlabs.io/...) would otherwise
+		   force the whole settings page to scroll horizontally on a 320–375px viewport. */
+		overflow-wrap: anywhere;
+		word-break: break-word;
 	}
 
 	.key-link-hint a:hover {

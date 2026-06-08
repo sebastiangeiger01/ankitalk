@@ -1265,7 +1265,8 @@
 		border: 1px solid var(--border);
 		border-radius: 14px;
 		padding: 1.25rem 1.5rem;
-		min-width: 300px;
+		/* No min-width: at 320px viewport, 300px > calc(100vw - 2rem) (288px) and pushes the
+		   overlay past the right edge. Let the content (table + kbd labels) drive the width. */
 		max-width: min(480px, calc(100vw - 2rem));
 		max-height: calc(100vh - 4rem);
 		max-height: calc(100dvh - 4rem);
