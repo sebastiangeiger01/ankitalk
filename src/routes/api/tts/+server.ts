@@ -5,8 +5,12 @@ import { logUsage, calculateElevenLabsTtsCost, calculateTtsCost } from '$lib/ser
 import { getDb } from '$lib/server/db';
 import { getUserVoiceSettings } from '$lib/server/voice-settings';
 import { makeTtsCachePayload } from '$lib/server/tts-cache';
+import { enforceRateLimit, RATE_LIMITS } from '$lib/server/rate-limit';
 import type { RequestHandler } from './$types';
 import type { VoiceProvider } from '$lib/voice';
+
+/** Cap one TTS call at 5000 chars — matches the ElevenLabs single-call cap. */
+const MAX_TTS_TEXT_CHARS = 5000;
 
 async function makeTtsCacheRequest(
 	userId: string,
@@ -30,13 +34,21 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 
 	const userId = locals.userId;
 	const db = getDb(platform!);
+
+	await enforceRateLimit(platform!.env.KV, userId, 'tts', RATE_LIMITS.tts_per_minute.limit, RATE_LIMITS.tts_per_minute.windowSec);
+
 	const voiceSettings = await getUserVoiceSettings(db, userId);
 
-	const body = (await request.json()) as { text: string; voice?: string; speed?: number };
-	const { text, voice, speed } = body;
+	const body = (await request.json().catch(() => ({}))) as { text?: unknown; voice?: unknown; speed?: unknown };
+	const text = body.text;
+	const voice = typeof body.voice === 'string' ? body.voice : undefined;
+	const speed = typeof body.speed === 'number' ? body.speed : undefined;
 
-	if (!text || typeof text !== 'string') {
+	if (typeof text !== 'string' || !text.trim()) {
 		throw error(400, 'Missing text');
+	}
+	if (text.length > MAX_TTS_TEXT_CHARS) {
+		throw error(413, `Text too long (max ${MAX_TTS_TEXT_CHARS} characters)`);
 	}
 
 	// Check Cloudflare edge cache before hitting OpenAI or even fetching the API key.

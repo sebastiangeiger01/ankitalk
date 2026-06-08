@@ -21,13 +21,13 @@
 </script>
 
 <div class="login-container">
-	<h1>{t('login.title')}</h1>
-	<p class="subtitle">{t('login.subtitle')}</p>
+	<h1>{$t('login.title')}</h1>
+	<p class="subtitle">{$t('login.subtitle')}</p>
 
 	{#if mounted}
 		<hanko-auth></hanko-auth>
 	{:else}
-		<p>{t('login.loading')}</p>
+		<p>{$t('login.loading')}</p>
 	{/if}
 </div>
 
@@ -41,12 +41,12 @@
 
 	h1 {
 		font-size: 2rem;
-		color: #e0e0ff;
+		color: var(--text);
 		margin-bottom: 0.25rem;
 	}
 
 	.subtitle {
-		color: #a8a8b8;
+		color: var(--text-muted);
 		margin-bottom: 2rem;
 	}
 </style>

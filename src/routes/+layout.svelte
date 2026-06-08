@@ -1,11 +1,10 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import type { LayoutData } from './$types';
-	import { locale, t } from '$lib/i18n';
+	import { t } from '$lib/i18n';
+	import '../app.css';
 
 	let { children, data }: { children: Snippet; data: LayoutData } = $props();
-	let loc = $state('en');
-	locale.subscribe((v) => { loc = v; });
 
 	async function logout() {
 		const { register } = await import('@teamhanko/hanko-elements');
@@ -22,14 +21,14 @@
 
 {#if data.userId}
 	<nav>
-		<a href="/" class="brand">{t('nav.title')}</a>
+		<a href="/" class="brand">{$t('nav.title')}</a>
 		<div class="nav-right">
-			<a href="/" class="nav-tab">{t('nav.learn')}</a>
-			<a href="/listen" class="nav-tab">{t('nav.listen')}</a>
-			<a href="/settings" class="nav-icon" aria-label={t('nav.settings')} title={t('nav.settings')}>
+			<a href="/" class="nav-tab">{$t('nav.learn')}</a>
+			<a href="/listen" class="nav-tab">{$t('nav.listen')}</a>
+			<a href="/settings" class="nav-icon" aria-label={$t('nav.settings')} title={$t('nav.settings')}>
 				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
 			</a>
-			<button class="nav-icon icon-btn" onclick={logout} aria-label={t('nav.logout')} title={t('nav.logout')}>
+			<button class="nav-icon icon-btn" onclick={logout} aria-label={$t('nav.logout')} title={$t('nav.logout')}>
 				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
 			</button>
 		</div>
@@ -46,14 +45,14 @@
 	:global(body) {
 		margin: 0;
 		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-		background: #1a1a2e;
-		color: #e0e0ff;
+		background: var(--bg);
+		color: var(--text);
 		min-height: 100dvh;
 		overflow-x: hidden;
 	}
 
 	:global(*:focus-visible) {
-		outline: 2px solid #6ecb63;
+		outline: 2px solid var(--success);
 		outline-offset: 2px;
 	}
 
@@ -67,11 +66,11 @@
 		align-items: center;
 		padding: 1rem 1.5rem;
 		padding-top: max(1rem, env(safe-area-inset-top));
-		border-bottom: 1px solid #2a2a4e;
+		border-bottom: 1px solid var(--border-muted);
 	}
 
 	.brand {
-		color: #e0e0ff;
+		color: var(--text);
 		text-decoration: none;
 		font-weight: 600;
 		font-size: 1.1rem;
@@ -95,11 +94,17 @@
 		color: #fff;
 	}
 
+	/* All nav targets sized to the WCAG 2.5.8 / Apple HIG 44px minimum tap target. */
 	.icon-btn {
 		background: none;
 		border: none;
 		padding: 0.3rem;
 		cursor: pointer;
+		min-width: 44px;
+		min-height: 44px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 	}
 
 	.nav-icon {
@@ -108,12 +113,14 @@
 		justify-content: center;
 		color: #b0b0c0;
 		padding: 0.3rem;
-		border-radius: 6px;
+		border-radius: var(--r-sm);
 		transition: color 0.15s;
+		min-width: 44px;
+		min-height: 44px;
 	}
 
 	.nav-icon:hover {
-		color: #e0e0ff;
+		color: var(--text);
 	}
 
 	nav button {

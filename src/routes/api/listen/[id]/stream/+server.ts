@@ -4,7 +4,19 @@ import { getUserApiKey } from '$lib/server/user-keys';
 import { getUserVoiceSettings } from '$lib/server/voice-settings';
 import { buildListenTtsSettings, type ListenDocumentRow } from '$lib/server/listen';
 import { getOrSynthesizeSentence } from '$lib/server/listen-tts';
+import { hashSentence } from '$lib/listen/sentences';
+import { enforceRateLimit, RATE_LIMITS } from '$lib/server/rate-limit';
 import type { RequestHandler } from './$types';
+
+/** ElevenLabs' supported speed range (per their docs). Stay strictly inside it. */
+const MIN_GEN_SPEED = 0.7;
+const MAX_GEN_SPEED = 1.2;
+
+function clampSpeed(raw: string | null): number {
+	const n = raw === null ? 1 : Number(raw);
+	if (!Number.isFinite(n)) return 1;
+	return Math.max(MIN_GEN_SPEED, Math.min(MAX_GEN_SPEED, n));
+}
 
 interface SentenceRow {
 	seq: number;
@@ -26,8 +38,11 @@ export const GET: RequestHandler = async ({ params, url, platform, locals }) => 
 	if (!locals.userId) throw error(401, 'Unauthorized');
 
 	const userId = locals.userId;
+	await enforceRateLimit(platform!.env.KV, userId, 'listen_stream', RATE_LIMITS.listen_stream_per_minute.limit, RATE_LIMITS.listen_stream_per_minute.windowSec);
+
 	const from = Math.max(0, Number(url.searchParams.get('from') ?? 0));
 	if (!Number.isFinite(from)) throw error(400, 'Invalid from');
+	const genSpeed = clampSpeed(url.searchParams.get('speed'));
 
 	const db = getDb(platform!);
 	const doc = await db
@@ -53,9 +68,14 @@ export const GET: RequestHandler = async ({ params, url, platform, locals }) => 
 	if (!sentences.length) throw error(404, 'No sentences');
 
 	const saved = await getUserVoiceSettings(db, userId);
-	const settings = buildListenTtsSettings(saved, doc.voice_id, doc.tts_model);
+	// Apply the request-time generation speed on top of the user's saved settings, so the
+	// synthesized voice runs at the requested tempo for *new* sentences. The user's saved
+	// speed pref isn't mutated — this is purely a per-stream override (which can also map
+	// 1.0 → use whatever was already cached).
+	const settings = { ...buildListenTtsSettings(saved, doc.voice_id, doc.tts_model), elevenlabs_tts_speed: genSpeed };
 	const language = doc.language ?? undefined;
 	const media = platform!.env.MEDIA;
+	const kv = platform!.env.KV;
 
 	const ctx = platform!.context;
 	const waitUntil = (p: Promise<unknown>) => ctx.waitUntil(p.catch(() => undefined));
@@ -77,14 +97,23 @@ export const GET: RequestHandler = async ({ params, url, platform, locals }) => 
 			const realStart = Date.now();
 			try {
 				for (const sentence of sentences) {
+					// At the default 1.0× speed this resolves to the same hash that's stored on
+					// listen_sentences (and on existing cache rows), so existing cache still hits.
+					// At any other speed, the payload picks up the speed value and produces a
+					// distinct hash — that speed gets its own cache lane, no cross-tempo bleed.
+					const cacheHash =
+						genSpeed === 1
+							? sentence.sentence_hash
+							: await hashSentence(sentence.text, doc.voice_id, doc.tts_model, language ?? '', genSpeed);
 					const result = await getOrSynthesizeSentence(
 						db,
 						media,
+						kv,
 						userId,
 						apiKey,
 						sentence.text,
 						sentence.char_count,
-						sentence.sentence_hash,
+						cacheHash,
 						settings,
 						language,
 						waitUntil

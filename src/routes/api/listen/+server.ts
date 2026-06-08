@@ -18,7 +18,13 @@ export const GET: RequestHandler = async ({ platform, locals }) => {
 	if (!locals.userId) throw error(401, 'Unauthorized');
 
 	const db = getDb(platform!);
-	platform?.context?.waitUntil(cleanupExpiredListenDocuments(db, platform!.env.MEDIA, locals.userId));
+	// Throttle the opportunistic cleanup: it does N+1 D1 queries per expired doc and was
+	// running on every history fetch. Sampling at ~5% means a typical user triggers it once
+	// every ~20 page loads — bounded work per request, expired rows still get reaped within
+	// a normal session, no cron needed.
+	if (Math.random() < 0.05) {
+		platform?.context?.waitUntil(cleanupExpiredListenDocuments(db, platform!.env.MEDIA, locals.userId));
+	}
 
 	// Only reader-model (v2) documents show up in the history — legacy rows without
 	// original_text are hidden so users see one consistent experience.

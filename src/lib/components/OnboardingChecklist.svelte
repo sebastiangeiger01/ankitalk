@@ -14,13 +14,13 @@
 	let canStartReview = $derived(hasRequiredKeys && hasDecks);
 </script>
 
-<div class="checklist-card" role="complementary" aria-label={t('onboarding.title')}>
+<div class="checklist-card" role="complementary" aria-label={$t('onboarding.title')}>
 	<div class="checklist-header">
 		<div class="checklist-titles">
-			<h2>{t('onboarding.title')}</h2>
-			<p class="subtitle">{t('onboarding.subtitle')}</p>
+			<h2>{$t('onboarding.title')}</h2>
+			<p class="subtitle">{$t('onboarding.subtitle')}</p>
 		</div>
-		<button class="dismiss-btn" onclick={onDismiss} aria-label={t('onboarding.dismiss')} title={t('onboarding.dismiss')}>
+		<button class="dismiss-btn" onclick={onDismiss} aria-label={$t('onboarding.dismiss')} title={$t('onboarding.dismiss')}>
 			<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
 				<path d="M3 3L13 13M13 3L3 13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
 			</svg>
@@ -32,11 +32,11 @@
 		<li class="step done">
 			<span class="step-icon" aria-hidden="true">
 				<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-					<circle cx="8" cy="8" r="7" fill="#6ecb63" stroke="#6ecb63"/>
+					<circle cx="8" cy="8" r="7" fill="var(--success)" stroke="var(--success)"/>
 					<path d="M4.5 8.5L7 11L11.5 6" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
 				</svg>
 			</span>
-			<span class="step-label">{t('onboarding.createAccount')}</span>
+			<span class="step-label">{$t('onboarding.createAccount')}</span>
 		</li>
 
 		<!-- Step 2: Add API keys -->
@@ -44,21 +44,21 @@
 			<span class="step-icon" aria-hidden="true">
 				{#if hasRequiredKeys}
 					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-						<circle cx="8" cy="8" r="7" fill="#6ecb63" stroke="#6ecb63"/>
+						<circle cx="8" cy="8" r="7" fill="var(--success)" stroke="var(--success)"/>
 						<path d="M4.5 8.5L7 11L11.5 6" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
 					</svg>
 				{:else}
 					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-						<circle cx="8" cy="8" r="7" stroke="#5a5a8e" stroke-width="1.5"/>
+						<circle cx="8" cy="8" r="7" stroke="var(--border-strong)" stroke-width="1.5"/>
 					</svg>
 				{/if}
 			</span>
 			{#if hasRequiredKeys}
-				<span class="step-label">{t('onboarding.addApiKeys')}</span>
+				<span class="step-label">{$t('onboarding.addApiKeys')}</span>
 			{:else}
 				<a href="/settings" class="step-link">
-					<span class="step-label step-label--action">{t('onboarding.addApiKeys')}</span>
-					<span class="step-desc">{t('onboarding.addApiKeysDesc')}</span>
+					<span class="step-label step-label--action">{$t('onboarding.addApiKeys')}</span>
+					<span class="step-desc">{$t('onboarding.addApiKeysDesc')}</span>
 					<span class="step-arrow" aria-hidden="true">&rsaquo;</span>
 				</a>
 			{/if}
@@ -69,20 +69,16 @@
 			<span class="step-icon" aria-hidden="true">
 				{#if hasDecks}
 					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-						<circle cx="8" cy="8" r="7" fill="#6ecb63" stroke="#6ecb63"/>
+						<circle cx="8" cy="8" r="7" fill="var(--success)" stroke="var(--success)"/>
 						<path d="M4.5 8.5L7 11L11.5 6" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
 					</svg>
 				{:else}
 					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-						<circle cx="8" cy="8" r="7" stroke="#5a5a8e" stroke-width="1.5"/>
+						<circle cx="8" cy="8" r="7" stroke="var(--border-strong)" stroke-width="1.5"/>
 					</svg>
 				{/if}
 			</span>
-			{#if hasDecks}
-				<span class="step-label">{t('onboarding.importDeck')}</span>
-			{:else}
-				<span class="step-label">{t('onboarding.importDeck')}</span>
-			{/if}
+			<span class="step-label">{$t('onboarding.importDeck')}</span>
 		</li>
 
 		<!-- Step 4: Start first review -->
@@ -90,16 +86,16 @@
 			<span class="step-icon" aria-hidden="true">
 				{#if hasReviewed}
 					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-						<circle cx="8" cy="8" r="7" fill="#6ecb63" stroke="#6ecb63"/>
+						<circle cx="8" cy="8" r="7" fill="var(--success)" stroke="var(--success)"/>
 						<path d="M4.5 8.5L7 11L11.5 6" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
 					</svg>
 				{:else}
 					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-						<circle cx="8" cy="8" r="7" stroke="#5a5a8e" stroke-width="1.5"/>
+						<circle cx="8" cy="8" r="7" stroke="var(--border-strong)" stroke-width="1.5"/>
 					</svg>
 				{/if}
 			</span>
-			<span class="step-label">{t('onboarding.startReview')}</span>
+			<span class="step-label">{$t('onboarding.startReview')}</span>
 		</li>
 	</ul>
 </div>
@@ -107,7 +103,7 @@
 <style>
 	.checklist-card {
 		background: #1e1e38;
-		border: 1px solid #3a3a6e;
+		border: 1px solid var(--primary);
 		border-radius: 12px;
 		padding: 1.25rem 1.5rem;
 		margin-bottom: 2rem;
@@ -131,7 +127,7 @@
 		margin: 0 0 0.2rem;
 		font-size: 1rem;
 		font-weight: 700;
-		color: #e0e0ff;
+		color: var(--text);
 	}
 
 	.subtitle {
@@ -157,7 +153,7 @@
 	}
 
 	.dismiss-btn:hover {
-		background: #2a2a4e;
+		background: var(--border-muted);
 		color: #c0c0e0;
 	}
 
@@ -190,18 +186,18 @@
 	.step-label--action {
 		color: #a0a0e0;
 		text-decoration: underline;
-		text-decoration-color: #5a5a8e;
+		text-decoration-color: var(--border-strong);
 		text-underline-offset: 2px;
 	}
 
 	.step.done .step-label {
 		color: #a0a0c8;
 		text-decoration: line-through;
-		text-decoration-color: #5a5a8e;
+		text-decoration-color: var(--border-strong);
 	}
 
 	.step.disabled .step-label {
-		color: #5a5a8e;
+		color: var(--border-strong);
 	}
 
 	.step-link {
@@ -230,7 +226,7 @@
 	.step-arrow {
 		margin-left: auto;
 		font-size: 1.2rem;
-		color: #5a5a8e;
+		color: var(--border-strong);
 		flex-shrink: 0;
 	}
 

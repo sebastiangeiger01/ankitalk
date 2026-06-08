@@ -10,6 +10,7 @@ declare global {
 				KV: KVNamespace;
 				MEDIA: R2Bucket;
 				HANKO_API_URL: string;
+				HANKO_AUDIENCE?: string;
 				ENCRYPTION_KEY: string;
 			};
 			context: ExecutionContext;

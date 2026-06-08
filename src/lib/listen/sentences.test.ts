@@ -120,6 +120,20 @@ describe('hashSentence', () => {
 		const b = await hashSentence('Goodbye world', 'v1', 'm1', 'de');
 		expect(a).not.toBe(b);
 	});
+
+	it('matches the no-speed signature at speed 1 (cache backward-compat)', async () => {
+		// Critical invariant: passing speed=1 must produce the same hash as omitting it, or
+		// every existing cache row + listen_sentences row in production would silently miss.
+		const noSpeed = await hashSentence('Hello world', 'v1', 'm1', 'de');
+		const explicitOne = await hashSentence('Hello world', 'v1', 'm1', 'de', 1);
+		expect(explicitOne).toBe(noSpeed);
+	});
+
+	it('changes when generation speed is non-default', async () => {
+		const base = await hashSentence('Hello world', 'v1', 'm1', 'de');
+		expect(await hashSentence('Hello world', 'v1', 'm1', 'de', 1.2)).not.toBe(base);
+		expect(await hashSentence('Hello world', 'v1', 'm1', 'de', 0.8)).not.toBe(base);
+	});
 });
 
 describe('mp3 duration estimates', () => {
