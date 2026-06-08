@@ -50,24 +50,12 @@ export const POST: RequestHandler = async ({ params, request, platform, locals }
 	// Detect leech: card rated "again" and lapses reach threshold
 	const leeched = rating === 'again' && result.fsrsLapses >= leechThreshold;
 
-	// Batch: insert review (with FSRS snapshot for undo) + update card + bury siblings + optionally suspend leech
+	// D1 `batch()` runs statements sequentially and is NOT a transaction with rollback. We
+	// order the card UPDATE before the review INSERT so that a partial failure leaves the
+	// card updated with no undo trail (recoverable, just no undo) rather than the inverse
+	// (a review row referencing state the card never reached, which corrupts future undos).
 	const reviewId = newId();
 	const statements = [
-		db
-			.prepare(
-				`INSERT INTO reviews (id, user_id, card_id, deck_id, rating, duration_ms,
-					prev_due_at, prev_fsrs_state, prev_fsrs_stability, prev_fsrs_difficulty,
-					prev_fsrs_elapsed_days, prev_fsrs_scheduled_days, prev_fsrs_reps, prev_fsrs_lapses, prev_fsrs_last_review,
-					prev_learning_step_index)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-			)
-			.bind(
-				reviewId, locals.userId, card.id, card.deck_id, rating, durationMs ?? null,
-				card.due_at, card.fsrs_state, card.fsrs_stability, card.fsrs_difficulty,
-				card.fsrs_elapsed_days, card.fsrs_scheduled_days, card.fsrs_reps, card.fsrs_lapses,
-				card.fsrs_last_review,
-				card.learning_step_index ?? 0
-			),
 		db
 			.prepare(
 				`UPDATE cards SET
@@ -96,6 +84,22 @@ export const POST: RequestHandler = async ({ params, request, platform, locals }
 				result.fsrsLastReview,
 				result.learningStepIndex,
 				card.id
+			),
+		db
+			.prepare(
+				`INSERT INTO reviews (id, user_id, card_id, deck_id, rating, duration_ms,
+					prev_due_at, prev_fsrs_state, prev_fsrs_stability, prev_fsrs_difficulty,
+					prev_fsrs_elapsed_days, prev_fsrs_scheduled_days, prev_fsrs_reps, prev_fsrs_lapses, prev_fsrs_last_review,
+					prev_learning_step_index, prev_suspended)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			)
+			.bind(
+				reviewId, locals.userId, card.id, card.deck_id, rating, durationMs ?? null,
+				card.due_at, card.fsrs_state, card.fsrs_stability, card.fsrs_difficulty,
+				card.fsrs_elapsed_days, card.fsrs_scheduled_days, card.fsrs_reps, card.fsrs_lapses,
+				card.fsrs_last_review,
+				card.learning_step_index ?? 0,
+				card.suspended ?? 0
 			),
 		// Bury siblings (other cards from same note in same deck)
 		db

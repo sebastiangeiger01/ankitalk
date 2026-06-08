@@ -1,8 +1,63 @@
-import { redirect, type Handle } from '@sveltejs/kit';
-import { verifyHankoToken } from '$lib/server/auth';
+import { error, redirect, type Handle } from '@sveltejs/kit';
+import { getRemoteHankoJwks, verifyHankoToken } from '$lib/server/auth';
 import { getDb, newId } from '$lib/server/db';
 
 const PUBLIC_PATHS = ['/login'];
+const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/**
+ * Defense-in-depth CSRF: refuse mutating `/api/*` calls whose Origin doesn't match the
+ * request host. SvelteKit's built-in `csrf.checkOrigin` already rejects cross-site posts
+ * with form-encoded content types; this extends the check to JSON requests (which a
+ * cross-site `fetch()` cannot send without a CORS preflight, but a misconfigured proxy
+ * could). `Sec-Fetch-Site` is the modern signal; `Origin` is the fallback.
+ */
+function enforceSameOrigin(event: Parameters<Handle>[0]['event']) {
+	if (!UNSAFE_METHODS.has(event.request.method)) return;
+	if (!event.url.pathname.startsWith('/api/')) return;
+
+	const fetchSite = event.request.headers.get('sec-fetch-site');
+	if (fetchSite) {
+		// Modern browsers always send this. "none" = directly typed URL (impossible for fetch),
+		// "same-origin" = our own pages. Anything else (same-site, cross-site) is rejected.
+		if (fetchSite !== 'same-origin') {
+			throw error(403, 'Cross-origin request blocked');
+		}
+		return;
+	}
+
+	// Fallback for older clients: require Origin to match the request URL.
+	const origin = event.request.headers.get('origin');
+	if (!origin) {
+		// No Origin and no Sec-Fetch-Site on a mutating API call is highly unusual — block.
+		throw error(403, 'Origin required');
+	}
+	try {
+		if (new URL(origin).origin !== event.url.origin) {
+			throw error(403, 'Cross-origin request blocked');
+		}
+	} catch {
+		throw error(403, 'Invalid origin');
+	}
+}
+
+/**
+ * Recommended baseline headers for any HTML/document response. We deliberately omit a CSP
+ * here because Hanko Elements loads its own script + connects to the Hanko API; setting a
+ * tight CSP requires testing the full Hanko allowlist and is the next iteration. The
+ * headers below are pure wins with no runtime risk.
+ */
+const SECURITY_HEADERS: Record<string, string> = {
+	'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload',
+	'X-Frame-Options': 'DENY',
+	'X-Content-Type-Options': 'nosniff',
+	'Referrer-Policy': 'strict-origin-when-cross-origin',
+	// Microphone is needed for voice review (Deepgram/ElevenLabs STT); nothing else.
+	'Permissions-Policy': 'camera=(), microphone=(self), geolocation=(), interest-cohort=()'
+};
+
+/** Throttle `users.updated_at` to once per day per user — was firing on every request. */
+const UPDATED_AT_TTL_SECONDS = 24 * 60 * 60;
 
 export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.userId = null;
@@ -14,11 +69,15 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	const token = event.cookies.get('hanko');
-	const hankoId = await verifyHankoToken(token, hankoApiUrl);
+	const hankoId = await verifyHankoToken(token, {
+		issuer: hankoApiUrl,
+		audience: event.platform?.env.HANKO_AUDIENCE,
+		jwks: getRemoteHankoJwks(hankoApiUrl)
+	});
 
 	if (hankoId) {
-		// Upsert user in D1
 		const db = getDb(event.platform!);
+		const kv = event.platform!.env.KV;
 		const existing = await db
 			.prepare('SELECT id FROM users WHERE hanko_id = ?')
 			.bind(hankoId)
@@ -26,10 +85,19 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 		if (existing) {
 			event.locals.userId = existing.id;
-			await db
-				.prepare("UPDATE users SET updated_at = datetime('now') WHERE id = ?")
-				.bind(existing.id)
-				.run();
+			// Skip the per-request `updated_at` write if we've already touched this user today.
+			const touchKey = `user-touched:${existing.id}`;
+			if (!(await kv.get(touchKey))) {
+				event.platform!.context.waitUntil(
+					(async () => {
+						await db
+							.prepare("UPDATE users SET updated_at = datetime('now') WHERE id = ?")
+							.bind(existing.id)
+							.run();
+						await kv.put(touchKey, '1', { expirationTtl: UPDATED_AT_TTL_SECONDS });
+					})().catch(() => undefined)
+				);
+			}
 		} else {
 			const userId = newId();
 			await db
@@ -46,5 +114,11 @@ export const handle: Handle = async ({ event, resolve }) => {
 		throw redirect(303, '/login');
 	}
 
-	return resolve(event);
+	enforceSameOrigin(event);
+
+	const response = await resolve(event);
+	for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+		if (!response.headers.has(name)) response.headers.set(name, value);
+	}
+	return response;
 };

@@ -12,7 +12,7 @@ export const POST: RequestHandler = async ({ params, platform, locals }) => {
 		.prepare(
 			`SELECT id, prev_due_at, prev_fsrs_state, prev_fsrs_stability, prev_fsrs_difficulty,
 				prev_fsrs_elapsed_days, prev_fsrs_scheduled_days, prev_fsrs_reps, prev_fsrs_lapses,
-				prev_fsrs_last_review, prev_learning_step_index
+				prev_fsrs_last_review, prev_learning_step_index, prev_suspended
 			FROM reviews
 			WHERE card_id = ? AND user_id = ? AND prev_fsrs_state IS NOT NULL
 			ORDER BY created_at DESC
@@ -31,13 +31,20 @@ export const POST: RequestHandler = async ({ params, platform, locals }) => {
 			prev_fsrs_lapses: number;
 			prev_fsrs_last_review: string | null;
 			prev_learning_step_index: number | null;
+			prev_suspended: number | null;
 		}>();
 
 	if (!review) throw error(404, 'No undoable review found');
 
-	// Batch: delete review + restore card state + unsuspend
+	// D1 `batch()` is sequential, not transactional. Restore the card first; if the review
+	// DELETE then fails, a retry of undo is idempotent (re-restoring to the same snapshot is
+	// a no-op). The inverse order — review gone, card still in post-review state — would
+	// silently lose the user's undo without restoring anything.
+	//
+	// `prev_suspended` is restored when present; NULL (rows from before migration 0013)
+	// leaves `suspended` untouched via COALESCE, so we no longer un-suspend cards that were
+	// manually or leech-suspended at review time.
 	await db.batch([
-		db.prepare('DELETE FROM reviews WHERE id = ?').bind(review.id),
 		db
 			.prepare(
 				`UPDATE cards SET
@@ -51,7 +58,7 @@ export const POST: RequestHandler = async ({ params, platform, locals }) => {
 					fsrs_lapses = ?,
 					fsrs_last_review = ?,
 					learning_step_index = ?,
-					suspended = 0,
+					suspended = COALESCE(?, suspended),
 					updated_at = datetime('now')
 				WHERE id = ? AND user_id = ?`
 			)
@@ -66,9 +73,11 @@ export const POST: RequestHandler = async ({ params, platform, locals }) => {
 				review.prev_fsrs_lapses,
 				review.prev_fsrs_last_review,
 				review.prev_learning_step_index ?? 0,
+				review.prev_suspended,
 				params.id,
 				locals.userId
-			)
+			),
+		db.prepare('DELETE FROM reviews WHERE id = ?').bind(review.id)
 	]);
 
 	return json({ undone: true });
