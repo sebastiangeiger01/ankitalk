@@ -34,8 +34,19 @@
 	// on mount so reopening a long document drops you back where you were instead of at the top.
 	const PROGRESS_KEY = $derived(`listen-progress:${docId}`);
 	let maxSeq = $state(0);
+
+	// PLAYBACK rate: client-side audio.playbackRate. Instant, free, applies to already-cached
+	// audio. No re-billing.
 	const RATE_KEY = 'listen-playback-rate';
 	let playbackRate = $state(1);
+
+	// GENERATION speed: ElevenLabs voice_settings.speed (range 0.7–1.2). Affects voice naturalness
+	// at synthesis time, baked into the audio file. Changing it invalidates the cache (because
+	// the sentence hash now includes speed), so a new value re-generates affected sentences and
+	// re-bills credits. Surfaced alongside playback rate so users can A/B them.
+	const GEN_KEY = 'listen-gen-speed';
+	let genSpeed = $state(1);
+
 	let showSpeed = $state(false);
 
 	// "Jump to current sentence" and "scroll to top" affordances. Both visibilities are derived
@@ -100,9 +111,11 @@
 	);
 
 	onMount(async () => {
-		// Restore the saved playback rate (a per-user pref) before mounting the audio element.
+		// Restore both speed prefs (per-user, persisted across docs) before mounting audio.
 		const savedRate = parseFloat(localStorage.getItem(RATE_KEY) ?? '1');
 		if (savedRate >= 0.5 && savedRate <= 3) playbackRate = savedRate;
+		const savedGen = parseFloat(localStorage.getItem(GEN_KEY) ?? '1');
+		if (savedGen >= 0.7 && savedGen <= 1.2) genSpeed = savedGen;
 		await load();
 		setupMediaSession();
 		document.addEventListener('visibilitychange', onVisibility);
@@ -198,11 +211,17 @@
 		}
 	}
 
+	function sentencesUrl(): string {
+		// Server keys cache by speed, so the client must ask for the right speed lane to see
+		// the right "cached" flags. At default 1.0× this is the fast canonical path.
+		return `/api/listen/${docId}/sentences?speed=${genSpeed}`;
+	}
+
 	async function load() {
 		loading = true;
 		notFound = false;
 		try {
-			const res = await fetch(`/api/listen/${docId}/sentences`);
+			const res = await fetch(sentencesUrl());
 			if (res.status === 404 || res.status === 409) {
 				notFound = true;
 				return;
@@ -221,7 +240,7 @@
 
 	async function refreshSentences() {
 		try {
-			const res = await fetch(`/api/listen/${docId}/sentences`);
+			const res = await fetch(sentencesUrl());
 			if (!res.ok) return;
 			const data = (await res.json()) as ListenSentencesResponse;
 			doc = data.document;
@@ -268,7 +287,9 @@
 	async function startStream(fromSeq: number) {
 		streamStartSeq = fromSeq;
 		curTime = 0;
-		streamSrc = `/api/listen/${docId}/stream?from=${fromSeq}`;
+		// Pass the generation speed so the server picks the right cache lane and (on misses)
+		// synthesizes at that tempo.
+		streamSrc = `/api/listen/${docId}/stream?from=${fromSeq}&speed=${genSpeed}`;
 		await tick();
 		if (!audioEl) return;
 		audioEl.load();
@@ -424,6 +445,31 @@
 		} catch {
 			/* private mode — silent */
 		}
+	}
+
+	/**
+	 * Switch generation speed. Unlike playbackRate (which is purely client-side), this changes
+	 * the cache key the server uses — so the current in-flight stream is no longer the right
+	 * tempo. Close it, refresh the sentence list at the new speed (so "cached" flags reflect
+	 * the new lane), and let the user press play again to start a new stream that synthesizes
+	 * (and bills) anything not yet cached at this speed.
+	 */
+	async function onGenSpeedChange(value: number) {
+		if (value === genSpeed) return;
+		genSpeed = value;
+		try {
+			localStorage.setItem(GEN_KEY, String(value));
+		} catch {
+			/* private mode — silent */
+		}
+		const wasPlaying = playing;
+		if (wasPlaying) togglePlay(false);
+		// Pull fresh cached state for the new speed so the UI accurately reflects what will
+		// re-synthesize vs hit cache the next time the user presses play.
+		await refreshSentences();
+		// Recompute cachedInitially against the new lane — credit-spent accounting resets so
+		// "what re-generated since I changed speed" is the meaningful number.
+		cachedInitially = new Set(sentences.filter((s) => s.cached).map((s) => s.seq));
 	}
 
 	/** Apply the saved rate every time the audio element reattaches (after pause/jump). */
@@ -615,9 +661,14 @@
 				{#if playing}❚❚{:else}▶{/if}
 			</button>
 			<button class="skip-btn" onclick={() => jumpTo(activeSeq + 1)} aria-label={$t('listen.next')} disabled={activeSeq >= sentences.length - 1}>⏭</button>
-			<!-- Speed control: client-side audio.playbackRate, so it's instant, free, and applies
-			     to already-cached sentences too. The popover stays open until the user dismisses
-			     or picks a value. -->
+			<!-- Speed control. Two distinct mechanisms surfaced side by side:
+			     - Playback rate (top section): client-side audio.playbackRate. Instant, free,
+			       applies to already-cached sentences. Use this for "I want this faster, now".
+			     - Generation speed (bottom section): ElevenLabs voice_settings.speed baked
+			       into the synthesized audio at generation time. Different cache lane → using
+			       a non-default speed re-synthesizes (and re-bills) sentences that haven't
+			       been cached at that speed yet. Use this if the playback-rate audio sounds
+			       choppy or unnatural. -->
 			<div class="speed-wrap">
 				<button
 					class="speed-btn"
@@ -625,18 +676,46 @@
 					aria-haspopup="menu"
 					aria-expanded={showSpeed}
 					aria-label={$t('listen.speedAria')}
-				>{playbackRate}×</button>
+				>{playbackRate}×{genSpeed !== 1 ? ` · ${genSpeed}×` : ''}</button>
 				{#if showSpeed}
 					<div class="speed-pop" role="menu">
-						{#each [0.75, 1, 1.25, 1.5, 1.75, 2] as r}
-							<button
-								class="speed-opt"
-								class:active={playbackRate === r}
-								role="menuitemradio"
-								aria-checked={playbackRate === r}
-								onclick={() => { onRateChange(r); showSpeed = false; }}
-							>{r}×</button>
-						{/each}
+						<div class="speed-section">
+							<div class="speed-section-head">
+								<span class="speed-section-title">{$t('listen.playbackSpeed')}</span>
+								<span class="speed-section-sub">{$t('listen.playbackSpeedSub')}</span>
+							</div>
+							<div class="speed-row">
+								{#each [0.75, 1, 1.25, 1.5, 1.75, 2] as r}
+									<button
+										class="speed-opt"
+										class:active={playbackRate === r}
+										role="menuitemradio"
+										aria-checked={playbackRate === r}
+										onclick={() => onRateChange(r)}
+									>{r}×</button>
+								{/each}
+							</div>
+						</div>
+						<div class="speed-section">
+							<div class="speed-section-head">
+								<span class="speed-section-title">{$t('listen.genSpeed')}</span>
+								<span class="speed-section-sub speed-section-warn">{$t('listen.genSpeedSub')}</span>
+							</div>
+							<div class="speed-row">
+								{#each [0.7, 0.85, 1, 1.15, 1.2] as g}
+									<button
+										class="speed-opt"
+										class:active={genSpeed === g}
+										role="menuitemradio"
+										aria-checked={genSpeed === g}
+										onclick={() => onGenSpeedChange(g)}
+									>{g}×</button>
+								{/each}
+							</div>
+						</div>
+						<div class="speed-section">
+							<button class="speed-close" onclick={() => (showSpeed = false)}>{$t('common.close')}</button>
+						</div>
 					</div>
 				{/if}
 			</div>
@@ -873,23 +952,37 @@
 		background: var(--surface);
 		border: 1px solid var(--border);
 		border-radius: var(--r-md);
-		padding: 0.35rem;
-		display: flex; flex-direction: column; gap: 0.15rem;
-		min-width: 5rem;
+		padding: 0.6rem;
+		display: flex; flex-direction: column; gap: 0.5rem;
+		width: 17rem; max-width: calc(100vw - 1.5rem);
 		box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
 		z-index: 22;
 	}
+	.speed-section { display: flex; flex-direction: column; gap: 0.35rem; }
+	.speed-section + .speed-section { padding-top: 0.5rem; border-top: 1px solid var(--border-muted); }
+	.speed-section-head { display: flex; flex-direction: column; gap: 0.1rem; padding: 0 0.1rem; }
+	.speed-section-title { font-size: 0.85rem; font-weight: 600; color: var(--text); }
+	.speed-section-sub { font-size: 0.72rem; color: var(--text-subtle); line-height: 1.3; }
+	.speed-section-warn { color: var(--warning); }
+	.speed-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.25rem; }
+	.speed-section:nth-of-type(2) .speed-row { grid-template-columns: repeat(5, 1fr); }
 	.speed-opt {
-		background: none; border: none; color: var(--text);
-		padding: 0.5rem 0.7rem;
-		text-align: left;
+		background: var(--surface-2); border: 1px solid transparent; color: var(--text);
+		padding: 0.5rem 0;
+		text-align: center;
 		border-radius: var(--r-sm);
-		font-size: 0.9rem; cursor: pointer;
+		font-size: 0.8rem; cursor: pointer;
 		font-variant-numeric: tabular-nums;
-		min-height: 36px;
+		min-height: 38px;
 	}
 	.speed-opt:hover { background: var(--surface-elevated); }
-	.speed-opt.active { background: var(--primary); color: var(--text); font-weight: 600; }
+	.speed-opt.active { background: var(--primary); border-color: var(--primary-hover); color: var(--text); font-weight: 700; }
+	.speed-close {
+		background: none; border: 1px solid var(--border); color: var(--text-muted);
+		padding: 0.4rem; border-radius: var(--r-sm);
+		font-size: 0.78rem; cursor: pointer;
+	}
+	.speed-close:hover { border-color: var(--border-strong); color: var(--text); }
 
 	.play-btn {
 		flex-shrink: 0;

@@ -166,15 +166,26 @@ export function assertSentenceCoverage(original: string, sentences: string[]): v
 /**
  * Stable hash for a single sentence + voice configuration. Whitespace is normalized so
  * trivially different newline / spacing produces the same hash, maximizing cache reuse.
+ *
+ * The `speed` argument is generation-time speed (ElevenLabs `voice_settings.speed`), which
+ * audibly changes the synthesized audio — different speeds need different cache entries or
+ * the cache would serve back the wrong tempo. To keep all existing hashes valid (and to
+ * preserve cross-doc cache reuse at the canonical 1.0× speed), we ONLY include speed in the
+ * payload when it diverges from 1.0. So `hashSentence(text, v, m, l)` and
+ * `hashSentence(text, v, m, l, 1)` are byte-identical to the pre-speed implementation.
  */
 export async function hashSentence(
 	text: string,
 	voiceId: string,
 	modelId: string,
-	language: string
+	language: string,
+	speed = 1
 ): Promise<string> {
 	const normalized = text.replace(/\s+/g, ' ').trim();
-	const payload = JSON.stringify([normalized, voiceId, modelId, language]);
+	const payload =
+		speed === 1
+			? JSON.stringify([normalized, voiceId, modelId, language])
+			: JSON.stringify([normalized, voiceId, modelId, language, speed]);
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(payload));
 	return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
