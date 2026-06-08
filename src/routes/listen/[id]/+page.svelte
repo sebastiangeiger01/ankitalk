@@ -236,6 +236,69 @@
 		await startStream(clamped);
 	}
 
+	/** Total document duration in ms (sums actual when cached, estimated otherwise). */
+	const totalDurationMs = $derived(sentences.reduce((sum, s) => sum + s.duration_ms, 0));
+
+	/** Cumulative duration up to (not including) the active sentence, plus the in-sentence offset. */
+	const elapsedMs = $derived.by(() => {
+		if (!sentences.length) return 0;
+		let acc = 0;
+		for (let i = 0; i < activeSeq && i < sentences.length; i++) acc += sentences[i].duration_ms;
+		// curTime is relative to streamStartSeq; subtract everything before that out of the offset.
+		let streamOffset = 0;
+		for (let i = streamStartSeq; i < activeSeq && i < sentences.length; i++) streamOffset += sentences[i].duration_ms;
+		return acc + Math.max(0, curTime * 1000 - streamOffset);
+	});
+
+	function formatTime(ms: number): string {
+		const total = Math.max(0, Math.round(ms / 1000));
+		const m = Math.floor(total / 60);
+		const s = total % 60;
+		return `${m}:${String(s).padStart(2, '0')}`;
+	}
+
+	/** Map a click on the seek bar to the nearest sentence by cumulative duration. */
+	function onSeekClick(e: MouseEvent) {
+		if (!sentences.length) return;
+		const target = e.currentTarget as HTMLElement;
+		const rect = target.getBoundingClientRect();
+		const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+		const targetMs = pct * totalDurationMs;
+		let acc = 0;
+		for (let i = 0; i < sentences.length; i++) {
+			acc += sentences[i].duration_ms;
+			if (targetMs <= acc) {
+				void jumpTo(i);
+				return;
+			}
+		}
+		void jumpTo(sentences.length - 1);
+	}
+
+	function onSeekKey(e: KeyboardEvent) {
+		if (!sentences.length) return;
+		switch (e.key) {
+			case 'ArrowLeft':
+			case 'ArrowDown':
+				e.preventDefault();
+				void jumpTo(activeSeq - 1);
+				break;
+			case 'ArrowRight':
+			case 'ArrowUp':
+				e.preventDefault();
+				void jumpTo(activeSeq + 1);
+				break;
+			case 'Home':
+				e.preventDefault();
+				void jumpTo(0);
+				break;
+			case 'End':
+				e.preventDefault();
+				void jumpTo(sentences.length - 1);
+				break;
+		}
+	}
+
 	function onTimeUpdate() {
 		if (!audioEl) return;
 		curTime = audioEl.currentTime;
@@ -414,10 +477,27 @@
 			</button>
 			<button class="skip-btn" onclick={() => jumpTo(activeSeq + 1)} aria-label={$t('listen.next')} disabled={activeSeq >= sentences.length - 1}>⏭</button>
 			<div class="progress">
-				<div class="progress-line">{activeSeq + 1} / {sentenceCount}</div>
-				<div class="bar">
-					<div class="fill" style={`width:${((activeSeq + 1) / sentenceCount) * 100}%`}></div>
+				<div class="progress-line">
+					<span>{activeSeq + 1} / {sentenceCount}</span>
+					<span class="time" aria-hidden="true">{formatTime(elapsedMs)} / {formatTime(totalDurationMs)}</span>
 				</div>
+				<!-- Slider semantics so screen readers announce position; click-to-seek and arrow keys
+				     for keyboard navigation. -->
+				<button
+					type="button"
+					class="bar"
+					role="slider"
+					tabindex="0"
+					aria-label={$t('listen.seekAria')}
+					aria-valuemin="1"
+					aria-valuemax={sentenceCount}
+					aria-valuenow={activeSeq + 1}
+					aria-valuetext={`${activeSeq + 1} / ${sentenceCount}`}
+					onclick={onSeekClick}
+					onkeydown={onSeekKey}
+				>
+					<div class="fill" style={`width:${(elapsedMs / Math.max(1, totalDurationMs)) * 100}%`}></div>
+				</button>
 				<div class="credit-line">
 					<span class="spent">−{spentEstimate.toLocaleString()} {$t('listen.creditsShort')}</span>
 					<span class="saved">{$t('listen.savedLabel', { count: savedEstimate.toLocaleString() })}</span>
@@ -458,16 +538,21 @@
 
 <style>
 	.reader { max-width: 720px; margin: 0 auto; padding-bottom: 7rem; }
-	.back-link { color: #a8a8b8; text-decoration: none; font-size: 0.9rem; }
-	.back-link:hover { color: #e0e0ff; }
+	.back-link { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
+	.back-link:hover { color: var(--text); }
 	.center { display: flex; justify-content: center; padding: 2rem 0; color: #8080c0; }
 	.muted { color: #5a5a7a; }
 
 	.doc-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin: 1rem 0 0.5rem; }
 	.doc-head h1 { font-size: 1.3rem; margin: 0; min-width: 0; overflow-wrap: anywhere; }
 	.head-actions { display: flex; gap: 0.5rem; flex-shrink: 0; }
-	.text-btn { background: none; border: none; color: #8d8db0; font-size: 0.82rem; cursor: pointer; padding: 0.2rem 0.3rem; }
-	.text-btn:hover { color: #e0e0ff; }
+	.text-btn {
+		background: none; border: none; color: #8d8db0; font-size: 0.82rem; cursor: pointer;
+		padding: 0.5rem 0.6rem;
+		min-height: 44px;
+		display: inline-flex; align-items: center;
+	}
+	.text-btn:hover { color: var(--text); }
 	.text-btn.danger:hover { color: #e07070; }
 
 	.doc-sub { display: flex; flex-wrap: wrap; gap: 0.5rem 0.9rem; align-items: center; font-size: 0.8rem; color: #8d8db0; margin-bottom: 0.6rem; }
@@ -475,16 +560,16 @@
 
 	.legend {
 		display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1rem;
-		font-size: 0.72rem; color: #7a7a9a; margin: 0 0 1rem;
+		font-size: 0.72rem; color: var(--text-subtle); margin: 0 0 1rem;
 	}
 	.dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; display: inline-block; margin-right: 0.3rem; vertical-align: middle; }
-	.dot--cached { background: #3aa86c; }
+	.dot--cached { background: var(--success); }
 	.dot--listened { background: #7a8aa8; }
-	.dot--default { background: #3a3a5e; }
+	.dot--default { background: var(--border); }
 
 	.text-body {
-		background: #1a1a2e;
-		border: 1px solid #2a2a4a;
+		background: var(--bg);
+		border: 1px solid var(--border-muted);
 		border-radius: 12px;
 		padding: 1rem 1.05rem;
 		font-size: 1rem;
@@ -517,7 +602,7 @@
 		border-bottom: 2px dotted #7a8aa8;
 	}
 	.sentence.cached {
-		border-bottom: 2px solid #3aa86c;
+		border-bottom: 2px solid var(--success);
 	}
 	.sentence.active {
 		background: rgba(200, 168, 90, 0.28);
@@ -528,34 +613,34 @@
 		background: none; border: none; color: #5a5a7a; font-size: 0.78rem;
 		margin-left: 0.05rem; padding: 0 0.15rem; cursor: pointer; opacity: 0.4;
 	}
-	.edit-pencil:hover { opacity: 1; color: #b0b0d0; }
+	.edit-pencil:hover { opacity: 1; color: var(--text-muted); }
 
 	.sentence-edit {
 		display: block;
-		background: #12121f;
-		border: 1px solid #5a5a8e;
+		background: var(--surface-2);
+		border: 1px solid var(--border-strong);
 		border-radius: 8px;
 		padding: 0.5rem;
 		margin: 0.4rem 0;
 	}
 	.edit-input {
 		width: 100%; box-sizing: border-box;
-		background: #1a1a2e; border: 1px solid #3a3a5e; border-radius: 6px;
-		color: #e0e0ff; font: inherit; padding: 0.4rem 0.55rem; resize: vertical;
+		background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+		color: var(--text); font: inherit; padding: 0.4rem 0.55rem; resize: vertical;
 	}
 	.edit-actions { display: flex; gap: 0.4rem; margin-top: 0.4rem; }
 	.edit-btn {
-		padding: 0.35rem 0.7rem; border-radius: 6px; border: 1px solid #5a5a8e;
-		background: #3a3a6e; color: #e0e0ff; font-size: 0.82rem; cursor: pointer; font-weight: 600;
+		padding: 0.35rem 0.7rem; border-radius: 6px; border: 1px solid var(--border-strong);
+		background: var(--primary); color: var(--text); font-size: 0.82rem; cursor: pointer; font-weight: 600;
 	}
-	.edit-btn.ghost { background: #22223a; color: #a8a8c8; }
+	.edit-btn.ghost { background: var(--surface); color: #a8a8c8; }
 
 	.error-text { color: #cc6666; font-size: 0.85rem; margin: 0.6rem 0 0; }
 
 	.player-bar {
 		position: fixed; left: 0; right: 0; bottom: 0;
 		background: #16162a;
-		border-top: 1px solid #2a2a4a;
+		border-top: 1px solid var(--border-muted);
 		padding: 0.7rem 0.9rem calc(0.7rem + env(safe-area-inset-bottom));
 		display: flex; align-items: center; gap: 0.6rem;
 		z-index: 20;
@@ -564,24 +649,46 @@
 	.play-btn {
 		flex-shrink: 0;
 		width: 3rem; height: 3rem; border-radius: 50%;
-		border: 1px solid #5a5a8e; background: #3a3a6e; color: #e0e0ff;
+		border: 1px solid var(--border-strong); background: var(--primary); color: var(--text);
 		font-size: 1rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
 		touch-action: manipulation;
 	}
 	.skip-btn {
 		flex-shrink: 0;
-		width: 2.2rem; height: 2.2rem; border-radius: 50%;
-		border: 1px solid #3a3a5e; background: #22223a; color: #c0c0e0;
+		/* 2.75rem ≈ 44px to clear the WCAG tap-target minimum. */
+		width: 2.75rem; height: 2.75rem; border-radius: 50%;
+		border: 1px solid var(--border); background: var(--surface); color: #c0c0e0;
 		font-size: 0.85rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
 		touch-action: manipulation;
 	}
 	.skip-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
 	.progress { flex: 1; display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
-	.progress-line { font-size: 0.78rem; color: #a0a0c0; }
-	.bar { height: 5px; background: #2a2a4a; border-radius: 99px; overflow: hidden; }
-	.fill { height: 100%; background: #6b6bc8; transition: width 0.15s linear; }
-	.credit-line { display: flex; gap: 0.7rem; font-size: 0.7rem; color: #7a7a9a; }
+	.progress-line {
+		font-size: 0.78rem; color: var(--text-muted);
+		display: flex; justify-content: space-between; gap: 0.5rem;
+	}
+	.progress-line .time { font-variant-numeric: tabular-nums; color: var(--text-subtle); }
+	/* Seekable bar: button styling reset + a generous click target via vertical padding while the
+	   visible track stays thin. Padding doesn't grow the bar visually (height is fixed on .fill via
+	   the parent's actual height) — it just makes the tap area easier to hit on mobile. */
+	.bar {
+		appearance: none;
+		display: block;
+		width: 100%;
+		height: 10px;
+		padding: 0;
+		background: var(--border-muted);
+		border: none;
+		border-radius: var(--r-pill);
+		overflow: hidden;
+		cursor: pointer;
+		touch-action: manipulation;
+	}
+	.bar:focus-visible { outline: 2px solid var(--border-strong); outline-offset: 2px; }
+	.bar:hover .fill { background: #8181d0; }
+	.fill { height: 100%; background: #6b6bc8; transition: width 0.15s linear, background 0.15s; pointer-events: none; }
+	.credit-line { display: flex; gap: 0.7rem; font-size: 0.7rem; color: var(--text-subtle); }
 	.spent { color: #c8a85a; }
 	.saved { color: #5aba84; }
 </style>

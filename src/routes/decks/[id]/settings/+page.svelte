@@ -236,13 +236,13 @@
 	}
 
 	.back-link {
-		color: #a8a8b8;
+		color: var(--text-muted);
 		text-decoration: none;
 		font-size: 0.9rem;
 	}
 
 	.back-link:hover {
-		color: #e0e0ff;
+		color: var(--text);
 	}
 
 	h1 {
@@ -272,16 +272,16 @@
 	label {
 		font-size: 0.9rem;
 		font-weight: 600;
-		color: #b0b0d0;
+		color: var(--text-muted);
 	}
 
 	input[type="number"],
 	input[type="text"] {
 		padding: 0.5rem 0.75rem;
-		background: #22223a;
-		border: 1px solid #3a3a5e;
+		background: var(--surface);
+		border: 1px solid var(--border);
 		border-radius: 6px;
-		color: #e0e0ff;
+		color: var(--text);
 		font-size: 1rem;
 		width: 120px;
 	}
@@ -293,12 +293,12 @@
 	input[type="number"]:focus,
 	input[type="text"]:focus {
 		outline: none;
-		border-color: #5a5a8e;
+		border-color: var(--border-strong);
 	}
 
 	input[type="range"] {
 		width: 100%;
-		accent-color: #4a4a8e;
+		accent-color: var(--primary);
 	}
 
 	.helper {
@@ -311,8 +311,8 @@
 		align-items: center;
 		gap: 0.4rem;
 		padding: 0.6rem 1.5rem;
-		background: #4a4a8e;
-		color: #e0e0ff;
+		background: var(--primary);
+		color: var(--text);
 		border: none;
 		border-radius: 8px;
 		font-size: 1rem;
@@ -322,7 +322,7 @@
 	}
 
 	.save-btn:hover {
-		background: #5a5aae;
+		background: var(--primary-hover);
 	}
 
 	.save-btn:disabled {
@@ -336,7 +336,7 @@
 	}
 
 	.save-status.success {
-		color: #6ecb63;
+		color: var(--success);
 	}
 
 	.save-status.error {

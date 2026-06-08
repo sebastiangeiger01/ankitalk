@@ -75,20 +75,20 @@
 		z-index: 200; padding: 1rem;
 	}
 	.modal {
-		background: #1a1a2e; border: 1px solid #3a3a5e; border-radius: 12px;
+		background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
 		padding: 1.25rem; max-width: 420px; width: 100%;
 	}
 	h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
-	p { color: #a0a0c0; font-size: 0.88rem; line-height: 1.45; margin: 0 0 1rem; white-space: pre-line; }
+	p { color: var(--text-muted); font-size: 0.88rem; line-height: 1.45; margin: 0 0 1rem; white-space: pre-line; }
 	.actions { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: flex-end; }
 	.btn-primary, .btn-secondary, .btn-danger {
 		padding: 0.5rem 1rem; border-radius: 7px;
 		font-size: 0.9rem; font-weight: 600; cursor: pointer; border: none;
 	}
-	.btn-primary { background: #4a4a8e; color: #e0e0ff; }
-	.btn-primary:hover { background: #5a5aae; }
-	.btn-secondary { background: transparent; border: 1px solid #3a3a5e; color: #c8c8e0; }
-	.btn-secondary:hover { border-color: #5a5a8e; color: #e0e0ff; }
-	.btn-danger { background: #a8344c; color: #fff; }
-	.btn-danger:hover { background: #c63d59; }
+	.btn-primary { background: var(--primary); color: var(--text); }
+	.btn-primary:hover { background: var(--primary-hover); }
+	.btn-secondary { background: transparent; border: 1px solid var(--border); color: #c8c8e0; }
+	.btn-secondary:hover { border-color: var(--border-strong); color: var(--text); }
+	.btn-danger { background: var(--danger); color: #fff; }
+	.btn-danger:hover { background: var(--danger-hover); }
 </style>

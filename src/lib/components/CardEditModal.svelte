@@ -144,31 +144,31 @@
 		z-index: 100; padding: 1rem;
 	}
 	.modal {
-		background: #1a1a2e; border: 1px solid #3a3a5e; border-radius: 12px;
+		background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
 		padding: 1.5rem; width: 100%; max-width: 500px; max-height: 80vh; overflow-y: auto;
 	}
 	h2 { margin: 0 0 1rem; font-size: 1.2rem; }
 	.field-label {
 		display: block; margin-bottom: 1rem;
-		font-size: 0.85rem; color: #a8a8b8; font-weight: 600;
+		font-size: 0.85rem; color: var(--text-muted); font-weight: 600;
 	}
 	textarea, input, select {
 		display: block; width: 100%; box-sizing: border-box;
 		margin-top: 0.3rem; padding: 0.6rem;
-		/* Aligned with the rest of the app's form inputs (#12121f), not the prior #22223a. */
-		background: #12121f; border: 1px solid #3a3a5e; border-radius: 7px;
-		color: #e0e0ff; font-size: 0.9rem; font-family: inherit; resize: vertical;
+		/* Aligned with the rest of the app's form inputs (var(--surface-2)), not the prior var(--surface). */
+		background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px;
+		color: var(--text); font-size: 0.9rem; font-family: inherit; resize: vertical;
 	}
-	textarea:focus, input:focus, select:focus { outline: none; border-color: #5a5a8e; }
-	.error { color: #ff8896; font-size: 0.85rem; margin: 0.5rem 0; }
+	textarea:focus, input:focus, select:focus { outline: none; border-color: var(--border-strong); }
+	.error { color: var(--danger-soft); font-size: 0.85rem; margin: 0.5rem 0; }
 	.actions { display: flex; gap: 0.75rem; justify-content: flex-end; margin-top: 1rem; }
 	.btn-primary, .btn-secondary {
 		padding: 0.5rem 1.2rem; border-radius: 7px;
 		font-size: 0.9rem; font-weight: 600; cursor: pointer; border: none;
 	}
-	.btn-primary { background: #4a4a8e; color: #e0e0ff; }
-	.btn-primary:hover:not(:disabled) { background: #5a5aae; }
-	.btn-secondary { background: transparent; border: 1px solid #3a3a5e; color: #c8c8e0; }
-	.btn-secondary:hover:not(:disabled) { border-color: #5a5a8e; color: #e0e0ff; }
+	.btn-primary { background: var(--primary); color: var(--text); }
+	.btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+	.btn-secondary { background: transparent; border: 1px solid var(--border); color: #c8c8e0; }
+	.btn-secondary:hover:not(:disabled) { border-color: var(--border-strong); color: var(--text); }
 	.btn-primary:disabled, .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

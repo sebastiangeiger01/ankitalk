@@ -225,14 +225,14 @@
 			</li>
 		{/each}
 	</ul>
-{:else if decks.length === 0}
+{:else if decks.length === 0 && !showOnboarding}
 	<div class="onboarding">
 		<div class="onboarding-icon">
 			<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-				<rect x="8" y="12" width="48" height="40" rx="6" stroke="#4a4a8e" stroke-width="2.5" fill="none"/>
-				<path d="M24 32 L30 38 L40 26" stroke="#6ecb63" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-				<circle cx="48" cy="16" r="8" fill="#4a4a8e"/>
-				<path d="M48 12 L48 20 M44 16 L52 16" stroke="#e0e0ff" stroke-width="2" stroke-linecap="round"/>
+				<rect x="8" y="12" width="48" height="40" rx="6" stroke="var(--primary)" stroke-width="2.5" fill="none"/>
+				<path d="M24 32 L30 38 L40 26" stroke="var(--success)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+				<circle cx="48" cy="16" r="8" fill="var(--primary)"/>
+				<path d="M48 12 L48 20 M44 16 L52 16" stroke="var(--text)" stroke-width="2" stroke-linecap="round"/>
 			</svg>
 		</div>
 		<h2>{$t('onboarding.welcome')}</h2>
@@ -295,7 +295,7 @@
 		align-items: center;
 		gap: 0.5rem;
 		padding: 0.65rem 1.25rem;
-		background: #2a2a4e;
+		background: var(--border-muted);
 		color: #c0c0e0;
 		border-radius: 8px;
 		cursor: pointer;
@@ -306,7 +306,7 @@
 
 	.upload-btn:hover {
 		background: #333360;
-		border-color: #5a5a8e;
+		border-color: var(--border-strong);
 	}
 
 	.upload-btn.disabled {
@@ -321,7 +321,7 @@
 	}
 
 	.status-err {
-		color: #ff8896;
+		color: var(--danger-soft);
 		background: rgba(168, 52, 76, 0.12);
 		border: 1px solid rgba(168, 52, 76, 0.4);
 		border-radius: 7px;
@@ -366,7 +366,7 @@
 	}
 
 	.onboarding-steps {
-		color: #a8a8b8;
+		color: var(--text-muted);
 		font-size: 0.85rem;
 		line-height: 1.5;
 		margin-bottom: 1.5rem;
@@ -375,11 +375,11 @@
 	.primary-cta {
 		padding: 0.9rem 2rem !important;
 		font-size: 1.1rem !important;
-		background: #4a4a8e !important;
+		background: var(--primary) !important;
 	}
 
 	.primary-cta:hover {
-		background: #5a5aae !important;
+		background: var(--primary-hover) !important;
 	}
 
 	.deck-list {
@@ -393,7 +393,7 @@
 	.deck-card {
 		display: flex;
 		align-items: center;
-		background: #22223a;
+		background: var(--surface);
 		border-radius: 10px;
 		overflow: hidden;
 		flex-wrap: wrap;
@@ -402,7 +402,7 @@
 	}
 
 	.deck-card.has-due {
-		border-left-color: #6ecb63;
+		border-left-color: var(--success);
 	}
 
 	.deck-link {
@@ -414,7 +414,7 @@
 	}
 
 	.deck-link:hover {
-		background: #2a2a4e;
+		background: var(--border-muted);
 	}
 
 	.deck-link h2 {
@@ -427,14 +427,14 @@
 		align-items: center;
 		gap: 0.6rem;
 		font-size: 0.85rem;
-		color: #a8a8b8;
+		color: var(--text-muted);
 	}
 
 	.due-badge {
 		display: inline-block;
 		padding: 0.15rem 0.55rem;
 		background: rgba(110, 203, 99, 0.15);
-		color: #6ecb63;
+		color: var(--success);
 		font-weight: 600;
 		border-radius: 99px;
 		font-size: 0.8rem;
@@ -471,9 +471,9 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 36px;
-		height: 36px;
-		border-radius: 6px;
+		width: 44px;
+		height: 44px;
+		border-radius: var(--r-sm);
 		border: none;
 		background: none;
 		cursor: pointer;
@@ -483,7 +483,7 @@
 	}
 
 	.deck-action-btn:hover {
-		background: #2a2a4e;
+		background: var(--border-muted);
 		color: #c0c0e0;
 	}
 
@@ -501,7 +501,7 @@
 	.skeleton-title,
 	.skeleton-meta {
 		border-radius: 4px;
-		background: linear-gradient(90deg, #2a2a4e 25%, #353560 50%, #2a2a4e 75%);
+		background: linear-gradient(90deg, var(--border-muted) 25%, #353560 50%, var(--border-muted) 75%);
 		background-size: 200% 100%;
 		animation: skeleton-shimmer 1.4s ease-in-out infinite;
 	}

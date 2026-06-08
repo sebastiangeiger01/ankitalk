@@ -41,12 +41,12 @@
 
 	h1 {
 		font-size: 2rem;
-		color: #e0e0ff;
+		color: var(--text);
 		margin-bottom: 0.25rem;
 	}
 
 	.subtitle {
-		color: #a8a8b8;
+		color: var(--text-muted);
 		margin-bottom: 2rem;
 	}
 </style>

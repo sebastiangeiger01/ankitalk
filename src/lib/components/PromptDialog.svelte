@@ -101,28 +101,28 @@
 		z-index: 200; padding: 1rem;
 	}
 	.modal {
-		background: #1a1a2e; border: 1px solid #3a3a5e; border-radius: 12px;
+		background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
 		padding: 1.25rem; max-width: 440px; width: 100%;
 	}
 	h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
 	.field { display: block; margin-bottom: 0.75rem; }
-	.field-label { display: block; font-size: 0.8rem; color: #a0a0c0; margin-bottom: 0.3rem; font-weight: 600; }
+	.field-label { display: block; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.3rem; font-weight: 600; }
 	input {
 		width: 100%; box-sizing: border-box;
 		padding: 0.55rem 0.7rem; border-radius: 7px;
-		background: #12121f; border: 1px solid #3a3a5e; color: #e0e0ff;
+		background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
 		font-size: 0.95rem; font-family: inherit;
 	}
-	input:focus { outline: none; border-color: #5a5a8e; }
-	input[aria-invalid='true'] { border-color: #c63d59; }
-	.error { color: #ff8896; font-size: 0.82rem; margin: 0 0 0.75rem; }
+	input:focus { outline: none; border-color: var(--border-strong); }
+	input[aria-invalid='true'] { border-color: var(--danger-hover); }
+	.error { color: var(--danger-soft); font-size: 0.82rem; margin: 0 0 0.75rem; }
 	.actions { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: flex-end; }
 	.btn-primary, .btn-secondary {
 		padding: 0.5rem 1rem; border-radius: 7px;
 		font-size: 0.9rem; font-weight: 600; cursor: pointer; border: none;
 	}
-	.btn-primary { background: #4a4a8e; color: #e0e0ff; }
-	.btn-primary:hover { background: #5a5aae; }
-	.btn-secondary { background: transparent; border: 1px solid #3a3a5e; color: #c8c8e0; }
-	.btn-secondary:hover { border-color: #5a5a8e; color: #e0e0ff; }
+	.btn-primary { background: var(--primary); color: var(--text); }
+	.btn-primary:hover { background: var(--primary-hover); }
+	.btn-secondary { background: transparent; border: 1px solid var(--border); color: #c8c8e0; }
+	.btn-secondary:hover { border-color: var(--border-strong); color: var(--text); }
 </style>

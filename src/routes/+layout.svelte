@@ -2,6 +2,7 @@
 	import type { Snippet } from 'svelte';
 	import type { LayoutData } from './$types';
 	import { t } from '$lib/i18n';
+	import '../app.css';
 
 	let { children, data }: { children: Snippet; data: LayoutData } = $props();
 
@@ -44,14 +45,14 @@
 	:global(body) {
 		margin: 0;
 		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-		background: #1a1a2e;
-		color: #e0e0ff;
+		background: var(--bg);
+		color: var(--text);
 		min-height: 100dvh;
 		overflow-x: hidden;
 	}
 
 	:global(*:focus-visible) {
-		outline: 2px solid #6ecb63;
+		outline: 2px solid var(--success);
 		outline-offset: 2px;
 	}
 
@@ -65,11 +66,11 @@
 		align-items: center;
 		padding: 1rem 1.5rem;
 		padding-top: max(1rem, env(safe-area-inset-top));
-		border-bottom: 1px solid #2a2a4e;
+		border-bottom: 1px solid var(--border-muted);
 	}
 
 	.brand {
-		color: #e0e0ff;
+		color: var(--text);
 		text-decoration: none;
 		font-weight: 600;
 		font-size: 1.1rem;
@@ -93,11 +94,17 @@
 		color: #fff;
 	}
 
+	/* All nav targets sized to the WCAG 2.5.8 / Apple HIG 44px minimum tap target. */
 	.icon-btn {
 		background: none;
 		border: none;
 		padding: 0.3rem;
 		cursor: pointer;
+		min-width: 44px;
+		min-height: 44px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 	}
 
 	.nav-icon {
@@ -106,12 +113,14 @@
 		justify-content: center;
 		color: #b0b0c0;
 		padding: 0.3rem;
-		border-radius: 6px;
+		border-radius: var(--r-sm);
 		transition: color 0.15s;
+		min-width: 44px;
+		min-height: 44px;
 	}
 
 	.nav-icon:hover {
-		color: #e0e0ff;
+		color: var(--text);
 	}
 
 	nav button {

@@ -290,13 +290,13 @@
 	}
 
 	.back-link {
-		color: #a8a8b8;
+		color: var(--text-muted);
 		text-decoration: none;
 		font-size: 0.85rem;
 	}
 
 	.back-link:hover {
-		color: #e0e0ff;
+		color: var(--text);
 	}
 
 	h1 {
@@ -313,23 +313,23 @@
 	.search-input {
 		flex: 1;
 		padding: 0.6rem 0.8rem;
-		background: #22223a;
-		border: 1px solid #3a3a5e;
+		background: var(--surface);
+		border: 1px solid var(--border);
 		border-radius: 8px;
-		color: #e0e0ff;
+		color: var(--text);
 		font-size: 0.9rem;
 	}
 
 	.search-input:focus {
 		outline: none;
-		border-color: #5a5a8e;
+		border-color: var(--border-strong);
 	}
 
 	.new-card-btn {
 		padding: 0.6rem 1.2rem;
-		background: #4a4a8e;
+		background: var(--primary);
 		border: none;
-		color: #e0e0ff;
+		color: var(--text);
 		border-radius: 8px;
 		cursor: pointer;
 		font-size: 0.9rem;
@@ -338,7 +338,7 @@
 	}
 
 	.new-card-btn:hover {
-		background: #5a5aae;
+		background: var(--primary-hover);
 	}
 
 	.filters {
@@ -350,23 +350,23 @@
 
 	.filter-pill {
 		padding: 0.35rem 0.8rem;
-		background: #22223a;
-		border: 1px solid #3a3a5e;
-		color: #a8a8b8;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		color: var(--text-muted);
 		border-radius: 20px;
 		cursor: pointer;
 		font-size: 0.8rem;
 	}
 
 	.filter-pill:hover {
-		border-color: #5a5a8e;
-		color: #e0e0ff;
+		border-color: var(--border-strong);
+		color: var(--text);
 	}
 
 	.filter-pill.active {
-		background: #3a3a6e;
-		border-color: #5a5a8e;
-		color: #e0e0ff;
+		background: var(--primary);
+		border-color: var(--border-strong);
+		color: var(--text);
 		font-weight: 600;
 	}
 
@@ -375,25 +375,25 @@
 		align-items: center;
 		gap: 0.75rem;
 		padding: 0.5rem 0.75rem;
-		background: #2a2a4e;
+		background: var(--border-muted);
 		border-radius: 8px;
 		margin-bottom: 1rem;
 		font-size: 0.85rem;
-		color: #e0e0ff;
+		color: var(--text);
 	}
 
 	.bulk-btn {
 		padding: 0.3rem 0.8rem;
-		background: #3a3a6e;
+		background: var(--primary);
 		border: none;
-		color: #e0e0ff;
+		color: var(--text);
 		border-radius: 6px;
 		cursor: pointer;
 		font-size: 0.8rem;
 	}
 
 	.bulk-btn:hover {
-		background: #4a4a8e;
+		background: var(--primary);
 	}
 
 	.bulk-btn:disabled {
@@ -410,7 +410,7 @@
 	}
 
 	.card-list {
-		border: 1px solid #3a3a5e;
+		border: 1px solid var(--border);
 		border-radius: 8px;
 		overflow: hidden;
 	}
@@ -419,7 +419,7 @@
 		display: flex;
 		align-items: center;
 		padding: 0.5rem 0.75rem;
-		background: #22223a;
+		background: var(--surface);
 		font-size: 0.75rem;
 		font-weight: 600;
 		color: #8080a0;
@@ -431,14 +431,14 @@
 		display: flex;
 		align-items: center;
 		padding: 0.6rem 0.75rem;
-		border-top: 1px solid #2a2a4e;
+		border-top: 1px solid var(--border-muted);
 		cursor: pointer;
 		gap: 0.5rem;
 		font-size: 0.85rem;
 	}
 
 	.card-row:hover {
-		background: #22223a;
+		background: var(--surface);
 	}
 
 	.checkbox-cell {
@@ -456,9 +456,9 @@
 	}
 
 	.col-state { flex: 0 0 80px; }
-	.col-due { flex: 0 0 60px; color: #a8a8b8; }
-	.col-reps { flex: 0 0 40px; text-align: center; color: #a8a8b8; }
-	.col-lapses { flex: 0 0 50px; text-align: center; color: #a8a8b8; }
+	.col-due { flex: 0 0 60px; color: var(--text-muted); }
+	.col-reps { flex: 0 0 40px; text-align: center; color: var(--text-muted); }
+	.col-lapses { flex: 0 0 50px; text-align: center; color: var(--text-muted); }
 
 	.state-badge {
 		padding: 0.15rem 0.4rem;
@@ -469,7 +469,7 @@
 
 	.state-badge.new { background: #20204a; color: #88bbff; }
 	.state-badge.learning { background: #3a2a5e; color: #ccaaff; }
-	.state-badge.review { background: #204a20; color: #88ff88; }
+	.state-badge.review { background: #204a20; color: var(--success); }
 	.state-badge.suspended { background: #4a2020; color: #ff8888; }
 
 	.pagination {
@@ -483,17 +483,17 @@
 
 	.page-btn {
 		padding: 0.4rem 1rem;
-		background: #22223a;
-		border: 1px solid #3a3a5e;
-		color: #a8a8b8;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		color: var(--text-muted);
 		border-radius: 6px;
 		cursor: pointer;
 		font-size: 0.85rem;
 	}
 
 	.page-btn:hover:not(:disabled) {
-		border-color: #5a5a8e;
-		color: #e0e0ff;
+		border-color: var(--border-strong);
+		color: var(--text);
 	}
 
 	.page-btn:disabled {
@@ -502,7 +502,7 @@
 	}
 
 	.page-info {
-		color: #a8a8b8;
+		color: var(--text-muted);
 		font-size: 0.85rem;
 	}
 

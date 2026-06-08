@@ -338,6 +338,7 @@ export const en: Record<string, string> = {
 	'listen.editError': 'Could not save the edited sentence.',
 	'listen.previous': 'Previous sentence',
 	'listen.next': 'Next sentence',
+	'listen.seekAria': 'Playback position; use arrow keys to jump by sentence',
 	'listen.streamError': 'Audio failed to load. Check your ElevenLabs key.',
 	'listen.keepOpen': 'Keep this tab open while generating. You can come back later and resume if you leave.',
 	'listen.noKey': 'Add your ElevenLabs API key in Settings to generate audio.',

@@ -337,6 +337,7 @@ export const de: Record<string, string> = {
 	'listen.saveEdit': 'Speichern',
 	'listen.editError': 'Satz konnte nicht gespeichert werden.',
 	'listen.previous': 'Vorheriger Satz',
+	'listen.seekAria': 'Wiedergabeposition; mit Pfeiltasten satzweise springen',
 	'listen.next': 'Nächster Satz',
 	'listen.streamError': 'Audio konnte nicht geladen werden. Prüfe deinen ElevenLabs-Schlüssel.',
 	'listen.keepOpen': 'Lass diesen Tab während der Erzeugung offen. Du kannst später zurückkommen und fortsetzen, wenn du gehst.',
