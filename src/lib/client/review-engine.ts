@@ -34,6 +34,13 @@ export type ReviewEvent =
 			backHtml: string;
 			cardState: 'new' | 'learning' | 'review';
 			intervals: IntervalLabels;
+			/** Extra fields exposed for downstream features (agent tutor, etc.). Optional so
+			 * pre-existing consumers don't have to handle them. */
+			cardId?: string;
+			deckId?: string;
+			tags?: string;
+			reps?: number;
+			lapses?: number;
 	  }
 	| { type: 'tts_loading' }
 	| { type: 'speaking' }
@@ -61,10 +68,13 @@ export interface SessionStats {
 
 interface CardData {
 	id: string;
+	deck_id: string;
 	note_id: string;
 	card_type: string;
 	ordinal: number;
 	fsrs_state: number;
+	fsrs_reps: number;
+	fsrs_lapses: number;
 	model_name: string;
 	fields: string;
 	tags: string;
@@ -287,7 +297,12 @@ export function createReviewEngine(): ReviewEngine {
 			frontHtml: currentCard.frontHtml,
 			backHtml: currentCard.backHtml,
 			cardState,
-			intervals: currentCard.intervals
+			intervals: currentCard.intervals,
+			cardId: currentCard.id,
+			deckId: currentCard.deck_id,
+			tags: currentCard.tags,
+			reps: currentCard.fsrs_reps,
+			lapses: currentCard.fsrs_lapses
 		});
 		emit({ type: 'phase_change', phase: 'question' });
 
@@ -552,7 +567,12 @@ export function createReviewEngine(): ReviewEngine {
 			frontHtml: card.frontHtml,
 			backHtml: card.backHtml,
 			cardState,
-			intervals: card.intervals
+			intervals: card.intervals,
+			cardId: card.id,
+			deckId: card.deck_id,
+			tags: card.tags,
+			reps: card.fsrs_reps,
+			lapses: card.fsrs_lapses
 		});
 		emit({ type: 'phase_change', phase: 'rating' });
 
@@ -715,10 +735,13 @@ export function createReviewEngine(): ReviewEngine {
 			const intervals = (c.intervals as IntervalLabels) ?? defaultIntervals;
 			return {
 				id: c.id as string,
+				deck_id: (c.deck_id as string) ?? '',
 				note_id: c.note_id as string,
 				card_type: c.card_type as string,
 				ordinal: (c.ordinal as number) ?? 0,
 				fsrs_state: c.fsrs_state as number,
+				fsrs_reps: (c.fsrs_reps as number) ?? 0,
+				fsrs_lapses: (c.fsrs_lapses as number) ?? 0,
 				model_name: c.model_name as string,
 				fields: c.fields as string,
 				tags: c.tags as string,

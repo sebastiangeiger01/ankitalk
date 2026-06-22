@@ -7,17 +7,33 @@
 
 	interface Props {
 		open: boolean;
-		/** Card content + deck name + tags, used to seed the conversation context. */
+		/** Card content + deck info + tags + scheduling state, all seeded as dynamic vars. */
 		front: string;
 		back: string;
 		deckName: string;
+		deckId: string;
 		tags: string;
+		cardState: string;
+		cardReps: number;
+		cardLapses: number;
 		/** App locale, passed to the agent so it answers in EN or DE by default. */
 		locale: 'en' | 'de';
 		onclose: () => void;
 	}
 
-	let { open, front, back, deckName, tags, locale, onclose }: Props = $props();
+	let {
+		open,
+		front,
+		back,
+		deckName,
+		deckId,
+		tags,
+		cardState,
+		cardReps,
+		cardLapses,
+		locale,
+		onclose
+	}: Props = $props();
 
 	type Phase = 'idle' | 'connecting' | 'listening' | 'speaking' | 'ended' | 'error';
 
@@ -42,7 +58,17 @@
 			const res = await fetch('/api/agent/session', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ front, back, deck_name: deckName, tags, locale })
+				body: JSON.stringify({
+					front,
+					back,
+					deck_name: deckName,
+					deck_id: deckId,
+					tags,
+					card_state: cardState,
+					card_reps: cardReps,
+					card_lapses: cardLapses,
+					locale
+				})
 			});
 			if (!res.ok) {
 				const body = (await res.json().catch(() => ({}))) as { error?: string };

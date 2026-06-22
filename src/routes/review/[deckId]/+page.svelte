@@ -13,6 +13,13 @@
 
 	let agentChatOpen = $state(false);
 	let agentEnabled = $state(false);
+	// Tutor context — populated from each card_change emit so the agent receives current
+	// card identifiers + scheduling state, not just front/back.
+	let agentCardId = $state('');
+	let agentDeckId = $state('');
+	let agentTags = $state('');
+	let agentReps = $state(0);
+	let agentLapses = $state(0);
 
 	/**
 	 * Strip HTML so the agent receives clean text in its dynamic variables. The cards are
@@ -105,6 +112,11 @@
 				backHtml = event.backHtml;
 				cardState = event.cardState;
 				intervals = event.intervals;
+				agentCardId = event.cardId ?? '';
+				agentDeckId = event.deckId ?? '';
+				agentTags = event.tags ?? '';
+				agentReps = event.reps ?? 0;
+				agentLapses = event.lapses ?? 0;
 				status = 'idle';
 				break;
 			case 'tts_loading':
@@ -597,7 +609,11 @@
 	front={plainText(frontHtml)}
 	back={plainText(backHtml)}
 	deckName={deckName}
-	tags=""
+	deckId={agentDeckId}
+	tags={agentTags}
+	cardState={cardState ?? 'new'}
+	cardReps={agentReps}
+	cardLapses={agentLapses}
 	locale={$locale === 'de' ? 'de' : 'en'}
 	onclose={() => (agentChatOpen = false)}
 />

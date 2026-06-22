@@ -26,27 +26,42 @@ const PROMPT_TEMPLATE_EN = `You are a patient one-on-one tutor helping a student
 The student is currently looking at this card:
 Front (question): {{card_front}}
 Back (answer): {{card_back}}
-Deck: {{deck_name}}
+Deck: {{deck_name}} (id: {{deck_id}})
 Tags: {{tags}}
+Study state: {{card_state}}, {{card_reps}} reviews so far, {{card_lapses}} lapses
 
-Speak in plain conversational English unless the student switches language. Keep answers under 30 seconds unless they explicitly ask for depth. Don't restate the card verbatim — add genuine context: the underlying principle, etymology, a real-world analogy, or a memorable example. If the student wants to move on, end gracefully so they can resume reviewing.`;
+Speak in plain conversational English unless the student switches language. Keep answers under 30 seconds unless they explicitly ask for depth. Don't restate the card verbatim — add genuine context: the underlying principle, etymology, a real-world analogy, or a memorable example.
+
+If you need related cards from the deck, prior review history, or a deeper AI explanation, you can use the MCP tools exposed at the AnkiTalk endpoint configured on this agent (search_cards, get_card, get_card_history, list_decks, explain_topic). Use them sparingly — only when the student asks something the card alone can't answer.
+
+If the student wants to move on, end gracefully so they can resume reviewing.`;
 
 const PROMPT_TEMPLATE_DE = `Du bist ein geduldiger Eins-zu-eins-Tutor und hilfst einer studierenden Person, eine Anki-Karteikarte besser zu verstehen.
 
 Die Person schaut sich gerade diese Karte an:
 Vorderseite (Frage): {{card_front}}
 Rückseite (Antwort): {{card_back}}
-Stapel: {{deck_name}}
+Stapel: {{deck_name}} (id: {{deck_id}})
 Tags: {{tags}}
+Lernstand: {{card_state}}, {{card_reps}} Wiederholungen, {{card_lapses}} Rückfälle
 
-Sprich in klarer Alltagssprache auf Deutsch, sofern die Person die Sprache nicht wechselt. Halte Antworten unter 30 Sekunden, sofern keine ausdrückliche Vertiefung gewünscht ist. Gib die Karte nicht einfach wieder — füge echten Kontext hinzu: das zugrunde liegende Prinzip, eine Etymologie, eine Analogie aus dem Alltag oder ein einprägsames Beispiel. Wenn die Person weiterlernen möchte, beende das Gespräch freundlich.`;
+Sprich in klarer Alltagssprache auf Deutsch, sofern die Person die Sprache nicht wechselt. Halte Antworten unter 30 Sekunden, sofern keine ausdrückliche Vertiefung gewünscht ist. Gib die Karte nicht einfach wieder — füge echten Kontext hinzu: das zugrunde liegende Prinzip, eine Etymologie, eine Analogie aus dem Alltag oder ein einprägsames Beispiel.
+
+Falls du verwandte Karten, vergangene Wiederholungen oder eine tiefere KI-Erklärung brauchst, stehen dir die MCP-Tools des AnkiTalk-Endpoints zur Verfügung (search_cards, get_card, get_card_history, list_decks, explain_topic). Nutze sie sparsam — nur wenn die Karte allein die Frage nicht beantwortet.
+
+Wenn die Person weiterlernen möchte, beende das Gespräch freundlich.`;
 
 interface SessionRequest {
 	front?: unknown;
 	back?: unknown;
 	deck_name?: unknown;
+	deck_id?: unknown;
 	tags?: unknown;
 	locale?: unknown;
+	/** Card scheduling state — used to seed the tutor's awareness of how well the user knows this card. */
+	card_state?: unknown;
+	card_reps?: unknown;
+	card_lapses?: unknown;
 }
 
 interface SessionResponse {
@@ -55,6 +70,12 @@ interface SessionResponse {
 	systemPrompt: string;
 	voiceId: string;
 	language: 'en' | 'de';
+}
+
+function clampInt(value: unknown, min: number, max: number): number {
+	const n = typeof value === 'number' ? value : Number(value);
+	if (!Number.isFinite(n)) return min;
+	return Math.max(min, Math.min(max, Math.floor(n)));
 }
 
 export const POST: RequestHandler = async ({ request, platform, locals }) => {
@@ -73,7 +94,11 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 	const front = sanitizeAgentContext(requireField(body.front, 'front'), MAX_CONTEXT_FIELD);
 	const back = sanitizeAgentContext(requireField(body.back, 'back'), MAX_CONTEXT_FIELD);
 	const deckName = typeof body.deck_name === 'string' ? sanitizeAgentContext(body.deck_name, 200) : '';
+	const deckId = typeof body.deck_id === 'string' ? sanitizeAgentContext(body.deck_id, 80) : '';
 	const tags = typeof body.tags === 'string' ? sanitizeAgentContext(body.tags, 500) : '';
+	const cardState = typeof body.card_state === 'string' ? sanitizeAgentContext(body.card_state, 30) : 'unknown';
+	const cardReps = clampInt(body.card_reps, 0, 100_000);
+	const cardLapses = clampInt(body.card_lapses, 0, 100_000);
 	const locale = normalizeLocale(body.locale);
 
 	const db = getDb(platform!);
@@ -103,7 +128,11 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 			card_front: front,
 			card_back: back,
 			deck_name: deckName || 'Anki',
-			tags: tags || 'none'
+			deck_id: deckId || 'unknown',
+			tags: tags || 'none',
+			card_state: cardState,
+			card_reps: cardReps,
+			card_lapses: cardLapses
 		},
 		systemPrompt,
 		voiceId: settings.elevenlabs_voice_id,

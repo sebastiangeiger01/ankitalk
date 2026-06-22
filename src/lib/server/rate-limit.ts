@@ -56,5 +56,11 @@ export const RATE_LIMITS = {
 	 * (or a runaway `$effect`) opening hundreds of sessions per minute. 30/min is "you can't
 	 * possibly hit this in normal use" without being annoying.
 	 */
-	agent_session_per_minute: { limit: 30, windowSec: 60 }
+	agent_session_per_minute: { limit: 30, windowSec: 60 },
+	/**
+	 * MCP tool calls. An LLM-driven agent can chain many tool calls in a single turn, so
+	 * the bucket is generous — but capped to stop a leaked token from running a
+	 * never-ending loop against D1.
+	 */
+	mcp_call_per_minute: { limit: 120, windowSec: 60 }
 } as const;
