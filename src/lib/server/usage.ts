@@ -8,11 +8,15 @@ const RATES = {
 	elevenlabs_tts: 0.36 / 1_000_000, // standard model (1 credit/char); Flash/Turbo bill at half
 	elevenlabs_stt: 0.0048 / 60, // rough subscription-dependent estimate
 	anthropic_input: 1.0 / 1_000_000, // $1.00 per 1M input tokens
-	anthropic_output: 5.0 / 1_000_000 // $5.00 per 1M output tokens
+	anthropic_output: 5.0 / 1_000_000, // $5.00 per 1M output tokens
+	// Rough estimate of agent conversation cost per second on Creator/Pro tiers. Real billing
+	// is opaque (no public API) and varies by underlying LLM + voice tier — this is a
+	// "good-enough" budget tracker so the user can see usage trending, not a true invoice.
+	elevenlabs_agent: 0.10 / 60 // ~$0.10/minute → per second
 };
 
 export type UsageService = 'openai' | 'deepgram' | 'anthropic' | 'elevenlabs';
-export type UsageOperation = 'tts' | 'stt_token' | 'explain' | 'hint';
+export type UsageOperation = 'tts' | 'stt_token' | 'explain' | 'hint' | 'agent_conversation';
 
 export async function logUsage(
 	db: D1Database,
@@ -49,6 +53,11 @@ export function calculateElevenLabsSttCost(estimatedSeconds: number): number {
 
 export function calculateExplainCost(inputTokens: number, outputTokens: number): number {
 	return inputTokens * RATES.anthropic_input + outputTokens * RATES.anthropic_output;
+}
+
+/** Estimated USD spend for an agent conversation of the given duration. */
+export function calculateAgentConversationCost(durationSeconds: number): number {
+	return Math.max(0, durationSeconds) * RATES.elevenlabs_agent;
 }
 
 export type UsagePeriod = {

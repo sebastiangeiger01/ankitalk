@@ -1,13 +1,17 @@
 import { sanitizeAndRewriteCardHtml, sanitizeCardHtml } from '../sanitize';
+import sanitizeHtml from 'sanitize-html';
 import type { NoteField } from '../types';
 
 /**
  * Strip HTML tags and decode entities for TTS.
  */
 export function stripHtml(html: string): string {
-	const div = document.createElement('div');
-	div.innerHTML = sanitizeCardHtml(html);
-	return div.textContent ?? '';
+	return sanitizeHtml(sanitizeCardHtml(html), {
+		allowedTags: [],
+		allowedAttributes: {}
+	})
+		.replace(/\s+/g, ' ')
+		.trim();
 }
 
 /**

@@ -12,6 +12,13 @@ export interface UserVoiceSettings {
 	elevenlabs_similarity: number;
 	elevenlabs_style: number;
 	elevenlabs_speaker_boost: boolean;
+	/**
+	 * Optional ElevenLabs Conversational AI agent_id (format `agent_…`). Empty/null means
+	 * the user hasn't set up an agent yet — features that need it should degrade gracefully.
+	 * Voice + system prompt + language get overridden per-conversation, so the agent's own
+	 * configuration in the ElevenLabs dashboard doesn't matter beyond existing.
+	 */
+	elevenlabs_agent_id: string | null;
 }
 
 export const DEFAULT_ELEVENLABS_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb';
@@ -28,7 +35,8 @@ export const DEFAULT_VOICE_SETTINGS: UserVoiceSettings = {
 	elevenlabs_stability: 0.5,
 	elevenlabs_similarity: 0.75,
 	elevenlabs_style: 0.0,
-	elevenlabs_speaker_boost: true
+	elevenlabs_speaker_boost: true,
+	elevenlabs_agent_id: null
 };
 
 /**
@@ -102,6 +110,19 @@ export interface VoiceSettingsInput {
 	elevenlabs_similarity?: number | string | null;
 	elevenlabs_style?: number | string | null;
 	elevenlabs_speaker_boost?: boolean | number | null;
+	elevenlabs_agent_id?: string | null;
+}
+
+/**
+ * Loose validator for agent ids. ElevenLabs uses an `agent_…` prefix on conversational AI
+ * agents; we trim and length-cap so a stray paste of a longer string can't get through.
+ */
+export function normalizeAgentId(value: unknown): string | null {
+	if (typeof value !== 'string') return null;
+	const trimmed = value.trim();
+	if (!trimmed) return null;
+	if (trimmed.length > 128) return null;
+	return trimmed;
 }
 
 export function normalizeVoiceSettings(
@@ -123,6 +144,7 @@ export function normalizeVoiceSettings(
 		elevenlabs_stability: clampNumber(row?.elevenlabs_stability, 0, 1, DEFAULT_VOICE_SETTINGS.elevenlabs_stability),
 		elevenlabs_similarity: clampNumber(row?.elevenlabs_similarity, 0, 1, DEFAULT_VOICE_SETTINGS.elevenlabs_similarity),
 		elevenlabs_style: clampNumber(row?.elevenlabs_style, 0, 1, DEFAULT_VOICE_SETTINGS.elevenlabs_style),
-		elevenlabs_speaker_boost: toBoolean(row?.elevenlabs_speaker_boost, DEFAULT_VOICE_SETTINGS.elevenlabs_speaker_boost)
+		elevenlabs_speaker_boost: toBoolean(row?.elevenlabs_speaker_boost, DEFAULT_VOICE_SETTINGS.elevenlabs_speaker_boost),
+		elevenlabs_agent_id: normalizeAgentId(row?.elevenlabs_agent_id)
 	};
 }

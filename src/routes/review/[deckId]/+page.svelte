@@ -9,6 +9,23 @@
 	import { sanitizeCardHtml } from '$lib/sanitize';
 	import type { ReviewPhase } from '$lib/types';
 	import { sttLanguageForVoiceCommandLanguage, type UserVoiceSettings } from '$lib/voice';
+	import AgentChat from '$lib/components/AgentChat.svelte';
+
+	let agentChatOpen = $state(false);
+	let agentEnabled = $state(false);
+	// Tutor context — populated from each card_change emit so the agent receives current
+	// card identifiers + scheduling state, not just front/back.
+	let agentCardId = $state('');
+
+	/**
+	 * Strip HTML so the agent receives clean text in its dynamic variables. The cards are
+	 * Anki-shaped — they can contain inline markup, cloze braces, audio refs — none of
+	 * which the tutor should see verbatim. We don't sanitize for safety here (the agent
+	 * isn't rendering HTML); we just want the spoken-aloud text.
+	 */
+	function plainText(html: string): string {
+		return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+	}
 
 	const deckId = $derived($page.params.deckId);
 
@@ -55,7 +72,8 @@
 		elevenlabs_stability: 0.5,
 		elevenlabs_similarity: 0.75,
 		elevenlabs_style: 0.0,
-		elevenlabs_speaker_boost: true
+		elevenlabs_speaker_boost: true,
+		elevenlabs_agent_id: null
 	});
 	let keyStatusLoading = $state(true);
 
@@ -90,6 +108,7 @@
 				backHtml = event.backHtml;
 				cardState = event.cardState;
 				intervals = event.intervals;
+				agentCardId = event.cardId ?? '';
 				status = 'idle';
 				break;
 			case 'tts_loading':
@@ -266,7 +285,13 @@
 		])
 			.then(([keys, voice]) => {
 				if (keys) keyStatus = keys as ApiKeyStatus;
-				if (voice) voiceSettings = (voice as { settings: UserVoiceSettings }).settings;
+				if (voice) {
+					const settings = (voice as { settings: UserVoiceSettings }).settings;
+					voiceSettings = settings;
+					// The tutor button only appears when the user has configured an agent.
+					// Avoids surfacing a "Ask" button that always errors with "no_agent".
+					agentEnabled = !!settings.elevenlabs_agent_id;
+				}
 			})
 			.catch(() => {})
 			.finally(() => { keyStatusLoading = false; });
@@ -460,6 +485,14 @@
 				<button class="toolbar-btn" onclick={() => engine.executeCommand('explain')} title="{$t('review.explain')} (E)" aria-label={$t('review.explain')}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor" stroke="none"/></svg>
 				</button>
+				{#if agentEnabled}
+					<!-- Only shown after the answer is revealed: the agent receives both front
+					     and back as dynamic variables, so exposing it in question phase would let
+					     a user voice-spoil the card. -->
+					<button class="toolbar-btn" onclick={() => (agentChatOpen = true)} title={$t('agent.openButton')} aria-label={$t('agent.title')}>
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" y1="10" x2="15" y2="10"/></svg>
+					</button>
+				{/if}
 			{/if}
 			<button class="toolbar-btn" onclick={() => shortcutsOpen = !shortcutsOpen} title="{$t('help.keyHelp')} (?)" aria-label={$t('help.keyboardTitle')} aria-pressed={shortcutsOpen}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor" stroke="none"/></svg>
@@ -562,6 +595,13 @@
 		</div>
 	{/if}
 {/if}
+
+<AgentChat
+	open={agentChatOpen}
+	cardId={agentCardId}
+	locale={$locale === 'de' ? 'de' : 'en'}
+	onclose={() => (agentChatOpen = false)}
+/>
 
 <style>
 	/* ========== Missing Keys Banner ========== */
