@@ -51,7 +51,8 @@ second rendering implementation.
   are deliberately not logged.
 - `create_notes` validates before writing, uses a D1 batch, and requires a stable
   idempotency key for safe retries.
-- Cloudflare logs are enabled and traces are sampled in `wrangler.jsonc`.
+- Request-level tool telemetry is retained in D1; deployment and function logs
+  remain available through the Cloudflare Pages dashboard.
 
 OAuth, Durable Object coordination, Queues, Vectorize, and Workflows should only be
 added when their product need exists. The current server is stateless; D1 FTS5 is
