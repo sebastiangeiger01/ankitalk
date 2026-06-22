@@ -61,6 +61,10 @@ const UPDATED_AT_TTL_SECONDS = 24 * 60 * 60;
 
 export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.userId = null;
+	// Remote MCP clients authenticate at the MCP route with their own scoped bearer
+	// credential. They do not have (and must never need) the browser's Hanko cookie.
+	// Keep this exact so token-management routes remain protected browser APIs.
+	const isRemoteMcpEndpoint = event.url.pathname === '/api/mcp';
 
 	const hankoApiUrl = event.platform?.env.HANKO_API_URL;
 	if (!hankoApiUrl) {
@@ -110,11 +114,11 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 	// Protect non-public paths
 	const isPublic = PUBLIC_PATHS.some((p) => event.url.pathname.startsWith(p));
-	if (!hankoId && !isPublic) {
+	if (!hankoId && !isPublic && !isRemoteMcpEndpoint) {
 		throw redirect(303, '/login');
 	}
 
-	enforceSameOrigin(event);
+	if (!isRemoteMcpEndpoint) enforceSameOrigin(event);
 
 	const response = await resolve(event);
 	for (const [name, value] of Object.entries(SECURITY_HEADERS)) {

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
-import { extractBearer, generateToken, hashToken } from './auth';
+import { extractBearer, generateToken, hashToken, parseScopes, serializeScopes } from './auth';
 
 describe('extractBearer', () => {
 	it('returns the token from a well-formed Bearer header', () => {
@@ -35,5 +35,19 @@ describe('generateToken', () => {
 		const b = await generateToken();
 		expect(a.plaintext).not.toBe(b.plaintext);
 		expect(a.hash).not.toBe(b.hash);
+	});
+});
+
+describe('MCP scopes', () => {
+	it('parses only supported scopes', () => {
+		expect([...parseScopes('cards:write,cards:read,admin')].sort()).toEqual(['cards:read', 'cards:write']);
+	});
+
+	it('defaults old tokens to read-only scopes', () => {
+		expect([...parseScopes(null)].sort()).toEqual(['cards:read', 'study:read']);
+	});
+
+	it('serializes scopes deterministically', () => {
+		expect(serializeScopes(['study:read', 'cards:read', 'study:read'])).toBe('cards:read,study:read');
 	});
 });

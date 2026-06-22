@@ -7,30 +7,14 @@
 
 	interface Props {
 		open: boolean;
-		/** Card content + deck info + tags + scheduling state, all seeded as dynamic vars. */
-		front: string;
-		back: string;
-		deckName: string;
-		deckId: string;
-		tags: string;
-		cardState: string;
-		cardReps: number;
-		cardLapses: number;
-		/** App locale, passed to the agent so it answers in EN or DE by default. */
+		cardId: string;
 		locale: 'en' | 'de';
 		onclose: () => void;
 	}
 
 	let {
 		open,
-		front,
-		back,
-		deckName,
-		deckId,
-		tags,
-		cardState,
-		cardReps,
-		cardLapses,
+		cardId,
 		locale,
 		onclose
 	}: Props = $props();
@@ -59,14 +43,7 @@
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
-					front,
-					back,
-					deck_name: deckName,
-					deck_id: deckId,
-					tags,
-					card_state: cardState,
-					card_reps: cardReps,
-					card_lapses: cardLapses,
+					card_id: cardId,
 					locale
 				})
 			});
@@ -121,6 +98,7 @@
 		if (code === 'no_key') return $t('agent.errors.noKey');
 		if (code === 'bad_agent') return $t('agent.errors.badAgent');
 		if (code === 'bad_key') return $t('agent.errors.badKey');
+		if (code === 'card_not_found') return $t('agent.error');
 		if (status === 429 || code === 'rate_limited') return $t('agent.errors.rateLimited');
 		return $t('agent.error');
 	}

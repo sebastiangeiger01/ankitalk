@@ -454,7 +454,7 @@ export const de: Record<string, string> = {
 
 	// MCP-Einstellungen
 	'settings.mcp.title': 'MCP-Integration',
-	'settings.mcp.desc': 'Lässt deinen ElevenLabs-Agenten (und jeden anderen MCP-kompatiblen Client, etwa Claude Desktop) deine AnkiTalk-Decks im Gespräch abfragen. Fünf Tools sind verfügbar: search_cards, list_decks, get_card, get_card_history, explain_topic.',
+	'settings.mcp.desc': 'Verbindet ElevenLabs oder andere MCP-Clients mit zielgerichteten Lern-, Fortschritts-, Such- und optionalen Kartenerstellungs-Tools.',
 	'settings.mcp.endpointLabel': 'MCP-Endpoint-URL',
 	'settings.mcp.endpointHelp': 'Füge diese URL in deinen MCP-Client ein. Die Authentifizierung läuft über eines der Bearer-Token unten.',
 	'settings.mcp.howToTitle': 'So bindest du es in deinen ElevenLabs-Agenten ein',
@@ -464,11 +464,15 @@ export const de: Record<string, string> = {
 	'settings.mcp.howTo4': 'Speichern. Der Agent sieht jetzt die AnkiTalk-Tools und kann sie für tieferen Kontext nutzen.',
 	'settings.mcp.tokensTitle': 'Tokens',
 	'settings.mcp.createToken': 'Token erzeugen',
-	'settings.mcp.copyOnce': 'Kopiere dieses Token jetzt — es wird nicht mehr angezeigt. Wer es besitzt, kann deine Decks per MCP lesen.',
+	'settings.mcp.profileLabel': 'Zugriffsprofil des Tokens',
+	'settings.mcp.profileStudy': 'Lernen — nur lesen',
+	'settings.mcp.profileAuthor': 'Erstellen — darf Karten anlegen',
+	'settings.mcp.copyOnce': 'Kopiere dieses Token jetzt — es wird nicht mehr angezeigt. Wer es besitzt, erhält das ausgewählte Zugriffsprofil.',
 	'settings.mcp.copy': 'Kopieren',
 	'settings.mcp.noTokens': 'Noch keine Tokens. Erzeuge eins, um MCP-Zugriff freizuschalten.',
 	'settings.mcp.revoke': 'Widerrufen',
 	'settings.mcp.createdAt': 'erstellt {date}',
+	'settings.mcp.expiresAt': 'läuft am {date} ab',
 	'settings.mcp.lastUsedAt': 'zuletzt genutzt {date}',
 	'settings.mcp.neverUsed': 'nie genutzt',
 };

@@ -86,10 +86,13 @@
 		label: string | null;
 		created_at: string;
 		last_used_at: string | null;
+		scopes: string;
+		expires_at: string | null;
 	}
 	let mcpTokens = $state<McpTokenRow[]>([]);
 	let mcpTokenJustCreated = $state<string | null>(null);
 	let creatingMcpToken = $state(false);
+	let mcpTokenProfile = $state<'study' | 'author'>('study');
 	const mcpEndpointUrl = $derived(
 		typeof window === 'undefined' ? '/api/mcp' : `${window.location.origin}/api/mcp`
 	);
@@ -113,7 +116,7 @@
 			const res = await fetch('/api/mcp/tokens', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ label: '' })
+				body: JSON.stringify({ label: '', profile: mcpTokenProfile, expires_in_days: 365 })
 			});
 			if (res.ok) {
 				const data = (await res.json()) as { plaintext: string };
@@ -697,9 +700,15 @@
 
 		<div class="mcp-tokens-head">
 			<strong>{$t('settings.mcp.tokensTitle')}</strong>
-			<button class="action-btn" type="button" onclick={createMcpToken} disabled={creatingMcpToken}>
-				{creatingMcpToken ? $t('common.saving') : $t('settings.mcp.createToken')}
-			</button>
+			<div class="mcp-token-create-controls">
+				<select class="agent-input mcp-profile-select" bind:value={mcpTokenProfile} aria-label={$t('settings.mcp.profileLabel')}>
+					<option value="study">{$t('settings.mcp.profileStudy')}</option>
+					<option value="author">{$t('settings.mcp.profileAuthor')}</option>
+				</select>
+				<button class="action-btn" type="button" onclick={createMcpToken} disabled={creatingMcpToken}>
+					{creatingMcpToken ? $t('common.saving') : $t('settings.mcp.createToken')}
+				</button>
+			</div>
 		</div>
 
 		{#if mcpTokenJustCreated}
@@ -723,7 +732,9 @@
 						<div class="mcp-token-meta">
 							<code class="mcp-token-prefix">{tok.prefix}…</code>
 							{#if tok.label}<span class="mcp-token-label">{tok.label}</span>{/if}
+							<span class="mcp-token-when">{tok.scopes.includes('cards:write') ? $t('settings.mcp.profileAuthor') : $t('settings.mcp.profileStudy')}</span>
 							<span class="mcp-token-when">{$t('settings.mcp.createdAt', { date: tok.created_at })}</span>
+							{#if tok.expires_at}<span class="mcp-token-when">{$t('settings.mcp.expiresAt', { date: tok.expires_at })}</span>{/if}
 							{#if tok.last_used_at}
 								<span class="mcp-token-when">{$t('settings.mcp.lastUsedAt', { date: tok.last_used_at })}</span>
 							{:else}
@@ -1397,6 +1408,8 @@
 		display: flex; align-items: center; justify-content: space-between;
 		margin: 0.9rem 0 0.5rem;
 	}
+	.mcp-token-create-controls { display: flex; align-items: center; gap: 0.45rem; }
+	.mcp-profile-select { width: auto; min-width: 150px; font-size: 0.78rem; padding: 0.42rem 0.55rem; }
 	.mcp-fresh {
 		background: var(--surface-2); border: 1px solid var(--warning);
 		border-radius: 8px; padding: 0.7rem; margin-bottom: 0.7rem;
