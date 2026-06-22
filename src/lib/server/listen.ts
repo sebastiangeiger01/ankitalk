@@ -1,9 +1,9 @@
 import type { ElevenLabsTtsSettings } from './tts';
 import type { UserVoiceSettings } from '$lib/voice';
 import type { ListenStatus } from '$lib/listen/types';
+import { cleanupExpiredSentenceCache } from './listen-tts';
 
 export const LISTEN_MAX_TEXT_CHARS = 200_000;
-export const LISTEN_KEY_PREFIX = 'listen';
 
 export interface ListenDocumentRow {
 	id: string;
@@ -18,13 +18,10 @@ export interface ListenDocumentRow {
 	estimated_cost_usd: number;
 	content_hash: string;
 	language: string | null;
+	original_text: string | null;
 	created_at: string;
 	updated_at: string;
 	expires_at: string;
-}
-
-export function listenR2Key(userId: string, documentId: string, seq: number): string {
-	return `${LISTEN_KEY_PREFIX}/${userId}/${documentId}/${seq}.mp3`;
 }
 
 export function resolveListenTitle(provided: string | undefined, text: string): string {
@@ -55,8 +52,8 @@ export function buildListenTtsSettings(
 }
 
 /**
- * Delete a user's expired documents and their R2 audio. R2 lifecycle is the source of truth for
- * bytes; this keeps D1 tidy. Safe to run opportunistically (e.g. via waitUntil) on list/detail.
+ * Delete a user's expired documents (cascading their sentences/segments) plus stale
+ * sentence-cache rows. R2 lifecycle handles bulk physical deletion; this keeps D1 tidy.
  */
 export async function cleanupExpiredListenDocuments(
 	db: D1Database,
@@ -76,4 +73,6 @@ export async function cleanupExpiredListenDocuments(
 		await Promise.allSettled(segs.results.map((s) => media.delete(s.r2_key)));
 		await db.prepare('DELETE FROM listen_documents WHERE id = ?').bind(id).run();
 	}
+
+	await cleanupExpiredSentenceCache(db, media, userId);
 }

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { locale, t } from '$lib/i18n';
+	import { t } from '$lib/i18n';
 	import Spinner from '$lib/components/Spinner.svelte';
 
 	const deckId = $derived($page.params.id);
@@ -9,8 +9,6 @@
 	let deckName = $state('');
 	let period = $state(30);
 
-	let loc = $state('en');
-	locale.subscribe((v) => { loc = v; });
 
 	interface CardStates {
 		new: number;
@@ -81,45 +79,45 @@
 </script>
 
 <div class="stats-page">
-	<a href="/" class="back-link">&larr; {t('stats.dashboard')}</a>
+	<a href="/" class="back-link">&larr; {$t('stats.dashboard')}</a>
 
-	<h1>{t('stats.title')}{deckName ? ` — ${deckName}` : ''}</h1>
+	<h1>{$t('stats.title')}{deckName ? ` — ${deckName}` : ''}</h1>
 
 	{#if loading}
 		<div class="loading"><Spinner size={26} /></div>
 	{:else}
 		<section class="section">
-			<h2>{t('stats.cardStates')}</h2>
+			<h2>{$t('stats.cardStates')}</h2>
 			<div class="state-bar">
 				{#if totalCards > 0}
-					<div class="state-seg new" style="width: {stateBarWidth(cardStates.new)}" title="{t('state.new')}: {cardStates.new}"></div>
-					<div class="state-seg learning" style="width: {stateBarWidth(cardStates.learning + cardStates.relearning)}" title="{t('state.learning')}: {cardStates.learning + cardStates.relearning}"></div>
-					<div class="state-seg review" style="width: {stateBarWidth(cardStates.review)}" title="{t('state.review')}: {cardStates.review}"></div>
-					<div class="state-seg suspended" style="width: {stateBarWidth(cardStates.suspended)}" title="{t('state.suspended')}: {cardStates.suspended}"></div>
+					<div class="state-seg new" style="width: {stateBarWidth(cardStates.new)}" title="{$t('state.new')}: {cardStates.new}"></div>
+					<div class="state-seg learning" style="width: {stateBarWidth(cardStates.learning + cardStates.relearning)}" title="{$t('state.learning')}: {cardStates.learning + cardStates.relearning}"></div>
+					<div class="state-seg review" style="width: {stateBarWidth(cardStates.review)}" title="{$t('state.review')}: {cardStates.review}"></div>
+					<div class="state-seg suspended" style="width: {stateBarWidth(cardStates.suspended)}" title="{$t('state.suspended')}: {cardStates.suspended}"></div>
 				{/if}
 			</div>
 			<div class="state-legend">
-				<span class="legend-item"><span class="dot new"></span> {t('state.new')}: {cardStates.new}</span>
-				<span class="legend-item"><span class="dot learning"></span> {t('state.learning')}: {cardStates.learning + cardStates.relearning}</span>
-				<span class="legend-item"><span class="dot review"></span> {t('state.review')}: {cardStates.review}</span>
-				<span class="legend-item"><span class="dot suspended"></span> {t('state.suspended')}: {cardStates.suspended}</span>
+				<span class="legend-item"><span class="dot new"></span> {$t('state.new')}: {cardStates.new}</span>
+				<span class="legend-item"><span class="dot learning"></span> {$t('state.learning')}: {cardStates.learning + cardStates.relearning}</span>
+				<span class="legend-item"><span class="dot review"></span> {$t('state.review')}: {cardStates.review}</span>
+				<span class="legend-item"><span class="dot suspended"></span> {$t('state.suspended')}: {cardStates.suspended}</span>
 			</div>
 		</section>
 
 		<section class="section">
-			<h2>{t('stats.retentionRate')}</h2>
+			<h2>{$t('stats.retentionRate')}</h2>
 			{#if retentionRate !== null}
 				<div class="retention-display">
 					<span class="retention-value">{Math.round(retentionRate * 100)}%</span>
-					<span class="retention-label">{t('stats.retentionLabel')}</span>
+					<span class="retention-label">{$t('stats.retentionLabel')}</span>
 				</div>
 			{:else}
-				<p class="no-data">{t('stats.noRetention')}</p>
+				<p class="no-data">{$t('stats.noRetention')}</p>
 			{/if}
 		</section>
 
 		<section class="section">
-			<h2>{t('stats.dailyReviews')}</h2>
+			<h2>{$t('stats.dailyReviews')}</h2>
 			<div class="period-selector">
 				<button class:active={period === 7} onclick={() => setPeriod(7)}>7d</button>
 				<button class:active={period === 30} onclick={() => setPeriod(30)}>30d</button>
@@ -127,7 +125,7 @@
 			</div>
 
 			{#if dailyReviews.length === 0}
-				<p class="no-data">{t('stats.noReviews')}</p>
+				<p class="no-data">{$t('stats.noReviews')}</p>
 			{:else}
 				<div class="chart-container">
 					<svg viewBox="0 0 {dailyReviews.length * 24} 120" class="chart" preserveAspectRatio="none">
@@ -141,25 +139,25 @@
 							{@const againH = day.again_count * scale}
 							<!-- stacked bottom-up: again, hard, good, easy -->
 							<rect x={x} y={100 - againH} width={barW} height={againH} fill="#ff8888" rx="2">
-								<title>{day.day}: {t('rating.again')} {day.again_count}</title>
+								<title>{day.day}: {$t('rating.again')} {day.again_count}</title>
 							</rect>
 							<rect x={x} y={100 - againH - hardH} width={barW} height={hardH} fill="#ffbb88" rx="2">
-								<title>{day.day}: {t('rating.hard')} {day.hard_count}</title>
+								<title>{day.day}: {$t('rating.hard')} {day.hard_count}</title>
 							</rect>
-							<rect x={x} y={100 - againH - hardH - goodH} width={barW} height={goodH} fill="#88ff88" rx="2">
-								<title>{day.day}: {t('rating.good')} {day.good_count}</title>
+							<rect x={x} y={100 - againH - hardH - goodH} width={barW} height={goodH} fill="var(--success)" rx="2">
+								<title>{day.day}: {$t('rating.good')} {day.good_count}</title>
 							</rect>
 							<rect x={x} y={100 - againH - hardH - goodH - easyH} width={barW} height={easyH} fill="#88bbff" rx="2">
-								<title>{day.day}: {t('rating.easy')} {day.easy_count}</title>
+								<title>{day.day}: {$t('rating.easy')} {day.easy_count}</title>
 							</rect>
 						{/each}
 					</svg>
 				</div>
 				<div class="chart-legend">
-					<span class="legend-item"><span class="dot again"></span> {t('rating.again')}</span>
-					<span class="legend-item"><span class="dot hard"></span> {t('rating.hard')}</span>
-					<span class="legend-item"><span class="dot good"></span> {t('rating.good')}</span>
-					<span class="legend-item"><span class="dot easy"></span> {t('rating.easy')}</span>
+					<span class="legend-item"><span class="dot again"></span> {$t('rating.again')}</span>
+					<span class="legend-item"><span class="dot hard"></span> {$t('rating.hard')}</span>
+					<span class="legend-item"><span class="dot good"></span> {$t('rating.good')}</span>
+					<span class="legend-item"><span class="dot easy"></span> {$t('rating.easy')}</span>
 				</div>
 			{/if}
 		</section>
@@ -174,13 +172,13 @@
 	}
 
 	.back-link {
-		color: #a8a8b8;
+		color: var(--text-muted);
 		text-decoration: none;
 		font-size: 0.9rem;
 	}
 
 	.back-link:hover {
-		color: #e0e0ff;
+		color: var(--text);
 	}
 
 	h1 {
@@ -196,7 +194,7 @@
 	}
 
 	.no-data {
-		color: #a8a8b8;
+		color: var(--text-muted);
 		font-size: 0.9rem;
 	}
 
@@ -206,7 +204,7 @@
 
 	.section h2 {
 		font-size: 1rem;
-		color: #b0b0d0;
+		color: var(--text-muted);
 		margin-bottom: 0.75rem;
 	}
 
@@ -216,7 +214,7 @@
 		height: 24px;
 		border-radius: 6px;
 		overflow: hidden;
-		background: #22223a;
+		background: var(--surface);
 	}
 
 	.state-seg {
@@ -226,7 +224,7 @@
 
 	.state-seg.new { background: #88bbff; }
 	.state-seg.learning { background: #ffbb88; }
-	.state-seg.review { background: #88ff88; }
+	.state-seg.review { background: var(--success); }
 	.state-seg.suspended { background: #ff8888; }
 
 	.state-legend, .chart-legend {
@@ -235,7 +233,7 @@
 		flex-wrap: wrap;
 		margin-top: 0.5rem;
 		font-size: 0.8rem;
-		color: #a8a8b8;
+		color: var(--text-muted);
 	}
 
 	.legend-item {
@@ -253,10 +251,10 @@
 
 	.dot.new { background: #88bbff; }
 	.dot.learning { background: #ffbb88; }
-	.dot.review { background: #88ff88; }
+	.dot.review { background: var(--success); }
 	.dot.suspended, .dot.again { background: #ff8888; }
 	.dot.hard { background: #ffbb88; }
-	.dot.good { background: #88ff88; }
+	.dot.good { background: var(--success); }
 	.dot.easy { background: #88bbff; }
 
 	/* Retention */
@@ -269,12 +267,12 @@
 	.retention-value {
 		font-size: 2.5rem;
 		font-weight: 700;
-		color: #88ff88;
+		color: var(--success);
 	}
 
 	.retention-label {
 		font-size: 0.85rem;
-		color: #a8a8b8;
+		color: var(--text-muted);
 	}
 
 	/* Period selector */
@@ -286,30 +284,30 @@
 
 	.period-selector button {
 		padding: 0.3rem 0.8rem;
-		border: 1px solid #3a3a5e;
-		background: #22223a;
-		color: #a8a8b8;
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: var(--text-muted);
 		border-radius: 6px;
 		cursor: pointer;
 		font-size: 0.8rem;
 	}
 
 	.period-selector button:hover {
-		border-color: #5a5a8e;
-		color: #e0e0ff;
+		border-color: var(--border-strong);
+		color: var(--text);
 	}
 
 	.period-selector button.active {
-		background: #3a3a6e;
-		border-color: #5a5a8e;
-		color: #e0e0ff;
+		background: var(--primary);
+		border-color: var(--border-strong);
+		color: var(--text);
 	}
 
 	/* Chart */
 	.chart-container {
 		width: 100%;
 		overflow-x: auto;
-		background: #22223a;
+		background: var(--surface);
 		border-radius: 8px;
 		padding: 0.75rem;
 	}

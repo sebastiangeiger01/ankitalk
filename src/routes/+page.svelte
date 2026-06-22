@@ -3,7 +3,7 @@
 	import { parseApkg } from '$lib/client/anki-parser';
 	import { buildApkg, extractMediaFilenames } from '$lib/client/apkg-export';
 	import OnboardingChecklist from '$lib/components/OnboardingChecklist.svelte';
-	import { locale, t } from '$lib/i18n';
+	import { t } from '$lib/i18n';
 	import { preloadTTS } from '$lib/client/audio';
 	import { getPrepareAudioAhead } from '$lib/client/preferences';
 	import { sanitizeCardHtml } from '$lib/sanitize';
@@ -16,9 +16,8 @@
 	let decks = $state<DeckWithDueCount[]>([]);
 	let importing = $state(false);
 	let importStatus = $state('');
+	let exportError = $state('');
 	let loading = $state(true);
-	let loc = $state('en');
-	locale.subscribe((v) => { loc = v; });
 
 	// Onboarding state
 	let hasRequiredKeys = $state(false);
@@ -80,11 +79,11 @@
 		if (!file) return;
 
 		importing = true;
-		importStatus = t('import.parsing');
+		importStatus = $t('import.parsing');
 
 		try {
 			const parsed = await parseApkg(file);
-			importStatus = t('import.found', { cards: parsed.cards.length, decks: parsed.decks.length });
+			importStatus = $t('import.found', { cards: parsed.cards.length, decks: parsed.decks.length });
 
 			const formData = new FormData();
 			formData.append(
@@ -111,11 +110,11 @@
 			}
 
 			const result = (await res.json()) as { cardCount: number; mediaCount: number };
-			importStatus = t('import.done', { cards: result.cardCount, media: result.mediaCount });
+			importStatus = $t('import.done', { cards: result.cardCount, media: result.mediaCount });
 
 			await loadDecks();
 		} catch (err) {
-			importStatus = t('import.error', { message: err instanceof Error ? err.message : 'Import failed' });
+			importStatus = $t('import.error', { message: err instanceof Error ? err.message : 'Import failed' });
 		} finally {
 			importing = false;
 			input.value = '';
@@ -159,7 +158,8 @@
 			a.click();
 			URL.revokeObjectURL(url);
 		} catch (err) {
-			alert(t('dashboard.exportFailed', { error: err instanceof Error ? err.message : 'Unknown error' }));
+			exportError = $t('dashboard.exportFailed', { error: err instanceof Error ? err.message : 'Unknown error' });
+			setTimeout(() => { exportError = ''; }, 6000);
 		} finally {
 			exportingDeckId = '';
 		}
@@ -185,7 +185,7 @@
 	});
 </script>
 
-<h1>{t('dashboard.title')}</h1>
+<h1>{$t('dashboard.title')}</h1>
 
 {#if showOnboarding && !loading}
 	<OnboardingChecklist
@@ -197,13 +197,20 @@
 {/if}
 
 <section class="upload">
-	<label class="upload-btn" class:disabled={importing} aria-label={importing ? t('dashboard.importing') : t('dashboard.import')}>
+	<label class="upload-btn" class:disabled={importing} aria-label={importing ? $t('dashboard.importing') : $t('dashboard.import')}>
 		<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-		{importing ? t('dashboard.importing') : t('dashboard.import')}
+		{importing ? $t('dashboard.importing') : $t('dashboard.import')}
 		<input type="file" accept=".apkg" onchange={handleFileUpload} disabled={importing} hidden />
 	</label>
 	{#if importStatus}
 		<p class="status">{importStatus}</p>
+	{/if}
+
+	{#if exportError}
+		<p class="status status-err" role="alert">
+			{exportError}
+			<button class="status-dismiss" aria-label={$t('common.dismiss')} onclick={() => (exportError = '')}>×</button>
+		</p>
 	{/if}
 </section>
 
@@ -218,21 +225,21 @@
 			</li>
 		{/each}
 	</ul>
-{:else if decks.length === 0}
+{:else if decks.length === 0 && !showOnboarding}
 	<div class="onboarding">
 		<div class="onboarding-icon">
 			<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-				<rect x="8" y="12" width="48" height="40" rx="6" stroke="#4a4a8e" stroke-width="2.5" fill="none"/>
-				<path d="M24 32 L30 38 L40 26" stroke="#6ecb63" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-				<circle cx="48" cy="16" r="8" fill="#4a4a8e"/>
-				<path d="M48 12 L48 20 M44 16 L52 16" stroke="#e0e0ff" stroke-width="2" stroke-linecap="round"/>
+				<rect x="8" y="12" width="48" height="40" rx="6" stroke="var(--primary)" stroke-width="2.5" fill="none"/>
+				<path d="M24 32 L30 38 L40 26" stroke="var(--success)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+				<circle cx="48" cy="16" r="8" fill="var(--primary)"/>
+				<path d="M48 12 L48 20 M44 16 L52 16" stroke="var(--text)" stroke-width="2" stroke-linecap="round"/>
 			</svg>
 		</div>
-		<h2>{t('onboarding.welcome')}</h2>
-		<p class="onboarding-desc">{t('onboarding.desc')}</p>
-		<p class="onboarding-steps">{@html t('onboarding.steps')}</p>
-		<label class="upload-btn primary-cta" class:disabled={importing} aria-label={importing ? t('dashboard.importing') : t('dashboard.import')}>
-			{importing ? t('dashboard.importing') : t('dashboard.import')}
+		<h2>{$t('onboarding.welcome')}</h2>
+		<p class="onboarding-desc">{$t('onboarding.desc')}</p>
+		<p class="onboarding-steps">{@html $t('onboarding.steps')}</p>
+		<label class="upload-btn primary-cta" class:disabled={importing} aria-label={importing ? $t('dashboard.importing') : $t('dashboard.import')}>
+			{importing ? $t('dashboard.importing') : $t('dashboard.import')}
 			<input type="file" accept=".apkg" onchange={handleFileUpload} disabled={importing} hidden />
 		</label>
 	</div>
@@ -243,29 +250,29 @@
 				<a href="/review/{deck.id}" class="deck-link">
 					<h2>{deck.name}</h2>
 					<div class="deck-stats">
-						<span>{t('dashboard.cards', { count: deck.card_count })}</span>
+						<span>{$t('dashboard.cards', { count: deck.card_count })}</span>
 						{#if deck.due_count > 0}
-							<span class="due-badge">{t('dashboard.due', { count: deck.due_count })}</span>
+							<span class="due-badge">{$t('dashboard.due', { count: deck.due_count })}</span>
 						{:else}
-							<span class="due-zero">{t('dashboard.due', { count: 0 })}</span>
+							<span class="due-zero">{$t('dashboard.due', { count: 0 })}</span>
 						{/if}
 					</div>
 				</a>
 				<div class="deck-actions">
-					<a href="/decks/{deck.id}/cards" class="deck-action-btn" aria-label="{t('dashboard.browse')} {deck.name}" title={t('dashboard.browse')}>
+					<a href="/decks/{deck.id}/cards" class="deck-action-btn" aria-label="{$t('dashboard.browse')} {deck.name}" title={$t('dashboard.browse')}>
 						<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><path d="M7 15h4"/></svg>
 					</a>
-					<button class="deck-action-btn" aria-label="{t('dashboard.export')} {deck.name}" title={t('dashboard.export')} disabled={exportingDeckId === deck.id} onclick={() => exportDeck(deck.id, deck.name)}>
+					<button class="deck-action-btn" aria-label="{$t('dashboard.export')} {deck.name}" title={$t('dashboard.export')} disabled={exportingDeckId === deck.id} onclick={() => exportDeck(deck.id, deck.name)}>
 						{#if exportingDeckId === deck.id}
 							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48 2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48 2.83-2.83"/></svg>
 						{:else}
 							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
 						{/if}
 					</button>
-					<a href="/decks/{deck.id}/settings" class="deck-action-btn" aria-label="{t('dashboard.settings')} {deck.name}" title={t('dashboard.settings')}>
+					<a href="/decks/{deck.id}/settings" class="deck-action-btn" aria-label="{$t('dashboard.settings')} {deck.name}" title={$t('dashboard.settings')}>
 						<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
 					</a>
-					<a href="/decks/{deck.id}/stats" class="deck-action-btn" aria-label="{t('dashboard.stats')} {deck.name}" title={t('dashboard.stats')}>
+					<a href="/decks/{deck.id}/stats" class="deck-action-btn" aria-label="{$t('dashboard.stats')} {deck.name}" title={$t('dashboard.stats')}>
 						<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
 					</a>
 				</div>
@@ -288,7 +295,7 @@
 		align-items: center;
 		gap: 0.5rem;
 		padding: 0.65rem 1.25rem;
-		background: #2a2a4e;
+		background: var(--border-muted);
 		color: #c0c0e0;
 		border-radius: 8px;
 		cursor: pointer;
@@ -299,7 +306,7 @@
 
 	.upload-btn:hover {
 		background: #333360;
-		border-color: #5a5a8e;
+		border-color: var(--border-strong);
 	}
 
 	.upload-btn.disabled {
@@ -312,6 +319,29 @@
 		color: #aaa;
 		font-size: 0.9rem;
 	}
+
+	.status-err {
+		color: var(--danger-soft);
+		background: rgba(168, 52, 76, 0.12);
+		border: 1px solid rgba(168, 52, 76, 0.4);
+		border-radius: 7px;
+		padding: 0.6rem 0.75rem;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+	}
+
+	.status-dismiss {
+		background: none;
+		border: none;
+		color: inherit;
+		font-size: 1.1rem;
+		cursor: pointer;
+		padding: 0 0.25rem;
+		line-height: 1;
+	}
+	.status-dismiss:hover { color: #fff; }
 
 	.onboarding {
 		text-align: center;
@@ -336,7 +366,7 @@
 	}
 
 	.onboarding-steps {
-		color: #a8a8b8;
+		color: var(--text-muted);
 		font-size: 0.85rem;
 		line-height: 1.5;
 		margin-bottom: 1.5rem;
@@ -345,11 +375,11 @@
 	.primary-cta {
 		padding: 0.9rem 2rem !important;
 		font-size: 1.1rem !important;
-		background: #4a4a8e !important;
+		background: var(--primary) !important;
 	}
 
 	.primary-cta:hover {
-		background: #5a5aae !important;
+		background: var(--primary-hover) !important;
 	}
 
 	.deck-list {
@@ -363,7 +393,7 @@
 	.deck-card {
 		display: flex;
 		align-items: center;
-		background: #22223a;
+		background: var(--surface);
 		border-radius: 10px;
 		overflow: hidden;
 		flex-wrap: wrap;
@@ -372,7 +402,7 @@
 	}
 
 	.deck-card.has-due {
-		border-left-color: #6ecb63;
+		border-left-color: var(--success);
 	}
 
 	.deck-link {
@@ -384,7 +414,7 @@
 	}
 
 	.deck-link:hover {
-		background: #2a2a4e;
+		background: var(--border-muted);
 	}
 
 	.deck-link h2 {
@@ -397,14 +427,14 @@
 		align-items: center;
 		gap: 0.6rem;
 		font-size: 0.85rem;
-		color: #a8a8b8;
+		color: var(--text-muted);
 	}
 
 	.due-badge {
 		display: inline-block;
 		padding: 0.15rem 0.55rem;
 		background: rgba(110, 203, 99, 0.15);
-		color: #6ecb63;
+		color: var(--success);
 		font-weight: 600;
 		border-radius: 99px;
 		font-size: 0.8rem;
@@ -441,9 +471,9 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 36px;
-		height: 36px;
-		border-radius: 6px;
+		width: 44px;
+		height: 44px;
+		border-radius: var(--r-sm);
 		border: none;
 		background: none;
 		cursor: pointer;
@@ -453,7 +483,7 @@
 	}
 
 	.deck-action-btn:hover {
-		background: #2a2a4e;
+		background: var(--border-muted);
 		color: #c0c0e0;
 	}
 
@@ -471,7 +501,7 @@
 	.skeleton-title,
 	.skeleton-meta {
 		border-radius: 4px;
-		background: linear-gradient(90deg, #2a2a4e 25%, #353560 50%, #2a2a4e 75%);
+		background: linear-gradient(90deg, var(--border-muted) 25%, #353560 50%, var(--border-muted) 75%);
 		background-size: 200% 100%;
 		animation: skeleton-shimmer 1.4s ease-in-out infinite;
 	}

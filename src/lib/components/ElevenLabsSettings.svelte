@@ -151,15 +151,15 @@
 	}
 
 	function modelLabel(id: string): string {
-		return t(`settings.elevenlabs.model.${id}`);
+		return $t(`settings.elevenlabs.model.${id}`);
 	}
 	function modelDesc(id: string): string {
-		return t(`settings.elevenlabs.model.${id}.desc`);
+		return $t(`settings.elevenlabs.model.${id}.desc`);
 	}
 	function creditBadge(id: string): string {
 		return elevenLabsModelCreditMultiplier(id) < 1
-			? t('settings.elevenlabs.halfCredits')
-			: t('settings.elevenlabs.fullCredits');
+			? $t('settings.elevenlabs.halfCredits')
+			: $t('settings.elevenlabs.fullCredits');
 	}
 
 	function resetTuning() {
@@ -184,12 +184,12 @@
 </script>
 
 {#if !keyConfigured}
-	<p class="el-hint">{t('settings.elevenlabs.needKey')}</p>
+	<p class="el-hint">{$t('settings.elevenlabs.needKey')}</p>
 {:else}
 	<!-- Credit balance -->
 	<div class="el-card">
 		<div class="el-card-head">
-			<span class="el-card-title">{t('settings.elevenlabs.credits')}</span>
+			<span class="el-card-title">{$t('settings.elevenlabs.credits')}</span>
 			{#if subscription}
 				<span class="el-tier">{subscription.tier}</span>
 			{/if}
@@ -197,26 +197,26 @@
 		{#if loadingSubscription}
 			<div class="el-center"><Spinner size={18} /></div>
 		{:else if subscriptionError || !subscription}
-			<p class="el-muted">{t('settings.elevenlabs.creditsError')}</p>
+			<p class="el-muted">{$t('settings.elevenlabs.creditsError')}</p>
 		{:else}
 			<div class="el-credit-bar" role="progressbar" aria-valuenow={creditUsedPct} aria-valuemin={0} aria-valuemax={100}>
 				<div class="el-credit-fill" class:el-credit-fill--high={creditUsedPct >= 90} style={`width:${creditUsedPct}%`}></div>
 			</div>
 			<div class="el-credit-stats">
-				<span>{t('settings.elevenlabs.creditsUsed', {
+				<span>{$t('settings.elevenlabs.creditsUsed', {
 					used: subscription.characterCount.toLocaleString(),
 					limit: subscription.characterLimit.toLocaleString()
 				})}</span>
 				<span>{creditUsedPct}%</span>
 			</div>
-			<p class="el-muted el-reset">{t('settings.elevenlabs.creditsReset', { date: formatResetDate(subscription.nextResetUnix) })}</p>
+			<p class="el-muted el-reset">{$t('settings.elevenlabs.creditsReset', { date: formatResetDate(subscription.nextResetUnix) })}</p>
 		{/if}
 	</div>
 
 	<!-- Model / version picker -->
 	<div class="el-group">
-		<span class="el-group-title">{t('settings.elevenlabs.model')}</span>
-		<span class="el-group-desc">{t('settings.elevenlabs.modelDesc')}</span>
+		<span class="el-group-title">{$t('settings.elevenlabs.model')}</span>
+		<span class="el-group-desc">{$t('settings.elevenlabs.modelDesc')}</span>
 		<div class="el-model-options">
 			{#each ELEVENLABS_TTS_MODELS as model}
 				<label class="el-model" class:active={settings.elevenlabs_tts_model === model.id}>
@@ -242,21 +242,21 @@
 
 	<!-- Voice picker -->
 	<div class="el-group">
-		<span class="el-group-title">{t('settings.elevenlabs.voice')}</span>
-		<span class="el-group-desc">{t('settings.elevenlabs.voiceDesc', { name: selectedVoiceName })}</span>
+		<span class="el-group-title">{$t('settings.elevenlabs.voice')}</span>
+		<span class="el-group-desc">{$t('settings.elevenlabs.voiceDesc', { name: selectedVoiceName })}</span>
 
 		{#if loadingVoices}
 			<div class="el-center"><Spinner size={18} /></div>
 		{:else if voicesError}
 			<p class="el-muted">
-				{t('settings.elevenlabs.voicesError')}
-				<button type="button" class="el-link-btn" onclick={loadVoices}>{t('settings.elevenlabs.retry')}</button>
+				{$t('settings.elevenlabs.voicesError')}
+				<button type="button" class="el-link-btn" onclick={loadVoices}>{$t('settings.elevenlabs.retry')}</button>
 			</p>
 		{:else}
 			<input
 				class="el-search"
 				type="search"
-				placeholder={t('settings.elevenlabs.searchVoices')}
+				placeholder={$t('settings.elevenlabs.searchVoices')}
 				bind:value={voiceSearch}
 			/>
 			<div class="el-voice-list">
@@ -281,7 +281,7 @@
 								type="button"
 								class="el-preview-btn"
 								class:playing={previewVoiceId === voice.voiceId}
-								aria-label={t('settings.elevenlabs.preview')}
+								aria-label={$t('settings.elevenlabs.preview')}
 								onclick={() => togglePreview(voice)}
 							>
 								{previewVoiceId === voice.voiceId ? '■' : '▶'}
@@ -290,7 +290,7 @@
 					</div>
 				{/each}
 				{#if filteredVoices.length === 0}
-					<p class="el-muted el-empty">{t('settings.elevenlabs.noVoices')}</p>
+					<p class="el-muted el-empty">{$t('settings.elevenlabs.noVoices')}</p>
 				{/if}
 			</div>
 		{/if}
@@ -299,14 +299,14 @@
 	<!-- Advanced tuning -->
 	<div class="el-group">
 		<button type="button" class="el-advanced-toggle" onclick={() => (advancedOpen = !advancedOpen)} aria-expanded={advancedOpen}>
-			<span class="el-group-title">{t('settings.elevenlabs.tuning')}</span>
+			<span class="el-group-title">{$t('settings.elevenlabs.tuning')}</span>
 			<span class="el-chevron">{advancedOpen ? '−' : '+'}</span>
 		</button>
 		{#if advancedOpen}
 			<div class="el-tuning">
 				<label class="el-slider">
 					<span class="el-slider-head">
-						<span>{t('settings.elevenlabs.speed')}</span>
+						<span>{$t('settings.elevenlabs.speed')}</span>
 						<span class="el-slider-val">{settings.elevenlabs_tts_speed.toFixed(2)}×</span>
 					</span>
 					<input type="range" min="0.7" max="1.2" step="0.05" value={settings.elevenlabs_tts_speed} {disabled}
@@ -314,40 +314,40 @@
 				</label>
 				<label class="el-slider">
 					<span class="el-slider-head">
-						<span>{t('settings.elevenlabs.stability')}</span>
+						<span>{$t('settings.elevenlabs.stability')}</span>
 						<span class="el-slider-val">{Math.round(settings.elevenlabs_stability * 100)}%</span>
 					</span>
 					<input type="range" min="0" max="1" step="0.05" value={settings.elevenlabs_stability} {disabled}
 						onchange={(e) => commitNumber('elevenlabs_stability', e)} />
-					<small>{t('settings.elevenlabs.stabilityDesc')}</small>
+					<small>{$t('settings.elevenlabs.stabilityDesc')}</small>
 				</label>
 				<label class="el-slider">
 					<span class="el-slider-head">
-						<span>{t('settings.elevenlabs.similarity')}</span>
+						<span>{$t('settings.elevenlabs.similarity')}</span>
 						<span class="el-slider-val">{Math.round(settings.elevenlabs_similarity * 100)}%</span>
 					</span>
 					<input type="range" min="0" max="1" step="0.05" value={settings.elevenlabs_similarity} {disabled}
 						onchange={(e) => commitNumber('elevenlabs_similarity', e)} />
-					<small>{t('settings.elevenlabs.similarityDesc')}</small>
+					<small>{$t('settings.elevenlabs.similarityDesc')}</small>
 				</label>
 				<label class="el-slider">
 					<span class="el-slider-head">
-						<span>{t('settings.elevenlabs.style')}</span>
+						<span>{$t('settings.elevenlabs.style')}</span>
 						<span class="el-slider-val">{Math.round(settings.elevenlabs_style * 100)}%</span>
 					</span>
 					<input type="range" min="0" max="1" step="0.05" value={settings.elevenlabs_style} {disabled}
 						onchange={(e) => commitNumber('elevenlabs_style', e)} />
-					<small>{t('settings.elevenlabs.styleDesc')}</small>
+					<small>{$t('settings.elevenlabs.styleDesc')}</small>
 				</label>
 				<label class="el-toggle-row">
 					<span>
-						<span class="el-toggle-title">{t('settings.elevenlabs.speakerBoost')}</span>
-						<small>{t('settings.elevenlabs.speakerBoostDesc')}</small>
+						<span class="el-toggle-title">{$t('settings.elevenlabs.speakerBoost')}</span>
+						<small>{$t('settings.elevenlabs.speakerBoostDesc')}</small>
 					</span>
 					<input type="checkbox" role="switch" checked={settings.elevenlabs_speaker_boost} {disabled}
 						onchange={(e) => onUpdate({ elevenlabs_speaker_boost: (e.currentTarget as HTMLInputElement).checked })} />
 				</label>
-				<button type="button" class="el-reset" onclick={resetTuning} {disabled}>{t('settings.elevenlabs.resetTuning')}</button>
+				<button type="button" class="el-reset" onclick={resetTuning} {disabled}>{$t('settings.elevenlabs.resetTuning')}</button>
 			</div>
 		{/if}
 	</div>
@@ -358,7 +358,7 @@
 		font-size: 0.85rem;
 		color: #8d8db0;
 		background: #17172a;
-		border: 1px solid #2e2e52;
+		border: 1px solid var(--surface-elevated);
 		border-radius: 8px;
 		padding: 0.7rem 0.85rem;
 		margin: 0;
@@ -367,7 +367,7 @@
 
 	.el-card {
 		background: #17172a;
-		border: 1px solid #2e2e52;
+		border: 1px solid var(--surface-elevated);
 		border-radius: 10px;
 		padding: 0.85rem 1rem;
 		margin-bottom: 0.75rem;
@@ -392,14 +392,14 @@
 		text-transform: capitalize;
 		padding: 0.15rem 0.55rem;
 		border-radius: 99px;
-		background: #2a2a4a;
+		background: var(--border-muted);
 		color: #b0b0e0;
 	}
 
 	.el-credit-bar {
 		height: 8px;
 		border-radius: 99px;
-		background: #2a2a4a;
+		background: var(--border-muted);
 		overflow: hidden;
 	}
 
@@ -417,7 +417,7 @@
 		display: flex;
 		justify-content: space-between;
 		font-size: 0.82rem;
-		color: #a0a0c0;
+		color: var(--text-muted);
 		margin-top: 0.5rem;
 	}
 
@@ -426,8 +426,8 @@
 	}
 
 	.el-group {
-		background: #1a1a2e;
-		border: 1px solid #2a2a4a;
+		background: var(--bg);
+		border: 1px solid var(--border-muted);
 		border-radius: 10px;
 		padding: 0.9rem 1rem;
 		margin-bottom: 0.75rem;
@@ -445,7 +445,7 @@
 	.el-group-desc {
 		font-size: 0.82rem;
 		line-height: 1.45;
-		color: #7a7a9a;
+		color: var(--text-subtle);
 		margin-bottom: 0.2rem;
 	}
 
@@ -459,7 +459,7 @@
 		align-items: flex-start;
 		gap: 0.65rem;
 		padding: 0.7rem;
-		border: 1px solid #2e2e52;
+		border: 1px solid var(--surface-elevated);
 		border-radius: 8px;
 		cursor: pointer;
 		background: #17172a;
@@ -505,7 +505,7 @@
 		font-weight: 600;
 		padding: 0.1rem 0.45rem;
 		border-radius: 99px;
-		background: #2a2a4a;
+		background: var(--border-muted);
 		color: #9a9ac0;
 		white-space: nowrap;
 	}
@@ -518,10 +518,10 @@
 	.el-search {
 		width: 100%;
 		padding: 0.5rem 0.7rem;
-		background: #12121f;
-		border: 1px solid #3a3a5e;
+		background: var(--surface-2);
+		border: 1px solid var(--border);
 		border-radius: 7px;
-		color: #e0e0ff;
+		color: var(--text);
 		font-size: 0.88rem;
 		box-sizing: border-box;
 	}
@@ -545,7 +545,7 @@
 		align-items: center;
 		gap: 0.5rem;
 		padding: 0.5rem 0.6rem;
-		border: 1px solid #2e2e52;
+		border: 1px solid var(--surface-elevated);
 		border-radius: 8px;
 		background: #17172a;
 	}
@@ -595,8 +595,8 @@
 		width: 2rem;
 		height: 2rem;
 		border-radius: 6px;
-		border: 1px solid #3a3a5e;
-		background: #22223a;
+		border: 1px solid var(--border);
+		background: var(--surface);
 		color: #b0b0e0;
 		cursor: pointer;
 		font-size: 0.7rem;
@@ -667,7 +667,7 @@
 
 	.el-slider small {
 		font-size: 0.74rem;
-		color: #7a7a9a;
+		color: var(--text-subtle);
 		line-height: 1.35;
 	}
 
@@ -693,7 +693,7 @@
 
 	.el-toggle-row small {
 		font-size: 0.74rem;
-		color: #7a7a9a;
+		color: var(--text-subtle);
 		line-height: 1.35;
 	}
 
@@ -707,8 +707,8 @@
 
 	.el-reset {
 		align-self: flex-start;
-		background: #22223a;
-		border: 1px solid #3a3a5e;
+		background: var(--surface);
+		border: 1px solid var(--border);
 		color: #a8a8c8;
 		border-radius: 7px;
 		padding: 0.4rem 0.9rem;
@@ -718,8 +718,8 @@
 	}
 
 	.el-reset:hover:not(:disabled) {
-		border-color: #5a5a8e;
-		color: #e0e0ff;
+		border-color: var(--border-strong);
+		color: var(--text);
 	}
 
 	.el-center {
@@ -731,7 +731,7 @@
 
 	.el-muted {
 		font-size: 0.82rem;
-		color: #7a7a9a;
+		color: var(--text-subtle);
 		margin: 0;
 	}
 

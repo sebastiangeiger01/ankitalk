@@ -1,0 +1,74 @@
+/**
+ * AnkiTalk design tokens.
+ *
+ * Use the semantic names (var(--surface)) rather than re-typing hex literals — the colors
+ * here are the single source of truth. Adding a new color? Add it here first.
+ *
+ * Naming convention:
+ *   --bg, --surface, --surface-2, --surface-elevated: dark backgrounds, low → high
+ *   --border, --border-muted, --border-strong: dividers and form-control borders
+ *   --text, --text-muted, --text-subtle: body text → secondary → tertiary
+ *   --primary, --primary-hover: the brand/action color
+ *   --success, --warning, --danger, --danger-soft: semantic state colors
+ *   --r-sm / --r-md / --r-lg: border-radius scale (avoid one-off pixel values)
+ */
+:root {
+	--bg: #1a1a2e;
+	--surface: #22223a;
+	--surface-2: #12121f;
+	--surface-elevated: #2e2e52;
+
+	--border: #3a3a5e;
+	--border-muted: #2a2a4a;
+	--border-strong: #5a5a8e;
+
+	--text: #e0e0ff;
+	--text-muted: #a8a8b8;
+	--text-subtle: #7a7a9a;
+	--text-on-primary: #ffffff;
+
+	--primary: #4a4a8e;
+	--primary-hover: #5a5aae;
+	--success: #3aa86c;
+	--warning: #c8a85a;
+	--danger: #a8344c;
+	--danger-hover: #c63d59;
+	--danger-soft: #ff8896;
+
+	--r-sm: 6px;
+	--r-md: 8px;
+	--r-lg: 12px;
+	--r-pill: 99px;
+
+	/** Tells UA-rendered controls (scrollbars, date pickers, native form widgets, etc.) to
+	 * use their dark-mode chrome. Without this, those bits render light on a dark background. */
+	color-scheme: dark;
+}
+
+/**
+ * iOS Safari zooms into form controls whose computed font-size is < 16px on focus, with no
+ * documented way to opt out — only making the font ≥ 16px reliably suppresses it. Bumping it
+ * only on touch-class viewports keeps desktop layouts visually intact. Desktop users barely
+ * notice the 1–2px bump; mobile users no longer get the page yanked under their finger.
+ */
+@media (max-width: 768px) {
+	input, textarea, select {
+		font-size: 16px;
+	}
+}
+
+/**
+ * Honor the OS-level "reduce motion" setting. Keeps animations functional (so opacity fades
+ * still happen) but compresses their duration to effectively instant, killing the infinite
+ * shimmer/pulse/spinner loops that cause vestibular discomfort.
+ */
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+}
