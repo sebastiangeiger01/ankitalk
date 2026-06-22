@@ -61,13 +61,21 @@
 		elevenlabs_stability: 0.5,
 		elevenlabs_similarity: 0.75,
 		elevenlabs_style: 0.0,
-		elevenlabs_speaker_boost: true
+		elevenlabs_speaker_boost: true,
+		elevenlabs_agent_id: null
 	});
 	let savingVoiceSettings = $state(false);
 	let voiceSettingsMessage = $state<{ text: string; ok: boolean } | null>(null);
 
 	let usageData = $state<UsageData | null>(null);
 	let loadingUsage = $state(false);
+
+	/**
+	 * Agent conversation usage logged through AnkiTalk this month. ElevenLabs doesn't
+	 * expose CAI minutes via API, so this is a local-only tally — see the note rendered
+	 * below the figure.
+	 */
+	let agentUsage = $state<{ month_seconds: number; month_cost_usd: number } | null>(null);
 
 	const serviceLinks: Record<Service, string> = {
 		openai: 'platform.openai.com/api-keys',
@@ -108,10 +116,12 @@
 
 		loadingUsage = true;
 		try {
-			const res = await fetch('/api/settings/usage');
-			if (res.ok) {
-				usageData = await res.json() as UsageData;
-			}
+			const [usageRes, agentRes] = await Promise.all([
+				fetch('/api/settings/usage'),
+				fetch('/api/agent/usage')
+			]);
+			if (usageRes.ok) usageData = await usageRes.json() as UsageData;
+			if (agentRes.ok) agentUsage = await agentRes.json();
 		} catch {
 			// silently ignore
 		} finally {
@@ -539,6 +549,48 @@
 				{/if}
 			</div>
 		{/each}
+	</section>
+
+	<section class="section">
+		<h2>{$t('settings.agent.title')}</h2>
+		<p class="section-desc">{$t('settings.agent.desc')}</p>
+
+		<label class="agent-field">
+			<span class="agent-label">{$t('settings.agent.agentIdLabel')}</span>
+			<input
+				type="text"
+				class="agent-input"
+				placeholder={$t('settings.agent.agentIdPlaceholder')}
+				value={voiceSettings.elevenlabs_agent_id ?? ''}
+				onblur={(e) => {
+					const next = (e.currentTarget as HTMLInputElement).value.trim();
+					const previous = { ...voiceSettings };
+					void saveVoiceSettings({ ...voiceSettings, elevenlabs_agent_id: next || null }, previous);
+				}}
+			/>
+		</label>
+		<p class="agent-help">{$t('settings.agent.agentIdHelp')}</p>
+		<p class="agent-help">
+			<a href="https://elevenlabs.io/app/agents" target="_blank" rel="noopener noreferrer">
+				{$t('settings.agent.dashboardLink')} →
+			</a>
+		</p>
+
+		<div class="agent-usage">
+			<div class="agent-usage-head">
+				<strong>{$t('settings.agent.usageTitle')}</strong>
+			</div>
+			<div class="agent-usage-body">
+				<span>{$t('settings.agent.usageMinutes', { minutes: Math.round((agentUsage?.month_seconds ?? 0) / 60) })}</span>
+				<span class="agent-usage-cost">{$t('settings.agent.usageCost', { cost: (agentUsage?.month_cost_usd ?? 0).toFixed(2) })}</span>
+			</div>
+			<p class="agent-usage-note">{$t('settings.agent.usageNote')}</p>
+			<p class="agent-help">
+				<a href="https://elevenlabs.io/app/usage" target="_blank" rel="noopener noreferrer">
+					{$t('settings.agent.usageDashboardLink')} →
+				</a>
+			</p>
+		</div>
 	</section>
 
 	<section class="section">
@@ -1144,4 +1196,30 @@
 		color: #5a5a7a;
 		font-size: 0.88rem;
 	}
+
+	/* Conversational tutor (Lernen agent) settings block. */
+	.agent-field { display: block; margin: 0.8rem 0 0.4rem; }
+	.agent-label { display: block; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.3rem; font-weight: 600; }
+	.agent-input {
+		width: 100%; box-sizing: border-box;
+		padding: 0.55rem 0.7rem; border-radius: 7px;
+		background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+		font-size: 0.95rem; font-family: monospace;
+	}
+	.agent-input:focus { outline: none; border-color: var(--border-strong); }
+	.agent-help { font-size: 0.78rem; color: var(--text-muted); margin: 0.3rem 0; line-height: 1.4; }
+	.agent-help a { color: var(--primary); text-decoration: underline; }
+	.agent-usage {
+		margin-top: 1rem; padding: 0.7rem 0.85rem;
+		background: var(--surface); border: 1px solid var(--border-muted);
+		border-radius: 10px;
+	}
+	.agent-usage-head { margin-bottom: 0.35rem; font-size: 0.9rem; color: var(--text); }
+	.agent-usage-body {
+		display: flex; align-items: baseline; gap: 0.6rem;
+		font-size: 1rem; color: var(--text);
+		font-variant-numeric: tabular-nums;
+	}
+	.agent-usage-cost { color: var(--text-muted); font-size: 0.85rem; }
+	.agent-usage-note { font-size: 0.78rem; color: var(--text-subtle); margin: 0.45rem 0 0.25rem; line-height: 1.4; }
 </style>

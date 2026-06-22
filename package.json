@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
+    "@elevenlabs/client": "^1.12.0",
     "@teamhanko/hanko-elements": "^1.0.0",
     "fflate": "^0.8.0",
     "jose": "^5.0.0",

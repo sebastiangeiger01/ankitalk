@@ -14,7 +14,8 @@ export async function getUserVoiceSettings(
 	const row = await db
 		.prepare(
 			`SELECT voice_provider, voice_command_language, elevenlabs_voice_id, elevenlabs_tts_model, elevenlabs_stt_model,
-				elevenlabs_tts_speed, elevenlabs_stability, elevenlabs_similarity, elevenlabs_style, elevenlabs_speaker_boost
+				elevenlabs_tts_speed, elevenlabs_stability, elevenlabs_similarity, elevenlabs_style, elevenlabs_speaker_boost,
+				elevenlabs_agent_id
 			 FROM user_voice_settings
 			 WHERE user_id = ?`
 		)
@@ -43,9 +44,10 @@ export async function saveUserVoiceSettings(
 				elevenlabs_similarity,
 				elevenlabs_style,
 				elevenlabs_speaker_boost,
+				elevenlabs_agent_id,
 				updated_at
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 			ON CONFLICT(user_id) DO UPDATE SET
 				voice_provider = excluded.voice_provider,
 				voice_command_language = excluded.voice_command_language,
@@ -57,6 +59,7 @@ export async function saveUserVoiceSettings(
 				elevenlabs_similarity = excluded.elevenlabs_similarity,
 				elevenlabs_style = excluded.elevenlabs_style,
 				elevenlabs_speaker_boost = excluded.elevenlabs_speaker_boost,
+				elevenlabs_agent_id = excluded.elevenlabs_agent_id,
 				updated_at = datetime('now')`
 		)
 		.bind(
@@ -70,7 +73,8 @@ export async function saveUserVoiceSettings(
 			settings.elevenlabs_stability,
 			settings.elevenlabs_similarity,
 			settings.elevenlabs_style,
-			settings.elevenlabs_speaker_boost ? 1 : 0
+			settings.elevenlabs_speaker_boost ? 1 : 0,
+			settings.elevenlabs_agent_id
 		)
 		.run();
 }
