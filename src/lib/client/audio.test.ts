@@ -4,6 +4,7 @@ let audioContextConstructions = 0;
 let audioElementConstructions = 0;
 let lastAudioElement: FakeAudioElement | null = null;
 let rejectNextPlay = false;
+let holdPlayback = false;
 
 class FakeAudioElement {
 	src = '';
@@ -37,9 +38,17 @@ class FakeAudioElement {
 		}
 		queueMicrotask(() => {
 			this.dispatch('playing');
-			this.dispatch('ended');
+			// A real clip keeps playing (and ticking `timeupdate`) for a while before `ended`.
+			// Tests that need to assert mid-playback state drive `ended` manually instead.
+			if (!holdPlayback) this.dispatch('ended');
 		});
 		return Promise.resolve();
+	}
+	tick() {
+		this.dispatch('timeupdate');
+	}
+	end() {
+		this.dispatch('ended');
 	}
 	addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
 		const listeners = this.listeners.get(type) ?? new Set();
@@ -106,6 +115,8 @@ describe('review audio', () => {
 		audioElementConstructions = 0;
 		lastAudioElement = null;
 		rejectNextPlay = false;
+		holdPlayback = false;
+		vi.useRealTimers();
 		vi.stubGlobal('AudioContext', FakeAudioContext);
 		vi.stubGlobal('Audio', FakeAudioElement);
 		vi.stubGlobal('URL', {
@@ -155,6 +166,52 @@ describe('review audio', () => {
 		preloadTTS('first card');
 
 		expect(audioContextConstructions).toBe(0);
+	});
+
+	it('does not cut off a clip that plays longer than the start watchdog window', async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1]), {
+			status: 200,
+			headers: { 'Content-Type': 'audio/mpeg' }
+		})));
+		const { preloadTTS, speak } = await import('./audio');
+		expect(await preloadTTS('long card')).toBe(true);
+
+		holdPlayback = true;
+		const playback = speak('long card');
+		await Promise.resolve();
+		const player = lastAudioElement!;
+		const basePause = player.pauseCalls;
+
+		// Simulate ~30s of real playback with progress ticks well past the old 8s absolute cap.
+		for (let elapsed = 0; elapsed < 30000; elapsed += 4000) {
+			vi.advanceTimersByTime(4000);
+			player.tick();
+		}
+		// Still playing, never rejected, never paused by a watchdog.
+		expect(player.pauseCalls).toBe(basePause);
+
+		player.end();
+		await expect(playback).resolves.toBeUndefined();
+	});
+
+	it('rejects when a clip starts but then stalls with no progress', async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1]), {
+			status: 200,
+			headers: { 'Content-Type': 'audio/mpeg' }
+		})));
+		const { preloadTTS, speak } = await import('./audio');
+		expect(await preloadTTS('stalled card')).toBe(true);
+
+		holdPlayback = true;
+		const playback = speak('stalled card');
+		const assertion = expect(playback).rejects.toThrow('TTS playback stalled');
+		await Promise.resolve();
+
+		// No `timeupdate` ticks: the stall watchdog should fire.
+		vi.advanceTimersByTime(10000);
+		await assertion;
 	});
 
 	it('reports Safari play rejections with actionable media diagnostics', async () => {

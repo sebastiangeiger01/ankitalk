@@ -107,13 +107,30 @@ function playSource(src: string, onPlaybackStart?: () => void, objectUrl?: strin
 	return new Promise<void>((resolve, reject) => {
 		let settled = false;
 		let started = false;
-		const timeout = setTimeout(() => {
-			settle(new Error(`TTS playback timed out (${sourceInfo ?? 'unknown source'}; ${mediaState(player)})`));
-		}, 8000);
+
+		// Two watchdogs, NOT an absolute cap on playback length. `startTimer` guards the time
+		// until audio actually begins (decode/autoplay problems). `stallTimer` is (re)armed on
+		// every progress tick once playing, so it only fires if a *playing* clip wedges. A flat
+		// timeout on the whole promise would cut off any card longer than the timeout.
+		const START_TIMEOUT_MS = 10000;
+		const STALL_TIMEOUT_MS = 10000;
+		let startTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+			settle(new Error(`TTS playback failed to start (${sourceInfo ?? 'unknown source'}; ${mediaState(player)})`));
+		}, START_TIMEOUT_MS);
+		let stallTimer: ReturnType<typeof setTimeout> | null = null;
+
+		const armStallTimer = () => {
+			if (stallTimer) clearTimeout(stallTimer);
+			stallTimer = setTimeout(() => {
+				settle(new Error(`TTS playback stalled (${sourceInfo ?? 'unknown source'}; ${mediaState(player)})`));
+			}, STALL_TIMEOUT_MS);
+		};
 
 		const cleanup = () => {
-			clearTimeout(timeout);
+			if (startTimer) clearTimeout(startTimer);
+			if (stallTimer) clearTimeout(stallTimer);
 			player.removeEventListener('playing', handlePlaying);
+			player.removeEventListener('timeupdate', handleProgress);
 			player.removeEventListener('ended', handleEnded);
 			player.removeEventListener('error', handleError);
 			if (objectUrl) URL.revokeObjectURL(objectUrl);
@@ -122,6 +139,8 @@ function playSource(src: string, onPlaybackStart?: () => void, objectUrl?: strin
 			if (settled) return;
 			settled = true;
 			cleanup();
+			// Never leave a failed clip audibly playing on the shared element.
+			if (error) player.pause();
 			if (currentPlayback?.stop === stop) currentPlayback = null;
 			if (error) reject(error);
 			else resolve();
@@ -131,9 +150,17 @@ function playSource(src: string, onPlaybackStart?: () => void, objectUrl?: strin
 			settle();
 		};
 		const handlePlaying = () => {
+			if (startTimer) {
+				clearTimeout(startTimer);
+				startTimer = null;
+			}
+			armStallTimer();
 			if (started) return;
 			started = true;
 			onPlaybackStart?.();
+		};
+		const handleProgress = () => {
+			if (started) armStallTimer();
 		};
 		const handleEnded = () => settle();
 		const handleError = () => settle(new Error(
@@ -142,6 +169,7 @@ function playSource(src: string, onPlaybackStart?: () => void, objectUrl?: strin
 
 		currentPlayback = { stop };
 		player.addEventListener('playing', handlePlaying);
+		player.addEventListener('timeupdate', handleProgress);
 		player.addEventListener('ended', handleEnded);
 		player.addEventListener('error', handleError);
 		player.play().catch((error: unknown) => {
