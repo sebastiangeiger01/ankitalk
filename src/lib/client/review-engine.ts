@@ -1,4 +1,4 @@
-import { speak, stopPlayback, getLastSpokenText, unlockAudio, playSound, preloadTTS, clearAudioCache } from './audio';
+import { speak, stopPlayback, getLastSpokenText, playSound, preloadTTS, clearAudioCache } from './audio';
 import { createDeepgramClient } from './deepgram';
 import { createElevenLabsClient } from './elevenlabs';
 import type { SpeechClient } from './speech';
@@ -599,14 +599,7 @@ export function createReviewEngine(): ReviewEngine {
 		startTime = Date.now();
 		isCramMode = options?.mode === 'cram';
 
-		// Audio and microphone setup are optional capabilities. Neither may block cards.
-		try {
-			unlockAudio();
-		} catch {
-			audioOn = false;
-			emit({ type: 'audio_change', audioOn: false });
-		}
-
+		// Microphone setup is optional and must not block cards.
 		try {
 			const client = options?.voiceProvider === 'openai_deepgram'
 				? createDeepgramClient({ language: options?.sttLanguage })
@@ -643,27 +636,26 @@ export function createReviewEngine(): ReviewEngine {
 			});
 		}
 
-		// Use prefetched cards if available, otherwise fetch now
-		const cardsFetch = options?.prefetchedCards
-			? Promise.resolve(options.prefetchedCards)
-			: (async () => {
+		// Keep the prefetched path synchronous so the first card's preloaded MP3 starts
+		// inside the Start button's user-gesture call stack on iOS.
+		let data: PrefetchedCards;
+		if (options?.prefetchedCards) {
+			data = options.prefetchedCards;
+		} else {
+			try {
 				const params = new URLSearchParams({ deckId, limit: '50' });
 				if (options?.tags) params.set('tags', options.tags);
 				if (options?.mode) params.set('mode', options.mode);
 				if (options?.cramState) params.set('cramState', options.cramState);
 				const res = await fetch(`/api/cards/next?${params}`);
 				if (!res.ok) throw new Error('Failed to fetch cards');
-				return (await res.json()) as PrefetchedCards;
-			})();
-
-		let data: PrefetchedCards;
-		try {
-			data = await cardsFetch;
-		} catch {
+				data = (await res.json()) as PrefetchedCards;
+			} catch {
 			speechClient?.stop();
 			sessionFinished = true;
 			emit({ type: 'error', message: 'Failed to fetch cards' });
 			throw new Error('Failed to fetch cards');
+			}
 		}
 		if (data.deckName) {
 			emit({ type: 'deck_info', name: data.deckName });

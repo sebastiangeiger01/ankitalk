@@ -3,9 +3,6 @@ let lastSpokenText = '';
 let currentAbort: AbortController | null = null;
 let currentPlayback: { stop: () => void } | null = null;
 
-/** A valid one-sample WAV used to authorize the single media element from the Start tap. */
-const SILENT_WAV = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==';
-
 /** MP3 responses cached without creating a playback object before the user's Start gesture. */
 const audioCache = new Map<string, Blob>();
 
@@ -18,21 +15,6 @@ function getAudioElement(): HTMLAudioElement {
 		audioElement.preload = 'auto';
 	}
 	return audioElement;
-}
-
-/**
- * Authorize one persistent HTML audio element from the Start button tap.
- * Apple recommends reusing a single media element and changing its src on iOS.
- */
-export function unlockAudio(): void {
-	const player = getAudioElement();
-	player.src = SILENT_WAV;
-	player.load();
-	// The invocation happens synchronously inside the Start click. Do not await this promise:
-	// some iOS versions leave it pending, and audio capability must never block card loading.
-	void player.play().catch(() => {
-		// Card review remains usable when media authorization is unavailable.
-	});
 }
 
 function cacheKey(text: string, voice?: string, speed?: number): string {
@@ -59,10 +41,12 @@ async function fetchTTSAudio(text: string, voice?: string, speed?: number, signa
 	return audio.type ? audio : new Blob([audio], { type: 'audio/mpeg' });
 }
 
-/** Preload only the ElevenLabs MP3 response; playback remains tied to the Start gesture. */
-export function preloadTTS(text: string, voice?: string, speed?: number): void {
+/** Preload the ElevenLabs MP3 response and report whether it is ready for gesture playback. */
+export function preloadTTS(text: string, voice?: string, speed?: number): Promise<boolean> {
 	const key = cacheKey(text, voice, speed);
-	if (audioCache.has(key) || audioPreloads.has(key)) return;
+	if (audioCache.has(key)) return Promise.resolve(true);
+	const existing = audioPreloads.get(key);
+	if (existing) return existing.then(() => true, () => false);
 
 	const preload = fetchTTSAudio(text, voice, speed)
 		.then((audio) => {
@@ -73,9 +57,7 @@ export function preloadTTS(text: string, voice?: string, speed?: number): void {
 			if (audioPreloads.get(key) === preload) audioPreloads.delete(key);
 		});
 	audioPreloads.set(key, preload);
-	preload.catch(() => {
-		// Speculative preload failures are retried if playback requests the audio.
-	});
+	return preload.then(() => true, () => false);
 }
 
 export function clearAudioCache(): void {
