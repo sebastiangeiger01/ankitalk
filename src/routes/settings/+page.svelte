@@ -542,6 +542,7 @@
 								<ul class="perm-list">
 									<li>{$t('settings.apiKeys.elevenlabsPerms.tts')}</li>
 									<li>{$t('settings.apiKeys.elevenlabsPerms.stt')}</li>
+									<li>{$t('settings.apiKeys.elevenlabsPerms.agents')}</li>
 									<li>{$t('settings.apiKeys.elevenlabsPerms.voices')}</li>
 									<li>{$t('settings.apiKeys.elevenlabsPerms.user')}</li>
 								</ul>
