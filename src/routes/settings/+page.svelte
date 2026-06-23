@@ -104,6 +104,7 @@
 		if (issue === 'agent_overrides_missing') {
 			const labels: Record<string, string> = {
 				prompt: $t('settings.agent.readiness.override.prompt'),
+				first_message: $t('settings.agent.readiness.override.firstMessage'),
 				language: $t('settings.agent.readiness.override.language'),
 				voice_id: $t('settings.agent.readiness.override.voice')
 			};

@@ -114,6 +114,7 @@ function agentSetup(body: unknown): { authenticationEnabled: boolean; missingOve
 	const tts = record(conversation.tts);
 	const missingOverrides = [
 		prompt.prompt === true ? null : 'prompt',
+		agent.first_message === true ? null : 'first_message',
 		agent.language === true ? null : 'language',
 		tts.voice_id === true ? null : 'voice_id'
 	].filter((value): value is string => value !== null);
