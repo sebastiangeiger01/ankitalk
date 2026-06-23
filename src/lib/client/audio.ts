@@ -7,6 +7,9 @@ let keepAliveSource: AudioBufferSourceNode | null = null;
 /** In-memory TTS audio cache for preloading */
 const audioCache = new Map<string, AudioBuffer>();
 
+/** TTS preloads that have started but have not populated the audio cache yet. */
+const audioPreloads = new Map<string, Promise<AudioBuffer>>();
+
 /**
  * Unlock AudioContext on iOS (must be called from a user gesture handler).
  * Creates a silent buffer and plays it to satisfy the autoplay policy.
@@ -89,11 +92,18 @@ async function fetchTTSBuffer(text: string, voice?: string, speed?: number, sign
  */
 export function preloadTTS(text: string, voice?: string, speed?: number): void {
 	const key = cacheKey(text, voice, speed);
-	if (audioCache.has(key)) return;
+	if (audioCache.has(key) || audioPreloads.has(key)) return;
 
-	fetchTTSBuffer(text, voice, speed).then((buffer) => {
-		audioCache.set(key, buffer);
-	}).catch(() => {
+	const preload = fetchTTSBuffer(text, voice, speed)
+		.then((buffer) => {
+			audioCache.set(key, buffer);
+			return buffer;
+		})
+		.finally(() => {
+			if (audioPreloads.get(key) === preload) audioPreloads.delete(key);
+		});
+	audioPreloads.set(key, preload);
+	preload.catch(() => {
 		// Preload failures are silent
 	});
 }
@@ -147,7 +157,18 @@ export async function speak(text: string, voice?: string, speed?: number, onPlay
 		audioBuffer = cached;
 		audioCache.delete(key);
 	} else {
-		audioBuffer = await fetchTTSBuffer(text, voice, speed, abort.signal);
+		const preload = audioPreloads.get(key);
+		if (preload) {
+			try {
+				audioBuffer = await preload;
+				audioCache.delete(key);
+			} catch {
+				// The speculative preload may fail independently. Retry as the requested playback.
+				audioBuffer = await fetchTTSBuffer(text, voice, speed, abort.signal);
+			}
+		} else {
+			audioBuffer = await fetchTTSBuffer(text, voice, speed, abort.signal);
+		}
 	}
 
 	// Check if cancelled or superseded during fetch/decode
