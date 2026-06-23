@@ -5,6 +5,23 @@ import { modelSupportsLanguageCode } from '$lib/listen/languages';
 export type TTSVoice = 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer';
 
 /**
+ * A speech provider (ElevenLabs/OpenAI) responded with a non-OK status. Carries the real
+ * upstream status and body so the API route can surface it instead of collapsing every
+ * provider failure into an opaque 500. A persistent failure across cards/decks is almost
+ * always account-level here — `quota_exceeded` (out of credits) or `too_many_concurrent_requests`.
+ */
+export class TtsUpstreamError extends Error {
+	readonly status: number;
+	readonly detail: string;
+	constructor(status: number, detail: string) {
+		super(`TTS provider error ${status}${detail ? `: ${detail}` : ''}`);
+		this.name = 'TtsUpstreamError';
+		this.status = status;
+		this.detail = detail;
+	}
+}
+
+/**
  * Synthesize speech using OpenAI TTS API.
  * Returns a Response with audio/mpeg body for streaming.
  */
@@ -16,13 +33,22 @@ export async function synthesizeOpenAISpeech(
 ): Promise<Response> {
 	const openai = new OpenAI({ apiKey });
 
-	const response = await openai.audio.speech.create({
-		model: 'tts-1',
-		voice,
-		input: text.slice(0, 4096),
-		response_format: 'mp3',
-		speed: Math.max(0.25, Math.min(4.0, speed))
-	});
+	let response;
+	try {
+		response = await openai.audio.speech.create({
+			model: 'tts-1',
+			voice,
+			input: text.slice(0, 4096),
+			response_format: 'mp3',
+			speed: Math.max(0.25, Math.min(4.0, speed))
+		});
+	} catch (err) {
+		const status = (err as { status?: unknown })?.status;
+		if (typeof status === 'number') {
+			throw new TtsUpstreamError(status, err instanceof Error ? err.message : '');
+		}
+		throw err;
+	}
 
 	return new Response(response.body, {
 		headers: {
@@ -80,7 +106,7 @@ export async function synthesizeElevenLabsSpeech(
 
 	if (!response.ok) {
 		const message = await response.text().catch(() => '');
-		throw new Error(`ElevenLabs TTS failed: ${response.status}${message ? ` ${message}` : ''}`);
+		throw new TtsUpstreamError(response.status, message);
 	}
 
 	return new Response(response.body, {

@@ -1,5 +1,5 @@
 import { error, json } from '@sveltejs/kit';
-import { synthesizeElevenLabsSpeech, synthesizeOpenAISpeech } from '$lib/server/tts';
+import { synthesizeElevenLabsSpeech, synthesizeOpenAISpeech, TtsUpstreamError } from '$lib/server/tts';
 import { getUserApiKey } from '$lib/server/user-keys';
 import { logUsage, calculateElevenLabsTtsCost, calculateTtsCost } from '$lib/server/usage';
 import { getDb } from '$lib/server/db';
@@ -85,16 +85,33 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 
 	let response: Response;
 	let cost: number;
-	if (provider === 'elevenlabs') {
-		const apiKey = await getUserApiKey(db, userId, 'elevenlabs', platform!.env.ENCRYPTION_KEY);
-		if (!apiKey) return json({ error: 'Add your ElevenLabs API key in Settings to use text-to-speech' }, { status: 400 });
-		response = await synthesizeElevenLabsSpeech(apiKey, text, voiceSettings);
-		cost = calculateElevenLabsTtsCost(text.length, voiceSettings.elevenlabs_tts_model);
-	} else {
-		const apiKey = await getUserApiKey(db, userId, 'openai', platform!.env.ENCRYPTION_KEY);
-		if (!apiKey) return json({ error: 'Add your OpenAI API key in Settings to use text-to-speech' }, { status: 400 });
-		response = await synthesizeOpenAISpeech(apiKey, text, voice as Parameters<typeof synthesizeOpenAISpeech>[2], speed);
-		cost = calculateTtsCost(text.length);
+	try {
+		if (provider === 'elevenlabs') {
+			const apiKey = await getUserApiKey(db, userId, 'elevenlabs', platform!.env.ENCRYPTION_KEY);
+			if (!apiKey) return json({ error: 'Add your ElevenLabs API key in Settings to use text-to-speech' }, { status: 400 });
+			response = await synthesizeElevenLabsSpeech(apiKey, text, voiceSettings);
+			cost = calculateElevenLabsTtsCost(text.length, voiceSettings.elevenlabs_tts_model);
+		} else {
+			const apiKey = await getUserApiKey(db, userId, 'openai', platform!.env.ENCRYPTION_KEY);
+			if (!apiKey) return json({ error: 'Add your OpenAI API key in Settings to use text-to-speech' }, { status: 400 });
+			response = await synthesizeOpenAISpeech(apiKey, text, voice as Parameters<typeof synthesizeOpenAISpeech>[2], speed);
+			cost = calculateTtsCost(text.length);
+		}
+	} catch (err) {
+		// Don't let a provider failure collapse into an opaque 500. Surface the real upstream
+		// status and reason so the client can show "TTS HTTP 502: ... (provider 429 ...)".
+		if (err instanceof TtsUpstreamError) {
+			console.error(`TTS provider failure (${provider}, status ${err.status}): ${err.detail}`);
+			return json(
+				{
+					error: `Speech provider failed (${provider} returned ${err.status})`,
+					providerStatus: err.status,
+					detail: err.detail.replace(/\s+/g, ' ').slice(0, 300)
+				},
+				{ status: 502 }
+			);
+		}
+		throw err;
 	}
 
 	// Cache the synthesized audio at the edge and log usage in the background.
