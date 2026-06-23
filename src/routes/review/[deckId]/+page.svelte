@@ -85,6 +85,11 @@
 	);
 
 	const engine = createReviewEngine();
+	function showReviewError(message: string) {
+		errorMsg = message;
+		if (errorTimer) clearTimeout(errorTimer);
+		errorTimer = setTimeout(() => { errorMsg = ''; }, 5000);
+	}
 
 	function clearCountdown() {
 		if (countdownInterval) {
@@ -146,9 +151,7 @@
 				document.body.classList.remove('review-active');
 				break;
 			case 'error':
-				errorMsg = event.message;
-				if (errorTimer) clearTimeout(errorTimer);
-				errorTimer = setTimeout(() => { errorMsg = ''; }, 4000);
+				showReviewError(event.message);
 				break;
 			case 'deck_info':
 				deckName = event.name;
@@ -256,10 +259,10 @@
 				if (phase === 'rating') engine.executeCommand('easy');
 				break;
 			case 'e':
-				if (phase === 'rating') engine.executeCommand('explain');
+				if (phase === 'rating') keyStatus?.anthropic ? engine.executeCommand('explain') : showReviewError($t('review.anthropicRequired'));
 				break;
 			case 'h':
-				if (phase === 'question') engine.executeCommand('hint');
+				if (phase === 'question') keyStatus?.anthropic ? engine.executeCommand('hint') : showReviewError($t('review.anthropicRequired'));
 				break;
 			case 'r':
 				engine.executeCommand('repeat');
@@ -478,19 +481,20 @@
 				{/if}
 			</button>
 			{#if phase === 'question'}
-				<button class="toolbar-btn" onclick={() => engine.executeCommand('hint')} title="{$t('review.hint')} (H)" aria-label={$t('review.hint')}>
+				<button class="toolbar-btn" class:off={!keyStatus?.anthropic} onclick={() => keyStatus?.anthropic ? engine.executeCommand('hint') : showReviewError($t('review.anthropicRequired'))} title="{$t('review.hint')} (H)" aria-label={$t('review.hint')}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/></svg>
 				</button>
 			{:else}
-				<button class="toolbar-btn" onclick={() => engine.executeCommand('explain')} title="{$t('review.explain')} (E)" aria-label={$t('review.explain')}>
+				<button class="toolbar-btn" class:off={!keyStatus?.anthropic} onclick={() => keyStatus?.anthropic ? engine.executeCommand('explain') : showReviewError($t('review.anthropicRequired'))} title="{$t('review.explain')} (E)" aria-label={$t('review.explain')}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor" stroke="none"/></svg>
 				</button>
 				{#if agentEnabled}
 					<!-- Only shown after the answer is revealed: the agent receives both front
 					     and back as dynamic variables, so exposing it in question phase would let
 					     a user voice-spoil the card. -->
-					<button class="toolbar-btn" onclick={() => (agentChatOpen = true)} title={$t('agent.openButton')} aria-label={$t('agent.title')}>
+					<button class="toolbar-btn toolbar-btn--tutor" onclick={() => (agentChatOpen = true)} title={$t('agent.openTutor')} aria-label={$t('agent.title')}>
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" y1="10" x2="15" y2="10"/></svg>
+						<span>{$t('agent.openTutor')}</span>
 					</button>
 				{/if}
 			{/if}
@@ -1011,6 +1015,15 @@
 		font-size: 0.8rem;
 		font-weight: 500;
 		letter-spacing: 0.01em;
+	}
+
+	.toolbar-btn--tutor {
+		width: auto;
+		padding: 0 0.65rem;
+		gap: 0.35rem;
+		font-size: 0.78rem;
+		font-weight: 600;
+		color: var(--accent);
 	}
 
 	.toolbar-btn.stop:hover {

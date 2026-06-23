@@ -592,13 +592,16 @@ export function createReviewEngine(): ReviewEngine {
 				body: JSON.stringify({ front: currentCard.front, back: currentCard.back, locale: get(locale) })
 			});
 
-			if (!res.ok) throw new Error('Explain API failed');
+			if (!res.ok) {
+				const body = await res.json().catch(() => null) as { error?: unknown } | null;
+				throw new Error(typeof body?.error === 'string' ? body.error : 'Failed to get explanation');
+			}
 			const { explanation } = (await res.json()) as { explanation: string };
 
 			speakText(explanation);
 			playSound('/chime.mp3').catch(() => {});
-		} catch {
-			emit({ type: 'error', message: 'Failed to get explanation' });
+		} catch (cause) {
+			emit({ type: 'error', message: cause instanceof Error ? cause.message : 'Failed to get explanation' });
 			if (micOn) emit({ type: 'listening' });
 			else emit({ type: 'idle' });
 		}
@@ -616,13 +619,16 @@ export function createReviewEngine(): ReviewEngine {
 				body: JSON.stringify({ front: currentCard.front, back: currentCard.back, locale: get(locale) })
 			});
 
-			if (!res.ok) throw new Error('Hint API failed');
+			if (!res.ok) {
+				const body = await res.json().catch(() => null) as { error?: unknown } | null;
+				throw new Error(typeof body?.error === 'string' ? body.error : 'Failed to get hint');
+			}
 			const { hint } = (await res.json()) as { hint: string };
 
 			speakText(hint);
 			playSound('/chime.mp3').catch(() => {});
-		} catch {
-			emit({ type: 'error', message: 'Failed to get hint' });
+		} catch (cause) {
+			emit({ type: 'error', message: cause instanceof Error ? cause.message : 'Failed to get hint' });
 			if (micOn) emit({ type: 'listening' });
 			else emit({ type: 'idle' });
 		}
