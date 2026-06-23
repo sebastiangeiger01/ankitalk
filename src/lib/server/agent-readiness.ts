@@ -12,6 +12,8 @@ export type AgentReadinessIssue =
 	| 'agent_not_found'
 	| 'invalid_api_key'
 	| 'insufficient_permissions'
+	| 'agent_auth_disabled'
+	| 'agent_overrides_missing'
 	| 'agent_session_unavailable'
 	| 'mcp_server_not_found'
 	| 'mcp_auth_failed'
@@ -22,7 +24,13 @@ export type AgentReadinessIssue =
 export interface AgentReadiness {
 	ready: boolean;
 	issues: AgentReadinessIssue[];
-	agent: { configured: boolean; reachable: boolean; session_available: boolean };
+	agent: {
+		configured: boolean;
+		reachable: boolean;
+		authentication_enabled: boolean;
+		session_available: boolean;
+		missing_overrides: string[];
+	};
 	mcp: {
 		server_found: boolean;
 		authenticated: boolean;
@@ -77,13 +85,47 @@ function emptyReadiness(issue: AgentReadinessIssue, configured: boolean): AgentR
 	return {
 		ready: false,
 		issues: [issue],
-		agent: { configured, reachable: false, session_available: false },
+		agent: {
+			configured,
+			reachable: false,
+			authentication_enabled: false,
+			session_available: false,
+			missing_overrides: []
+		},
 		mcp: { server_found: false, authenticated: false, assigned_to_agent: false, tools_found: [], missing_tools: [...REQUIRED_STUDY_TOOLS] }
 	};
 }
 
 async function jsonBody(response: Response): Promise<unknown> {
 	return response.json().catch(() => null);
+}
+
+function record(value: unknown): Record<string, unknown> {
+	return value && typeof value === 'object' ? value as Record<string, unknown> : {};
+}
+
+function agentSetup(body: unknown): { authenticationEnabled: boolean; missingOverrides: string[] } {
+	const platform = record(record(body).platform_settings);
+	const auth = record(platform.auth);
+	const overrides = record(platform.overrides);
+	const conversation = record(overrides.conversation_config_override);
+	const agent = record(conversation.agent);
+	const prompt = record(agent.prompt);
+	const tts = record(conversation.tts);
+	const missingOverrides = [
+		prompt.prompt === true ? null : 'prompt',
+		agent.language === true ? null : 'language',
+		tts.voice_id === true ? null : 'voice_id'
+	].filter((value): value is string => value !== null);
+
+	return {
+		authenticationEnabled: auth.enable_auth === true,
+		missingOverrides
+	};
+}
+
+function addIssue(result: AgentReadiness, issue: AgentReadinessIssue): void {
+	if (!result.issues.includes(issue)) result.issues.push(issue);
 }
 
 export async function checkAgentReadiness(
@@ -105,47 +147,53 @@ export async function checkAgentReadiness(
 	if (agentResponse.status === 403) return emptyReadiness('insufficient_permissions', true);
 	if (agentResponse.status === 404) return emptyReadiness('agent_not_found', true);
 	if (!agentResponse.ok) return emptyReadiness('elevenlabs_unavailable', true);
+	const setup = agentSetup(await jsonBody(agentResponse));
 
 	const result: AgentReadiness = {
 		ready: false,
 		issues: [],
-		agent: { configured: true, reachable: true, session_available: false },
+		agent: {
+			configured: true,
+			reachable: true,
+			authentication_enabled: setup.authenticationEnabled,
+			session_available: false,
+			missing_overrides: setup.missingOverrides
+		},
 		mcp: { server_found: false, authenticated: false, assigned_to_agent: false, tools_found: [], missing_tools: [...REQUIRED_STUDY_TOOLS] }
 	};
 
-	let sessionResponse: Response;
-	try {
-		const sessionUrl = new URL(`${ELEVENLABS_API}/conversation/get-signed-url`);
-		sessionUrl.searchParams.set('agent_id', agentId);
-		sessionResponse = await fetchFn(sessionUrl, { headers });
-	} catch {
-		result.issues.push('agent_session_unavailable');
-		return result;
+	if (!setup.authenticationEnabled) {
+		addIssue(result, 'agent_auth_disabled');
+	} else {
+		try {
+			const sessionUrl = new URL(`${ELEVENLABS_API}/conversation/get-signed-url`);
+			sessionUrl.searchParams.set('agent_id', agentId);
+			const sessionResponse = await fetchFn(sessionUrl, { headers });
+			if (sessionResponse.status === 403) addIssue(result, 'insufficient_permissions');
+			else if (sessionResponse.status === 404 || sessionResponse.status === 400) addIssue(result, 'agent_not_found');
+			else if (!sessionResponse.ok) addIssue(result, 'agent_session_unavailable');
+
+			if (sessionResponse.ok) {
+				const sessionBody = await jsonBody(sessionResponse);
+				result.agent.session_available = typeof record(sessionBody).signed_url === 'string';
+				if (!result.agent.session_available) addIssue(result, 'agent_session_unavailable');
+			}
+		} catch {
+			addIssue(result, 'agent_session_unavailable');
+		}
 	}
-	if (sessionResponse.status === 401) result.issues.push('invalid_api_key');
-	else if (sessionResponse.status === 403) result.issues.push('insufficient_permissions');
-	else if (sessionResponse.status === 404 || sessionResponse.status === 400) result.issues.push('agent_not_found');
-	else if (!sessionResponse.ok) result.issues.push('agent_session_unavailable');
-	if (!sessionResponse.ok) return result;
-	const sessionBody = await jsonBody(sessionResponse);
-	result.agent.session_available = Boolean(
-		sessionBody && typeof sessionBody === 'object' && typeof (sessionBody as Record<string, unknown>).signed_url === 'string'
-	);
-	if (!result.agent.session_available) {
-		result.issues.push('agent_session_unavailable');
-		return result;
-	}
+	if (setup.missingOverrides.length) addIssue(result, 'agent_overrides_missing');
 
 	let listResponse: Response;
 	try {
 		listResponse = await fetchFn(`${ELEVENLABS_API}/mcp-servers`, { headers });
 	} catch {
-		result.issues.push('elevenlabs_unavailable');
+		addIssue(result, 'elevenlabs_unavailable');
 		return result;
 	}
-	if (listResponse.status === 401) result.issues.push('invalid_api_key');
-	else if (listResponse.status === 403) result.issues.push('insufficient_permissions');
-	else if (!listResponse.ok) result.issues.push('elevenlabs_unavailable');
+	if (listResponse.status === 401) addIssue(result, 'invalid_api_key');
+	else if (listResponse.status === 403) addIssue(result, 'insufficient_permissions');
+	else if (!listResponse.ok) addIssue(result, 'elevenlabs_unavailable');
 	if (!listResponse.ok) return result;
 
 	const servers = records(await jsonBody(listResponse), ['mcp_servers', 'servers']);
