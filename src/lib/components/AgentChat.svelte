@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
+	import { fade, fly } from 'svelte/transition';
 	import { Conversation, type Conversation as ConversationType, type Mode } from '@elevenlabs/client';
 	import { t } from '$lib/i18n';
 	import { focusTrap } from '$lib/actions/focusTrap';
-	import Spinner from '$lib/components/Spinner.svelte';
 
 	interface Props {
 		open: boolean;
@@ -26,13 +26,44 @@
 	let phase = $state<Phase>('idle');
 	let errorMsg = $state('');
 	let messages = $state<{ role: 'user' | 'agent'; text: string }[]>([]);
-	let conversation: ConversationType | null = null;
+	let conversation = $state<ConversationType | null>(null);
 	let sessionStartMs = 0;
 	// The agent opens the conversation itself: we suppress the dashboard greeting (firstMessage
 	// override) and inject a hidden intent message so its first spoken turn is a real,
 	// card-specific hint or explanation instead of a generic "what brings you here?" greeting.
 	let kickoffMessage = '';
 	let kickoffShown = false;
+
+	// Typed input lets users who can't (or don't want to) speak still converse with the tutor.
+	let draft = $state('');
+	// Sending is possible once the live session exists; not while connecting/ended/errored.
+	const canSend = $derived(
+		conversation !== null && (phase === 'thinking' || phase === 'listening' || phase === 'speaking')
+	);
+	// Show a lively "composing" indicator whenever we're waiting on the agent's next turn with
+	// nothing yet to read — this fills the silent connect/think gap that otherwise feels slow.
+	const showTyping = $derived(
+		phase === 'connecting' || phase === 'thinking' || (phase === 'speaking' && messages.length === 0)
+	);
+
+	function sendText() {
+		const text = draft.trim();
+		if (!text || !canSend) return;
+		try {
+			conversation?.sendUserMessage(text);
+			// The typed turn echoes back through onMessage, so we don't add it optimistically.
+			draft = '';
+		} catch {
+			/* a closed session will surface via onDisconnect/onError */
+		}
+	}
+
+	function onInputKey(e: KeyboardEvent) {
+		if (e.key === 'Enter' && !e.shiftKey) {
+			e.preventDefault();
+			sendText();
+		}
+	}
 
 	// Auto-start when the modal opens. The browser requires the connect step to be on a
 	// user-gesture stack for mic permission, so we rely on the parent only flipping
@@ -185,6 +216,12 @@
 	}
 </script>
 
+{#snippet dots(small: boolean)}
+	<span class="typing" class:typing--sm={small} aria-hidden="true">
+		<i></i><i></i><i></i>
+	</span>
+{/snippet}
+
 {#if open}
 	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 	<div
@@ -204,16 +241,16 @@
 
 			<div class="status" role="status" aria-live="polite">
 				{#if phase === 'connecting'}
-					<Spinner size={16} />
+					{@render dots(true)}
 					<span>{$t('agent.status.connecting')}</span>
 				{:else if phase === 'thinking'}
-					<Spinner size={16} />
+					{@render dots(true)}
 					<span>{$t('agent.status.thinking')}</span>
 				{:else if phase === 'listening'}
 					<span class="dot dot--live"></span>
 					<span>{$t('agent.status.listening')}</span>
 				{:else if phase === 'speaking'}
-					<span class="dot dot--speaking"></span>
+					<span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
 					<span>{$t('agent.status.speaking')}</span>
 				{:else if phase === 'ended'}
 					<span>{$t('agent.status.ended')}</span>
@@ -224,15 +261,45 @@
 
 			<div class="transcript" aria-live="polite">
 				{#each messages as m, i (i)}
-					<div class="bubble" class:user={m.role === 'user'}>
+					<div
+						class="bubble"
+						class:user={m.role === 'user'}
+						in:fly={{ y: 6, duration: 180 }}
+					>
 						<span class="who">{m.role === 'user' ? $t('agent.you') : $t('agent.agent')}</span>
 						<span class="text">{m.text}</span>
 					</div>
 				{/each}
-				{#if messages.length === 0 && phase !== 'connecting' && phase !== 'thinking' && phase !== 'error'}
-					<p class="hint">{answerRevealed ? $t('agent.hint') : $t('agent.preRevealHint')}</p>
+				{#if showTyping}
+					<div class="bubble typing-bubble" in:fade={{ duration: 150 }} out:fade={{ duration: 120 }}>
+						<span class="who">{$t('agent.agent')}</span>
+						{@render dots(false)}
+					</div>
+				{:else if messages.length === 0 && phase !== 'error'}
+					<p class="hint" in:fade={{ duration: 150 }}>
+						{answerRevealed ? $t('agent.hint') : $t('agent.preRevealHint')}
+					</p>
 				{/if}
 			</div>
+
+			<form
+				class="composer"
+				onsubmit={(e) => { e.preventDefault(); sendText(); }}
+			>
+				<input
+					type="text"
+					class="composer-input"
+					bind:value={draft}
+					onkeydown={onInputKey}
+					placeholder={$t('agent.inputPlaceholder')}
+					aria-label={$t('agent.inputPlaceholder')}
+					disabled={!canSend}
+					autocomplete="off"
+				/>
+				<button type="submit" class="send-btn" disabled={!canSend || !draft.trim()}>
+					{$t('agent.send')}
+				</button>
+			</form>
 
 			<div class="actions">
 				<button class="end-btn" onclick={close}>
@@ -280,7 +347,43 @@
 	.status .err { color: var(--danger-soft); }
 	.dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; display: inline-block; }
 	.dot--live { background: var(--success); animation: pulse 1.4s ease-in-out infinite; }
-	.dot--speaking { background: var(--primary); animation: pulse 0.8s ease-in-out infinite; }
+	/* Three bouncing dots — the universal "composing a reply" affordance. Used inline in the
+	   status row (small) and as a tutor bubble while we wait for the first/next turn. */
+	.typing { display: inline-flex; align-items: flex-end; gap: 0.28rem; height: 0.85rem; }
+	.typing i {
+		width: 0.45rem; height: 0.45rem; border-radius: 50%;
+		background: var(--primary);
+		animation: typing-bounce 1.2s ease-in-out infinite;
+	}
+	.typing--sm { height: 0.6rem; gap: 0.2rem; }
+	.typing--sm i { width: 0.34rem; height: 0.34rem; background: currentColor; }
+	.typing i:nth-child(2) { animation-delay: 0.18s; }
+	.typing i:nth-child(3) { animation-delay: 0.36s; }
+	@keyframes typing-bounce {
+		0%, 80%, 100% { transform: translateY(0); opacity: 0.45; }
+		40% { transform: translateY(-0.32rem); opacity: 1; }
+	}
+
+	/* Animated equalizer while the tutor speaks — reads as "live audio" better than a dot. */
+	.bars { display: inline-flex; align-items: center; gap: 0.12rem; height: 0.9rem; }
+	.bars i {
+		width: 0.18rem; height: 100%; border-radius: 1px;
+		background: var(--primary);
+		animation: bars-eq 0.9s ease-in-out infinite;
+	}
+	.bars i:nth-child(2) { animation-delay: 0.15s; }
+	.bars i:nth-child(3) { animation-delay: 0.3s; }
+	.bars i:nth-child(4) { animation-delay: 0.45s; }
+	@keyframes bars-eq {
+		0%, 100% { transform: scaleY(0.35); }
+		50% { transform: scaleY(1); }
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.typing i, .bars i, .dot--live { animation: none; }
+		.typing i { opacity: 0.7; }
+		.bars i { transform: scaleY(0.6); }
+	}
 	@keyframes pulse {
 		0%, 100% { opacity: 1; }
 		50% { opacity: 0.4; }
@@ -302,9 +405,28 @@
 		border-radius: 8px;
 	}
 	.bubble.user { background: var(--surface-elevated, var(--surface-2)); }
+	.typing-bubble { align-self: flex-start; flex-direction: column; gap: 0.3rem; }
 	.who { font-size: 0.7rem; color: var(--text-subtle); text-transform: uppercase; letter-spacing: 0.05em; }
 	.text { color: var(--text); overflow-wrap: anywhere; }
 	.hint { color: var(--text-subtle); font-size: 0.85rem; margin: 0; text-align: center; padding: 1rem; }
+
+	.composer { display: flex; gap: 0.5rem; align-items: center; }
+	.composer-input {
+		flex: 1; min-width: 0;
+		background: var(--surface); color: var(--text);
+		border: 1px solid var(--border-muted); border-radius: var(--r-pill);
+		padding: 0.55rem 0.85rem; font-size: 0.9rem; min-height: 40px;
+	}
+	.composer-input:focus { outline: none; border-color: var(--primary); }
+	.composer-input:disabled { opacity: 0.5; }
+	.send-btn {
+		background: var(--surface-2); color: var(--text);
+		border: 1px solid var(--border-muted); border-radius: var(--r-pill);
+		padding: 0.55rem 1rem; font-size: 0.9rem; font-weight: 600;
+		cursor: pointer; min-height: 40px; touch-action: manipulation;
+	}
+	.send-btn:not(:disabled):hover { border-color: var(--primary); }
+	.send-btn:disabled { opacity: 0.45; cursor: default; }
 
 	.actions { display: flex; justify-content: flex-end; }
 	.end-btn {

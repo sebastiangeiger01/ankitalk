@@ -426,6 +426,8 @@ export const en: Record<string, string> = {
 	'agent.endSession': 'End conversation',
 	'agent.you': 'You',
 	'agent.agent': 'Tutor',
+	'agent.inputPlaceholder': 'Type a message…',
+	'agent.send': 'Send',
 	'agent.hint': 'Talk to the tutor about this card. The agent knows the question, answer, and deck — ask for context, an analogy, or a follow-up.',
 	'agent.preRevealHint': 'The answer is hidden from the tutor. Ask for a gentle hint or a more specific clue.',
 	'agent.kickoffHint': 'Give me a gentle hint for this card to get started, without revealing the answer.',
