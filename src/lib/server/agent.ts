@@ -52,3 +52,12 @@ const CONTROL_CHARS_REGEX = new RegExp('[\\u0000-\\u001F\\u007F-\\u009F]', 'g');
 export function sanitizeAgentContext(value: string, max: number): string {
 	return value.replace(CONTROL_CHARS_REGEX, ' ').slice(0, max).trim();
 }
+
+export function getTutorAnswerContext(answer: string, answerRevealed: boolean, max: number): {
+	answer: string;
+	visibility: 'revealed' | 'hidden';
+} {
+	return answerRevealed
+		? { answer: sanitizeAgentContext(answer, max), visibility: 'revealed' }
+		: { answer: '[hidden until the student reveals the answer]', visibility: 'hidden' };
+}

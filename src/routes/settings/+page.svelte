@@ -357,8 +357,8 @@
 	}
 
 	const primaryServices: Service[] = ['elevenlabs'];
-	const advancedServices: Service[] = ['openai', 'deepgram', 'anthropic'];
-	const usageServices: Service[] = ['elevenlabs', 'openai', 'deepgram', 'anthropic'];
+	const advancedServices: Service[] = ['openai', 'deepgram'];
+	const usageServices: Service[] = ['elevenlabs', 'openai', 'deepgram'];
 	const voiceCommandLanguages: VoiceCommandLanguage[] = ['auto', 'en', 'de'];
 
 	function serviceLabel(s: Service): string {
