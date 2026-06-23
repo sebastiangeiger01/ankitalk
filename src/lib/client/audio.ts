@@ -2,6 +2,36 @@ let audioElement: HTMLAudioElement | null = null;
 let lastSpokenText = '';
 let currentAbort: AbortController | null = null;
 let currentPlayback: { stop: () => void } | null = null;
+let audioUnlocked = false;
+
+/**
+ * 50 ms of 8-bit silence. Played once, synchronously, inside the Start button's gesture to
+ * "bless" the shared media element on iOS Safari: after one gesture-initiated play() the
+ * element may be driven programmatically (from a promise/timer) for the rest of the session.
+ * This is what lets us stop gating Start on a finished TTS round trip — the first card can be
+ * fetched after the click and still play, because the element is already unlocked.
+ */
+const SILENT_CLIP =
+	'data:audio/wav;base64,UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
+
+/**
+ * Unlock the shared media element for programmatic playback on iOS. MUST be called from a
+ * real user gesture (e.g. the Start button's click handler). Idempotent and a no-op after the
+ * first successful call.
+ */
+export function unlockAudioForGesture(): void {
+	if (audioUnlocked) return;
+	audioUnlocked = true;
+	const player = getAudioElement();
+	try {
+		player.src = SILENT_CLIP;
+		const played = player.play();
+		// Swallow the rejection a later real play() may cause by interrupting this silent clip.
+		if (played && typeof played.catch === 'function') played.catch(() => {});
+	} catch {
+		// If even this throws the element is unusable; real playback will surface a clear error.
+	}
+}
 
 /** MP3 responses cached without creating a playback object before the user's Start gesture. */
 const audioCache = new Map<string, Blob>();

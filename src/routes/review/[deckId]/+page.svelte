@@ -2,7 +2,7 @@
 	import { page } from '$app/stores';
 	import { onDestroy, onMount } from 'svelte';
 	import { createReviewEngine, type ReviewEvent, type SessionStats, type StartOptions, type IntervalLabels, type QueueCounts, type PrefetchedCards } from '$lib/client/review-engine';
-	import { preloadTTS } from '$lib/client/audio';
+	import { preloadTTS, unlockAudioForGesture } from '$lib/client/audio';
 	import { getPrepareAudioAhead } from '$lib/client/preferences';
 	import { locale, t } from '$lib/i18n';
 	import { focusTrap } from '$lib/actions/focusTrap';
@@ -210,6 +210,10 @@
 	});
 
 	async function startReview() {
+		// Bless the shared media element inside this gesture so the first card can be fetched
+		// after the click and still play on iOS — this is why Start no longer waits for a TTS
+		// round trip before it enables.
+		unlockAudioForGesture();
 		started = true;
 		errorMsg = '';
 		document.body.classList.add('review-active');
@@ -333,15 +337,15 @@
 			.then((data) => {
 				if (!data) { reviewPrepared = true; return; }
 				prefetchedCards = data as PrefetchedCards;
-				if (!getPrepareAudioAhead()) { reviewPrepared = true; return; }
+				// Enable Start the moment the cards are here — no longer blocked on a TTS round
+				// trip. The first card's front is still preloaded in the background so playback is
+				// instant when it lands; if the user clicks Start before it does, the
+				// gesture-unlocked media element fetches and plays it on the spot (see
+				// unlockAudioForGesture).
+				reviewPrepared = true;
+				if (!getPrepareAudioAhead()) return;
 				const cards = (data as PrefetchedCards).cards;
-				if (!cards?.length) { reviewPrepared = true; return; }
-				// Preload ONLY the first card's front, rendered with the same sanitizer as the engine
-				// so the cached MP3 is an exact key match for synchronous gesture playback on Start.
-				// The engine preloads everything else lazily during the session (the answer while the
-				// question plays, the next front while the answer plays), so a wider mount-time burst
-				// just hammers /api/tts for audio that may never be reached.
-				let firstFrontPreparation: Promise<boolean> | null = null;
+				if (!cards?.length) return;
 				try {
 					const card = cards[0];
 					const rendered = renderCard(
@@ -352,11 +356,8 @@
 						(card.back_template as string | null) ?? null,
 						clientCardSanitizer
 					);
-					if (rendered.front) firstFrontPreparation = preloadTTS(rendered.front);
+					if (rendered.front) void preloadTTS(rendered.front);
 				} catch { /* ignore parse errors */ }
-				void (firstFrontPreparation ?? Promise.resolve(false)).then(() => {
-					reviewPrepared = true;
-				});
 			})
 			.catch(() => { reviewPrepared = true; });
 	});

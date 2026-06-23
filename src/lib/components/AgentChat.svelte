@@ -4,7 +4,7 @@
 	// Type-only import (erased at build) so the heavy livekit/WebRTC runtime is NOT bundled into
 	// the review route — it's loaded on demand in start() when the tutor actually opens. This
 	// keeps deck-open off the critical path of a ~370kB dependency.
-	import type { Conversation as ConversationType, Mode } from '@elevenlabs/client';
+	import type { Conversation as ConversationType, Mode, Role } from '@elevenlabs/client';
 	import { t } from '$lib/i18n';
 	import { focusTrap } from '$lib/actions/focusTrap';
 
@@ -29,6 +29,12 @@
 	let phase = $state<Phase>('idle');
 	let errorMsg = $state('');
 	let messages = $state<{ role: 'user' | 'agent'; text: string }[]>([]);
+	// The agent's reply streams in as start/delta/stop parts (onAgentChatResponsePart), so its
+	// text appears word-by-word in step with the audio instead of dumping in all at once when the
+	// full agent_response (onMessage) finally lands. `streamingText` holds the in-progress turn;
+	// it's committed to `messages` when onMessage delivers the canonical text — or flushed if the
+	// next turn starts streaming first.
+	let streamingText = $state('');
 	let conversation = $state<ConversationType | null>(null);
 	let sessionStartMs = 0;
 	// The agent opens the conversation itself: we suppress the dashboard greeting (firstMessage
@@ -77,6 +83,7 @@
 			phase = 'idle';
 			errorMsg = '';
 			messages = [];
+			streamingText = '';
 		}
 	});
 
@@ -84,6 +91,7 @@
 		phase = 'connecting';
 		errorMsg = '';
 		messages = [];
+		streamingText = '';
 		try {
 			const res = await fetch('/api/agent/session', {
 				method: 'POST',
@@ -134,9 +142,31 @@
 					// Hide the kickoff turn we inject below so it doesn't read as if the student typed it.
 					if (role === 'user' && !kickoffShown && message.trim() === kickoffMessage.trim()) {
 						kickoffShown = true;
+						streamingText = '';
+						return;
+					}
+					if (role === 'agent') {
+						// Canonical full text for the turn — commit it and drop the live stream so the
+						// bubble isn't rendered twice.
+						messages = [...messages, { role, text: message }];
+						streamingText = '';
 						return;
 					}
 					messages = [...messages, { role, text: message }];
+				},
+				onAgentChatResponsePart: ({ text, type }) => {
+					if (phase === 'ended' || phase === 'error') return;
+					if (type === 'start') {
+						// A new turn started before the previous one's canonical onMessage landed —
+						// commit whatever we streamed so it isn't lost.
+						if (streamingText.trim()) {
+							messages = [...messages, { role: 'agent', text: streamingText }];
+						}
+						streamingText = '';
+					} else if (type === 'delta') {
+						streamingText += text;
+					}
+					// 'stop' leaves the streamed text visible until onMessage commits it.
 				},
 				onModeChange: ({ mode }: { mode: Mode }) => {
 					// `mode` is "speaking" while the agent is talking, "listening" while it
@@ -233,8 +263,9 @@
 		tabindex="-1"
 		onkeydown={onKey}
 		use:focusTrap
+		transition:fade={{ duration: 120 }}
 	>
-		<div class="modal">
+		<div class="modal" in:fly={{ y: 10, duration: 200 }}>
 			<div class="head">
 				<h2>{answerRevealed ? $t('agent.title') : $t('agent.hintTitle')}</h2>
 				<button class="close-btn" onclick={close} aria-label={$t('common.close')}>×</button>
@@ -267,13 +298,19 @@
 						<span class="text">{m.text}</span>
 					</div>
 				{/each}
-				{#if showTyping}
+				{#if streamingText}
+					<div class="bubble" in:fly={{ y: 6, duration: 180 }}>
+						<span class="who">{$t('agent.agent')}</span>
+						<span class="text">{streamingText}</span>
+					</div>
+				{/if}
+				{#if showTyping && !streamingText}
 					<div class="bubble typing-bubble" in:fade={{ duration: 150 }} out:fade={{ duration: 120 }}>
 						<span class="who">{$t('agent.agent')}</span>
 						{@render dots()}
 						<span class="visually-hidden">{$t('agent.status.thinking')}</span>
 					</div>
-				{:else if messages.length === 0 && phase !== 'speaking' && phase !== 'error'}
+				{:else if messages.length === 0 && !streamingText && phase !== 'speaking' && phase !== 'error'}
 					<p class="hint" in:fade={{ duration: 150 }}>
 						{answerRevealed ? $t('agent.hint') : $t('agent.preRevealHint')}
 					</p>

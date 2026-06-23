@@ -421,7 +421,7 @@ export const de: Record<string, string> = {
 	'agent.title': 'Zu dieser Karte fragen',
 	'agent.hintTitle': 'Nach einem Hinweis fragen',
 	'agent.openButton': 'Fragen',
-	'agent.openTutor': 'Tutor fragen',
+	'agent.openTutor': 'Tutor',
 	'agent.askHint': 'Hinweis fragen',
 	'agent.endSession': 'Gespräch beenden',
 	'agent.you': 'Du',

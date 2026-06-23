@@ -421,7 +421,7 @@ export const en: Record<string, string> = {
 	'agent.title': 'Ask about this card',
 	'agent.hintTitle': 'Ask for a hint',
 	'agent.openButton': 'Ask',
-	'agent.openTutor': 'Ask tutor',
+	'agent.openTutor': 'Tutor',
 	'agent.askHint': 'Ask for hint',
 	'agent.endSession': 'End conversation',
 	'agent.you': 'You',
