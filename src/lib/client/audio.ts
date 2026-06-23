@@ -24,13 +24,15 @@ function getAudioElement(): HTMLAudioElement {
  * Authorize one persistent HTML audio element from the Start button tap.
  * Apple recommends reusing a single media element and changing its src on iOS.
  */
-export async function unlockAudio(): Promise<void> {
+export function unlockAudio(): void {
 	const player = getAudioElement();
 	player.src = SILENT_WAV;
 	player.load();
-	await player.play();
-	player.pause();
-	player.currentTime = 0;
+	// The invocation happens synchronously inside the Start click. Do not await this promise:
+	// some iOS versions leave it pending, and audio capability must never block card loading.
+	void player.play().catch(() => {
+		// Card review remains usable when media authorization is unavailable.
+	});
 }
 
 function cacheKey(text: string, voice?: string, speed?: number): string {
