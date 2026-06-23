@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-	import { parseApkg } from '$lib/client/anki-parser';
-	import { buildApkg, extractMediaFilenames } from '$lib/client/apkg-export';
+	// parseApkg / buildApkg pull in sql.js (~1 MB WASM-backed) — only needed for deck
+	// import/export, so they're dynamically imported inside those handlers to keep the
+	// home page's initial bundle small.
 	import OnboardingChecklist from '$lib/components/OnboardingChecklist.svelte';
 	import { t } from '$lib/i18n';
 	import { preloadTTS } from '$lib/client/audio';
@@ -82,6 +83,7 @@
 		importStatus = $t('import.parsing');
 
 		try {
+			const { parseApkg } = await import('$lib/client/anki-parser');
 			const parsed = await parseApkg(file);
 			importStatus = $t('import.found', { cards: parsed.cards.length, decks: parsed.decks.length });
 
@@ -129,6 +131,8 @@
 			const res = await fetch(`/api/decks/${deckId}/export-data`);
 			if (!res.ok) throw new Error('Failed to fetch deck data');
 			const data = (await res.json()) as { deck: Record<string, unknown>; notes: Record<string, unknown>[]; cards: Record<string, unknown>[] };
+
+			const { buildApkg, extractMediaFilenames } = await import('$lib/client/apkg-export');
 
 			// Fetch media files referenced in note fields
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
