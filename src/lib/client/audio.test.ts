@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+let audioContextConstructions = 0;
+
 class FakeAudioBufferSourceNode {
 	buffer: AudioBuffer | null = null;
 	loop = false;
@@ -18,6 +20,10 @@ class FakeAudioContext {
 	currentTime = 0;
 	sampleRate = 44_100;
 	destination = {} as AudioDestinationNode;
+
+	constructor() {
+		audioContextConstructions++;
+	}
 
 	createBuffer() {
 		return {} as AudioBuffer;
@@ -40,6 +46,7 @@ class FakeAudioContext {
 describe('review audio', () => {
 	beforeEach(() => {
 		vi.resetModules();
+		audioContextConstructions = 0;
 		vi.stubGlobal('AudioContext', FakeAudioContext);
 	});
 
@@ -55,10 +62,14 @@ describe('review audio', () => {
 		const fetchMock = vi.fn(() => response);
 		vi.stubGlobal('fetch', fetchMock);
 
-		const { preloadTTS, speak } = await import('./audio');
+		const { preloadTTS, speak, unlockAudio } = await import('./audio');
 		preloadTTS('first card');
 		await Promise.resolve();
 		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(audioContextConstructions).toBe(0);
+
+		await unlockAudio();
+		expect(audioContextConstructions).toBe(1);
 
 		const playback = speak('first card');
 		await Promise.resolve();
@@ -66,5 +77,14 @@ describe('review audio', () => {
 
 		resolveResponse(new Response(new Uint8Array([1]), { status: 200 }));
 		await playback;
+	});
+
+	it('does not create an AudioContext while preloading before the Start gesture', async () => {
+		vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1]), { status: 200 })));
+		const { preloadTTS } = await import('./audio');
+
+		preloadTTS('first card');
+
+		expect(audioContextConstructions).toBe(0);
 	});
 });
