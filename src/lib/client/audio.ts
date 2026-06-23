@@ -4,11 +4,11 @@ let lastSpokenText: string = '';
 let currentAbort: AbortController | null = null;
 let keepAliveSource: AudioBufferSourceNode | null = null;
 
-/** In-memory TTS audio cache for preloading */
-const audioCache = new Map<string, AudioBuffer>();
+/** Raw TTS responses cached without touching Web Audio before the user's Start gesture. */
+const audioCache = new Map<string, ArrayBuffer>();
 
 /** TTS preloads that have started but have not populated the audio cache yet. */
-const audioPreloads = new Map<string, Promise<AudioBuffer>>();
+const audioPreloads = new Map<string, Promise<ArrayBuffer>>();
 
 /**
  * Unlock AudioContext on iOS (must be called from a user gesture handler).
@@ -61,13 +61,10 @@ function cacheKey(text: string, voice?: string, speed?: number): string {
 }
 
 /**
- * Fetch and decode TTS audio, returning the AudioBuffer.
+ * Fetch TTS bytes without creating or using an AudioContext.
+ * Decoding is intentionally deferred until playback, after the user's Start gesture.
  */
-async function fetchTTSBuffer(text: string, voice?: string, speed?: number, signal?: AbortSignal): Promise<AudioBuffer> {
-	if (!audioContext) {
-		audioContext = new AudioContext();
-	}
-
+async function fetchTTSAudio(text: string, voice?: string, speed?: number, signal?: AbortSignal): Promise<ArrayBuffer> {
 	const params: Record<string, string> = { text };
 	if (voice) params.voice = voice;
 	if (speed) params.speed = String(speed);
@@ -83,8 +80,7 @@ async function fetchTTSBuffer(text: string, voice?: string, speed?: number, sign
 		throw new Error(`TTS failed: ${response.status}`);
 	}
 
-	const arrayBuffer = await response.arrayBuffer();
-	return await audioContext.decodeAudioData(arrayBuffer);
+	return await response.arrayBuffer();
 }
 
 /**
@@ -94,10 +90,10 @@ export function preloadTTS(text: string, voice?: string, speed?: number): void {
 	const key = cacheKey(text, voice, speed);
 	if (audioCache.has(key) || audioPreloads.has(key)) return;
 
-	const preload = fetchTTSBuffer(text, voice, speed)
-		.then((buffer) => {
-			audioCache.set(key, buffer);
-			return buffer;
+	const preload = fetchTTSAudio(text, voice, speed)
+		.then((audio) => {
+			audioCache.set(key, audio);
+			return audio;
 		})
 		.finally(() => {
 			if (audioPreloads.get(key) === preload) audioPreloads.delete(key);
@@ -149,29 +145,35 @@ export async function speak(text: string, voice?: string, speed?: number, onPlay
 	lastSpokenText = text;
 
 	const key = cacheKey(text, voice, speed);
-	let audioBuffer: AudioBuffer;
+	let audioData: ArrayBuffer;
 
 	// Check cache first
 	const cached = audioCache.get(key);
 	if (cached) {
-		audioBuffer = cached;
+		audioData = cached;
 		audioCache.delete(key);
 	} else {
 		const preload = audioPreloads.get(key);
 		if (preload) {
 			try {
-				audioBuffer = await preload;
+				audioData = await preload;
 				audioCache.delete(key);
 			} catch {
 				// The speculative preload may fail independently. Retry as the requested playback.
-				audioBuffer = await fetchTTSBuffer(text, voice, speed, abort.signal);
+				audioData = await fetchTTSAudio(text, voice, speed, abort.signal);
 			}
 		} else {
-			audioBuffer = await fetchTTSBuffer(text, voice, speed, abort.signal);
+			audioData = await fetchTTSAudio(text, voice, speed, abort.signal);
 		}
 	}
 
-	// Check if cancelled or superseded during fetch/decode
+	// Check if cancelled or superseded during fetch.
+	if (abort !== currentAbort || abort.signal.aborted) return;
+
+	// Decode only after unlockAudio() has created and resumed the context from Start.
+	const audioBuffer = await audioContext.decodeAudioData(audioData.slice(0));
+
+	// Check again because decoding is asynchronous.
 	if (abort !== currentAbort || abort.signal.aborted) return;
 
 	return new Promise<void>((resolve, reject) => {
