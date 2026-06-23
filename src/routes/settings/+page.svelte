@@ -76,11 +76,11 @@
 	 * below the figure.
 	 */
 	let agentUsage = $state<{ month_seconds: number; month_cost_usd: number } | null>(null);
-	type AgentReadinessIssue = 'agent_not_configured' | 'agent_not_found' | 'invalid_api_key' | 'insufficient_permissions' | 'agent_session_unavailable' | 'mcp_server_not_found' | 'mcp_auth_failed' | 'mcp_not_assigned' | 'mcp_tools_missing' | 'elevenlabs_unavailable';
+	type AgentReadinessIssue = 'agent_not_configured' | 'agent_not_found' | 'invalid_api_key' | 'insufficient_permissions' | 'agent_auth_disabled' | 'agent_overrides_missing' | 'agent_session_unavailable' | 'mcp_server_not_found' | 'mcp_auth_failed' | 'mcp_not_assigned' | 'mcp_tools_missing' | 'elevenlabs_unavailable';
 	interface AgentReadiness {
 		ready: boolean;
 		issues: AgentReadinessIssue[];
-		agent: { configured: boolean; reachable: boolean; session_available: boolean };
+		agent: { configured: boolean; reachable: boolean; authentication_enabled: boolean; session_available: boolean; missing_overrides: string[] };
 		mcp: { server_found: boolean; authenticated: boolean; assigned_to_agent: boolean; tools_found: string[]; missing_tools: string[] };
 	}
 	let agentReadiness = $state<AgentReadiness | null>(null);
@@ -101,8 +101,32 @@
 	}
 
 	function readinessIssueText(issue: AgentReadinessIssue): string {
+		if (issue === 'agent_overrides_missing') {
+			const labels: Record<string, string> = {
+				prompt: $t('settings.agent.readiness.override.prompt'),
+				language: $t('settings.agent.readiness.override.language'),
+				voice_id: $t('settings.agent.readiness.override.voice')
+			};
+			const fields = agentReadiness?.agent.missing_overrides.map((field) => labels[field] ?? field).join(', ') ?? '';
+			return $t(`settings.agent.readiness.issues.${issue}`, { fields });
+		}
 		return $t(`settings.agent.readiness.issues.${issue}`);
 	}
+
+	type SetupAction = { issue: AgentReadinessIssue; href: string; external: boolean; labelKey: string };
+	function setupAction(readiness: AgentReadiness | null): SetupAction | null {
+		const issue = readiness?.issues[0];
+		if (!issue) return null;
+		if (issue === 'invalid_api_key' || issue === 'insufficient_permissions') {
+			return { issue, href: serviceHrefs.elevenlabs, external: true, labelKey: 'settings.agent.readiness.action.apiKey' };
+		}
+		if (issue === 'agent_not_configured') return null;
+		if (issue === 'mcp_server_not_found' || issue === 'mcp_auth_failed') {
+			return { issue, href: '#mcp-integration', external: false, labelKey: 'settings.agent.readiness.action.mcp' };
+		}
+		return { issue, href: 'https://elevenlabs.io/app/agents', external: true, labelKey: 'settings.agent.readiness.action.agent' };
+	}
+	const nextSetupAction = $derived(setupAction(agentReadiness));
 
 	type ElevenLabsCapability = 'speech_to_text' | 'text_to_speech' | 'voices_read' | 'user_read';
 	const elevenLabsCapabilityKeys: Record<ElevenLabsCapability, string> = {
@@ -137,6 +161,7 @@
 	let mcpTokenJustCreated = $state<string | null>(null);
 	let creatingMcpToken = $state(false);
 	let mcpTokenProfile = $state<'study' | 'author'>('study');
+	let mcpEndpointCopied = $state(false);
 	const mcpEndpointUrl = $derived(
 		typeof window === 'undefined' ? '/api/mcp' : `${window.location.origin}/api/mcp`
 	);
@@ -184,12 +209,20 @@
 		await loadMcpTokens();
 	}
 
-	async function copyToClipboard(text: string) {
+	async function copyToClipboard(text: string): Promise<boolean> {
 		try {
 			await navigator.clipboard.writeText(text);
+			return true;
 		} catch {
 			/* clipboard blocked in some browsers — user can still select and copy manually */
+			return false;
 		}
+	}
+
+	async function copyMcpEndpoint() {
+		if (!await copyToClipboard(mcpEndpointUrl)) return;
+		mcpEndpointCopied = true;
+		setTimeout(() => { mcpEndpointCopied = false; }, 2000);
 	}
 
 	const serviceLinks: Record<Service, string> = {
@@ -695,6 +728,7 @@
 				<li>{$t('settings.agent.setupStep2')}</li>
 				<li>{$t('settings.agent.setupStep3')}</li>
 				<li>{$t('settings.agent.setupStep4')}</li>
+				<li>{$t('settings.agent.setupStep5')}</li>
 			</ol>
 			<p class="agent-help agent-help--warn">{$t('settings.agent.setupScopeWarning')}</p>
 		</details>
@@ -728,15 +762,35 @@
 			{#if agentReadiness}
 				<ul class="agent-readiness-list">
 					<li class:ok={agentReadiness.agent.reachable}>{agentReadiness.agent.reachable ? '✓' : '○'} {$t('settings.agent.readiness.agent')}</li>
+					<li class:ok={agentReadiness.agent.authentication_enabled}>{agentReadiness.agent.authentication_enabled ? '✓' : '○'} {$t('settings.agent.readiness.security')}</li>
+					<li class:ok={agentReadiness.agent.missing_overrides.length === 0}>{agentReadiness.agent.missing_overrides.length === 0 ? '✓' : '○'} {$t('settings.agent.readiness.overrides')}</li>
 					<li class:ok={agentReadiness.agent.session_available}>{agentReadiness.agent.session_available ? '✓' : '○'} {$t('settings.agent.readiness.session')}</li>
 					<li class:ok={agentReadiness.mcp.server_found}>{agentReadiness.mcp.server_found ? '✓' : '○'} {$t('settings.agent.readiness.server')}</li>
 					<li class:ok={agentReadiness.mcp.authenticated}>{agentReadiness.mcp.authenticated ? '✓' : '○'} {$t('settings.agent.readiness.auth')}</li>
 					<li class:ok={agentReadiness.mcp.assigned_to_agent}>{agentReadiness.mcp.assigned_to_agent ? '✓' : '○'} {$t('settings.agent.readiness.assignment')}</li>
 					<li class:ok={agentReadiness.mcp.authenticated && agentReadiness.mcp.missing_tools.length === 0}>{agentReadiness.mcp.authenticated && agentReadiness.mcp.missing_tools.length === 0 ? '✓' : '○'} {$t('settings.agent.readiness.tools', { count: agentReadiness.mcp.tools_found.length })}</li>
 				</ul>
-				{#if agentReadiness.issues.length}
+				{#if agentReadiness.issues.length && !nextSetupAction}
 					<div class="agent-readiness-issues">
 						{#each agentReadiness.issues as issue}<p>{readinessIssueText(issue)}</p>{/each}
+					</div>
+				{:else if agentReadiness.issues.length > 1}
+					<div class="agent-readiness-issues">
+						{#each agentReadiness.issues.slice(1) as issue}<p>{readinessIssueText(issue)}</p>{/each}
+					</div>
+				{/if}
+				{#if nextSetupAction}
+					<div class="agent-readiness-next">
+						<strong>{$t('settings.agent.readiness.nextStep')}</strong>
+						<p>{readinessIssueText(nextSetupAction.issue)}</p>
+						<a
+							class="action-btn agent-readiness-action"
+							href={nextSetupAction.href}
+							target={nextSetupAction.external ? '_blank' : undefined}
+							rel={nextSetupAction.external ? 'noopener noreferrer' : undefined}
+						>
+							{$t(nextSetupAction.labelKey)} →
+						</a>
 					</div>
 				{/if}
 			{/if}
@@ -759,13 +813,18 @@
 		</div>
 	</section>
 
-	<section class="section">
+	<section class="section" id="mcp-integration">
 		<h2>{$t('settings.mcp.title')}</h2>
 		<p class="section-desc">{$t('settings.mcp.desc')}</p>
 
 		<div class="mcp-endpoint">
 			<span class="agent-label">{$t('settings.mcp.endpointLabel')}</span>
-			<input type="text" class="agent-input mcp-endpoint-input" value={mcpEndpointUrl} readonly />
+			<div class="mcp-endpoint-row">
+				<input type="text" class="agent-input mcp-endpoint-input" value={mcpEndpointUrl} readonly />
+				<button class="action-btn" type="button" onclick={copyMcpEndpoint}>
+					{mcpEndpointCopied ? $t('settings.mcp.copied') : $t('settings.mcp.copy')}
+				</button>
+			</div>
 		</div>
 		<p class="agent-help">{$t('settings.mcp.endpointHelp')}</p>
 
@@ -1490,7 +1549,8 @@
 
 	/* MCP-specific styling: endpoint URL field, tokens list. */
 	.mcp-endpoint { display: block; margin: 0.4rem 0 0.3rem; }
-	.mcp-endpoint-input { font-size: 0.8rem; }
+	.mcp-endpoint-row { display: flex; align-items: center; gap: 0.45rem; }
+	.mcp-endpoint-input { min-width: 0; font-size: 0.8rem; }
 	.mcp-tokens-head {
 		display: flex; align-items: center; justify-content: space-between;
 		margin: 0.9rem 0 0.5rem;
@@ -1530,4 +1590,16 @@
 	.agent-readiness-list li.ok { color: #25a244; }
 	.agent-readiness-issues { margin-top: 0.75rem; padding: 0.65rem; border-radius: var(--r-sm); background: color-mix(in srgb, var(--warning) 10%, transparent); }
 	.agent-readiness-issues p { margin: 0.2rem 0; font-size: 0.8rem; color: var(--text); }
+	.agent-readiness-next { margin-top: 0.75rem; padding: 0.75rem; border-radius: var(--r-sm); background: color-mix(in srgb, var(--primary) 9%, var(--surface)); }
+	.agent-readiness-next p { margin: 0.25rem 0 0.65rem; font-size: 0.82rem; color: var(--text); line-height: 1.45; }
+	.agent-readiness-action { display: inline-flex; width: fit-content; text-decoration: none; }
+
+	@media (max-width: 520px) {
+		.agent-readiness-head { flex-direction: column; }
+		.agent-readiness-head .action-btn { width: 100%; justify-content: center; }
+		.agent-readiness-action { width: 100%; justify-content: center; }
+		.mcp-token-create-controls { width: 100%; flex-direction: column; align-items: stretch; }
+		.mcp-profile-select { width: 100%; }
+		.mcp-tokens-head { align-items: stretch; flex-direction: column; gap: 0.55rem; }
+	}
 </style>

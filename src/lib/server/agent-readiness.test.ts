@@ -6,10 +6,23 @@ const response = (body: unknown, status = 200) => new Response(JSON.stringify(bo
 	headers: { 'content-type': 'application/json' }
 });
 
+const readyAgent = {
+	agent_id: 'agent-1',
+	platform_settings: {
+		auth: { enable_auth: true },
+		overrides: {
+			conversation_config_override: {
+				agent: { language: true, prompt: { prompt: true } },
+				tts: { voice_id: true }
+			}
+		}
+	}
+};
+
 describe('checkAgentReadiness', () => {
 	it('verifies the agent, MCP assignment, authentication, and required tools', async () => {
 		const fetchFn = vi.fn()
-			.mockResolvedValueOnce(response({ agent_id: 'agent-1' }))
+			.mockResolvedValueOnce(response(readyAgent))
 			.mockResolvedValueOnce(response({ signed_url: 'wss://api.elevenlabs.io/session' }))
 			.mockResolvedValueOnce(response({ mcp_servers: [{ id: 'mcp-1', config: { url: 'https://staging.example/api/mcp/' }, dependent_agents: [{ id: 'agent-1' }] }] }))
 			.mockResolvedValueOnce(response({ id: 'mcp-1', config: { url: 'https://staging.example/api/mcp' }, dependent_agents: [{ id: 'agent-1' }] }))
@@ -25,7 +38,7 @@ describe('checkAgentReadiness', () => {
 
 	it('reports when no MCP server has the staging endpoint', async () => {
 		const fetchFn = vi.fn()
-			.mockResolvedValueOnce(response({}))
+			.mockResolvedValueOnce(response(readyAgent))
 			.mockResolvedValueOnce(response({ signed_url: 'wss://api.elevenlabs.io/session' }))
 			.mockResolvedValueOnce(response({ mcp_servers: [] }));
 
@@ -37,7 +50,7 @@ describe('checkAgentReadiness', () => {
 
 	it('distinguishes an unassigned server and failed MCP authentication', async () => {
 		const fetchFn = vi.fn()
-			.mockResolvedValueOnce(response({}))
+			.mockResolvedValueOnce(response(readyAgent))
 			.mockResolvedValueOnce(response({ signed_url: 'wss://api.elevenlabs.io/session' }))
 			.mockResolvedValueOnce(response({ mcp_servers: [{ id: 'mcp-1', config: { url: 'https://staging.example/api/mcp' }, dependent_agents: [] }] }))
 			.mockResolvedValueOnce(response({ id: 'mcp-1', dependent_agents: [] }))
@@ -57,7 +70,7 @@ describe('checkAgentReadiness', () => {
 
 	it('treats a 200 tool-discovery response with success false as an auth failure', async () => {
 		const fetchFn = vi.fn()
-			.mockResolvedValueOnce(response({}))
+			.mockResolvedValueOnce(response(readyAgent))
 			.mockResolvedValueOnce(response({ signed_url: 'wss://api.elevenlabs.io/session' }))
 			.mockResolvedValueOnce(response({ mcp_servers: [{ id: 'mcp-1', config: { url: 'https://staging.example/api/mcp' }, dependent_agents: [{ id: 'agent-1' }] }] }))
 			.mockResolvedValueOnce(response({ id: 'mcp-1', dependent_agents: [{ id: 'agent-1' }] }))
@@ -68,15 +81,39 @@ describe('checkAgentReadiness', () => {
 		expect(result.mcp.authenticated).toBe(false);
 	});
 
-	it('does not report ready when ElevenLabs cannot create tutor session credentials', async () => {
+	it('continues checking MCP when an authenticated agent cannot create session credentials', async () => {
 		const fetchFn = vi.fn()
-			.mockResolvedValueOnce(response({ agent_id: 'agent-1' }))
-			.mockResolvedValueOnce(response({}, 403));
+			.mockResolvedValueOnce(response(readyAgent))
+			.mockResolvedValueOnce(response({}, 401))
+			.mockResolvedValueOnce(response({ mcp_servers: [] }));
 
 		const result = await checkAgentReadiness('secret', 'agent-1', 'https://staging.example/api/mcp', fetchFn);
 		expect(result.ready).toBe(false);
 		expect(result.agent.session_available).toBe(false);
-		expect(result.issues).toEqual(['insufficient_permissions']);
+		expect(result.issues).toEqual(['agent_session_unavailable', 'mcp_server_not_found']);
+		expect(fetchFn).toHaveBeenCalledTimes(3);
+	});
+
+	it('explains disabled agent authentication and missing overrides while still checking MCP', async () => {
+		const fetchFn = vi.fn()
+			.mockResolvedValueOnce(response({
+				agent_id: 'agent-1',
+				platform_settings: {
+					auth: { enable_auth: false },
+					overrides: { conversation_config_override: {} }
+				}
+			}))
+			.mockResolvedValueOnce(response({ mcp_servers: [] }));
+
+		const result = await checkAgentReadiness('secret', 'agent-1', 'https://staging.example/api/mcp', fetchFn);
+
+		expect(result.agent.authentication_enabled).toBe(false);
+		expect(result.agent.missing_overrides).toEqual(['prompt', 'language', 'voice_id']);
+		expect(result.issues).toEqual([
+			'agent_auth_disabled',
+			'agent_overrides_missing',
+			'mcp_server_not_found'
+		]);
 		expect(fetchFn).toHaveBeenCalledTimes(2);
 	});
 });
