@@ -2,6 +2,7 @@ let audioContext: AudioContext | null = null;
 let currentSource: AudioBufferSourceNode | null = null;
 let lastSpokenText: string = '';
 let currentAbort: AbortController | null = null;
+let keepAliveSource: AudioBufferSourceNode | null = null;
 
 /** In-memory TTS audio cache for preloading */
 const audioCache = new Map<string, AudioBuffer>();
@@ -25,6 +26,28 @@ export async function unlockAudio(): Promise<void> {
 	source.buffer = buffer;
 	source.connect(audioContext.destination);
 	source.start(0);
+
+	// Keep the context running until the first real audio plays. iOS re-suspends an idle
+	// context during the cold-start gap (card fetch + mic-permission prompt) between this
+	// gesture and the first card's TTS, and resume() outside a gesture silently no-ops — so
+	// the very first playback of the session would otherwise be inaudible. An inaudible
+	// looping buffer holds the context in the "running" state cheaply.
+	startKeepAlive();
+}
+
+/**
+ * Hold the AudioContext open with a silent looping buffer so it can't auto-suspend between
+ * the unlock gesture and the first real playback. Idempotent and inaudible (zeroed buffer).
+ */
+function startKeepAlive(): void {
+	if (!audioContext || keepAliveSource) return;
+	const buffer = audioContext.createBuffer(1, audioContext.sampleRate, audioContext.sampleRate);
+	const source = audioContext.createBufferSource();
+	source.buffer = buffer; // all-zero samples → silent
+	source.loop = true;
+	source.connect(audioContext.destination);
+	source.start(0);
+	keepAliveSource = source;
 }
 
 /**
