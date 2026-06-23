@@ -599,26 +599,49 @@ export function createReviewEngine(): ReviewEngine {
 		startTime = Date.now();
 		isCramMode = options?.mode === 'cram';
 
-		// 1. Unlock audio for iOS
-		await unlockAudio();
+		// Audio and microphone setup are optional capabilities. Neither may block cards.
+		try {
+			unlockAudio();
+		} catch {
+			audioOn = false;
+			emit({ type: 'audio_change', audioOn: false });
+		}
 
-		// 2. Fetch cards + start the selected speech client in parallel.
-		speechClient = options?.voiceProvider === 'openai_deepgram'
-			? createDeepgramClient({ language: options?.sttLanguage })
-			: createElevenLabsClient({ language: options?.sttLanguage });
-		speechClient.onTranscript((transcript, isFinal) => {
-			emit({ type: 'transcript', text: transcript, isFinal });
+		try {
+			const client = options?.voiceProvider === 'openai_deepgram'
+				? createDeepgramClient({ language: options?.sttLanguage })
+				: createElevenLabsClient({ language: options?.sttLanguage });
+			speechClient = client;
+			client.onTranscript((transcript, isFinal) => {
+				emit({ type: 'transcript', text: transcript, isFinal });
 
-			if (isFinal) {
-				const command = matchCommand(transcript, phase);
-				if (command) {
-					handleCommand(command);
+				if (isFinal) {
+					const command = matchCommand(transcript, phase);
+					if (command) handleCommand(command);
 				}
-			}
-		});
-		speechClient.onError((err) => {
-			emit({ type: 'error', message: err.message });
-		});
+			});
+			client.onError((err) => {
+				emit({ type: 'error', message: err.message });
+			});
+			void client.start().catch((err: unknown) => {
+				if (destroyed || sessionFinished || speechClient !== client) return;
+				client.stop();
+				micOn = false;
+				emit({ type: 'mic_change', micOn: false });
+				emit({
+					type: 'error',
+					message: `Microphone error: ${err instanceof Error ? err.message : 'Unknown'}`
+				});
+			});
+		} catch (err) {
+			speechClient = null;
+			micOn = false;
+			emit({ type: 'mic_change', micOn: false });
+			emit({
+				type: 'error',
+				message: `Microphone error: ${err instanceof Error ? err.message : 'Unknown'}`
+			});
+		}
 
 		// Use prefetched cards if available, otherwise fetch now
 		const cardsFetch = options?.prefetchedCards
@@ -633,32 +656,15 @@ export function createReviewEngine(): ReviewEngine {
 				return (await res.json()) as PrefetchedCards;
 			})();
 
-		const [cardsResult, speechResult] = await Promise.allSettled([
-			cardsFetch,
-			speechClient.start()
-		]);
-
-		// Handle speech client failure
-		if (speechResult.status === 'rejected') {
-			const err = speechResult.reason;
-			speechClient?.stop();
-			sessionFinished = true;
-			emit({
-				type: 'error',
-				message: `Microphone error: ${err instanceof Error ? err.message : 'Unknown'}`
-			});
-			throw err instanceof Error ? err : new Error('Microphone error');
-		}
-
-		// Handle cards failure
-		if (cardsResult.status === 'rejected') {
+		let data: PrefetchedCards;
+		try {
+			data = await cardsFetch;
+		} catch {
 			speechClient?.stop();
 			sessionFinished = true;
 			emit({ type: 'error', message: 'Failed to fetch cards' });
 			throw new Error('Failed to fetch cards');
 		}
-
-		const data = cardsResult.value;
 		if (data.deckName) {
 			emit({ type: 'deck_info', name: data.deckName });
 		}
