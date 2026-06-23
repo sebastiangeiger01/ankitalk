@@ -1,4 +1,4 @@
-import { error, redirect, type Handle } from '@sveltejs/kit';
+import { error, redirect, type Handle, type HandleServerError } from '@sveltejs/kit';
 import { getRemoteHankoJwks, verifyHankoToken } from '$lib/server/auth';
 import { getDb, newId } from '$lib/server/db';
 
@@ -58,6 +58,20 @@ const SECURITY_HEADERS: Record<string, string> = {
 
 /** Throttle `users.updated_at` to once per day per user — was firing on every request. */
 const UPDATED_AT_TTL_SECONDS = 24 * 60 * 60;
+
+/**
+ * SvelteKit calls this for every *unexpected* error anywhere in the request lifecycle —
+ * inside `handle`, inside an endpoint, or while streaming a response body. By default it
+ * hides the cause behind `{"message":"Internal Error"}`. On staging we want the truth: log
+ * the full error+stack (visible via `wrangler tail` / the Pages real-time log) and return the
+ * real name+message in the body so the client surfaces it instead of an opaque 500. The
+ * distinctive prefix also proves which build is live.
+ */
+export const handleError: HandleServerError = ({ error, event }) => {
+	const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+	console.error(`[handleError] ${event.request.method} ${event.url.pathname}:`, error);
+	return { message: `Server error — ${detail}`.slice(0, 400) };
+};
 
 export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.userId = null;
