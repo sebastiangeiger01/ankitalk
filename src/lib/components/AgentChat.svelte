@@ -21,7 +21,7 @@
 		onclose
 	}: Props = $props();
 
-	type Phase = 'idle' | 'connecting' | 'listening' | 'speaking' | 'ended' | 'error';
+	type Phase = 'idle' | 'connecting' | 'thinking' | 'listening' | 'speaking' | 'ended' | 'error';
 
 	let phase = $state<Phase>('idle');
 	let errorMsg = $state('');
@@ -89,7 +89,10 @@
 					agent: { prompt: { prompt: data.systemPrompt }, language: data.language, firstMessage: '' },
 					tts: { voiceId: data.voiceId }
 				},
-				onConnect: () => (phase = 'listening'),
+				// After connecting we immediately kick off the agent's first turn, so show a
+				// "thinking" state until it replies rather than a silent "listening" that reads
+				// as if we're waiting on the student.
+				onConnect: () => (phase = kickoffMessage ? 'thinking' : 'listening'),
 				onDisconnect: () => onSessionEnded(),
 				onMessage: ({ message, role }) => {
 					if (!message) return;
@@ -103,9 +106,12 @@
 				onModeChange: ({ mode }: { mode: Mode }) => {
 					// `mode` is "speaking" while the agent is talking, "listening" while it
 					// waits for user input. Surface it so the user knows whose turn it is.
-					if (phase !== 'connecting' && phase !== 'ended' && phase !== 'error') {
-						phase = mode === 'speaking' ? 'speaking' : 'listening';
-					}
+					if (phase === 'connecting' || phase === 'ended' || phase === 'error') return;
+					if (mode === 'speaking') { phase = 'speaking'; return; }
+					// Stay in "thinking" until the kicked-off first turn actually starts, so the
+					// silent generation gap doesn't flip to "listening" (the student's turn).
+					if (phase === 'thinking') return;
+					phase = 'listening';
 				},
 				onError: (e) => {
 					errorMsg = typeof e === 'string' ? e : $t('agent.error');
@@ -199,6 +205,9 @@
 				{#if phase === 'connecting'}
 					<Spinner size={16} />
 					<span>{$t('agent.status.connecting')}</span>
+				{:else if phase === 'thinking'}
+					<Spinner size={16} />
+					<span>{$t('agent.status.thinking')}</span>
 				{:else if phase === 'listening'}
 					<span class="dot dot--live"></span>
 					<span>{$t('agent.status.listening')}</span>
@@ -219,7 +228,7 @@
 						<span class="text">{m.text}</span>
 					</div>
 				{/each}
-				{#if messages.length === 0 && phase !== 'connecting' && phase !== 'error'}
+				{#if messages.length === 0 && phase !== 'connecting' && phase !== 'thinking' && phase !== 'error'}
 					<p class="hint">{answerRevealed ? $t('agent.hint') : $t('agent.preRevealHint')}</p>
 				{/if}
 			</div>
@@ -237,8 +246,12 @@
 	.backdrop {
 		position: fixed; inset: 0;
 		background: rgba(0, 0, 0, 0.7);
-		display: flex; align-items: stretch; justify-content: center;
-		z-index: 200; padding: 1rem;
+		display: flex; align-items: center; justify-content: center;
+		z-index: 200;
+		/* Keep clear of the notch / Dynamic Island and the home indicator. */
+		padding:
+			calc(env(safe-area-inset-top) + 0.75rem) 1rem
+			calc(env(safe-area-inset-bottom) + 0.75rem);
 	}
 	.modal {
 		background: var(--bg);
@@ -247,7 +260,7 @@
 		padding: 1rem 1.1rem;
 		width: 100%; max-width: 520px;
 		display: flex; flex-direction: column; gap: 0.7rem;
-		max-height: 85vh;
+		max-height: 85dvh;
 	}
 	.head { display: flex; justify-content: space-between; align-items: center; }
 	.head h2 { margin: 0; font-size: 1.1rem; }

@@ -431,6 +431,7 @@ export const de: Record<string, string> = {
 	'agent.kickoffHint': 'Gib mir zum Einstieg einen sanften Hinweis zu dieser Karte, ohne die Antwort zu verraten.',
 	'agent.kickoffExplain': 'Erkläre mir zum Einstieg kurz die zentrale Idee hinter dieser Karte.',
 	'agent.status.connecting': 'Verbinden…',
+	'agent.status.thinking': 'Antwort des Tutors wird vorbereitet…',
 	'agent.status.listening': 'Hört zu — sprich los',
 	'agent.status.speaking': 'Tutor spricht',
 	'agent.status.ended': 'Gespräch beendet.',

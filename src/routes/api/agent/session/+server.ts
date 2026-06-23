@@ -107,8 +107,17 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 	const answerRevealed = body.answer_revealed === true;
 
 	const db = getDb(platform!);
-	const context = await getCardContext(db, userId, cardId);
+	// These three reads are independent — run them concurrently so the session handshake
+	// isn't three sequential round trips before we even mint the signed URL.
+	const [context, settings, apiKey] = await Promise.all([
+		getCardContext(db, userId, cardId),
+		getUserVoiceSettings(db, userId),
+		getUserApiKey(db, userId, 'elevenlabs', platform!.env.ENCRYPTION_KEY)
+	]);
 	if (!context) return json({ error: 'card_not_found' }, { status: 404 });
+	if (!settings.elevenlabs_agent_id) return json({ error: 'no_agent' }, { status: 400 });
+	if (!apiKey) return json({ error: 'no_key' }, { status: 400 });
+
 	const current = context.card;
 	const front = sanitizeAgentContext(current.question, MAX_CONTEXT_FIELD);
 	const answerContext = getTutorAnswerContext(current.answer, answerRevealed, MAX_CONTEXT_FIELD);
@@ -119,13 +128,6 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 	const cardReps = clampInt(current.reps, 0, 100_000);
 	const cardLapses = clampInt(current.lapses, 0, 100_000);
 	const recentRatings = context.recent_reviews.map((review) => review.rating).join(', ') || 'none';
-	const settings = await getUserVoiceSettings(db, userId);
-	if (!settings.elevenlabs_agent_id) {
-		return json({ error: 'no_agent' }, { status: 400 });
-	}
-
-	const apiKey = await getUserApiKey(db, userId, 'elevenlabs', platform!.env.ENCRYPTION_KEY);
-	if (!apiKey) return json({ error: 'no_key' }, { status: 400 });
 
 	const result = await getSignedAgentUrl(apiKey, settings.elevenlabs_agent_id);
 	if ('error' in result) {
