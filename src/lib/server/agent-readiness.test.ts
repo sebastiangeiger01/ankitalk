@@ -84,7 +84,7 @@ describe('checkAgentReadiness', () => {
 	it('continues checking MCP when an authenticated agent cannot create session credentials', async () => {
 		const fetchFn = vi.fn()
 			.mockResolvedValueOnce(response(readyAgent))
-			.mockResolvedValueOnce(response({}, 401))
+			.mockResolvedValueOnce(response({}, 500))
 			.mockResolvedValueOnce(response({ mcp_servers: [] }));
 
 		const result = await checkAgentReadiness('secret', 'agent-1', 'https://staging.example/api/mcp', fetchFn);
@@ -92,6 +92,18 @@ describe('checkAgentReadiness', () => {
 		expect(result.agent.session_available).toBe(false);
 		expect(result.issues).toEqual(['agent_session_unavailable', 'mcp_server_not_found']);
 		expect(fetchFn).toHaveBeenCalledTimes(3);
+	});
+
+	it('maps a 401 from the signed-url endpoint to insufficient permissions, not an unavailable session', async () => {
+		const fetchFn = vi.fn()
+			.mockResolvedValueOnce(response(readyAgent))
+			.mockResolvedValueOnce(response({}, 401))
+			.mockResolvedValueOnce(response({ mcp_servers: [] }));
+
+		const result = await checkAgentReadiness('secret', 'agent-1', 'https://staging.example/api/mcp', fetchFn);
+
+		expect(result.agent.session_available).toBe(false);
+		expect(result.issues).toEqual(['insufficient_permissions', 'mcp_server_not_found']);
 	});
 
 	it('explains disabled agent authentication and missing overrides while still checking MCP', async () => {
