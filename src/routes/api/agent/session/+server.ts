@@ -2,7 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { getDb } from '$lib/server/db';
 import { getUserApiKey } from '$lib/server/user-keys';
 import { getUserVoiceSettings } from '$lib/server/voice-settings';
-import { getSignedAgentUrl, getTutorAnswerContext, sanitizeAgentContext } from '$lib/server/agent';
+import { getAgentConversationToken, getTutorAnswerContext, sanitizeAgentContext } from '$lib/server/agent';
 import { enforceRateLimit, RATE_LIMITS } from '$lib/server/rate-limit';
 import { normalizeLocale } from '$lib/server/validate';
 import { getCardContext } from '$lib/server/study-context';
@@ -75,7 +75,7 @@ interface SessionRequest {
 }
 
 interface SessionResponse {
-	signedUrl: string;
+	conversationToken: string;
 	dynamicVariables: Record<string, string | number | boolean>;
 	systemPrompt: string;
 	voiceId: string;
@@ -129,7 +129,7 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 	const cardLapses = clampInt(current.lapses, 0, 100_000);
 	const recentRatings = context.recent_reviews.map((review) => review.rating).join(', ') || 'none';
 
-	const result = await getSignedAgentUrl(apiKey, settings.elevenlabs_agent_id);
+	const result = await getAgentConversationToken(apiKey, settings.elevenlabs_agent_id);
 	if ('error' in result) {
 		const map: Record<string, number> = { bad_agent: 400, bad_key: 400, rate_limited: 429, upstream: 502 };
 		return json({ error: result.error }, { status: map[result.error] ?? 502 });
@@ -139,7 +139,7 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 	const systemPrompt = language === 'de' ? PROMPT_TEMPLATE_DE : PROMPT_TEMPLATE_EN;
 
 	const payload: SessionResponse = {
-		signedUrl: result.signedUrl,
+		conversationToken: result.token,
 		// Plain strings only — the agent platform supports string/number/integer/boolean and
 		// we always stringify here so the system-prompt template doesn't render "[object …]"
 		// if a deck name happens to be numeric.

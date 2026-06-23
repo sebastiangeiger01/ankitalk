@@ -69,7 +69,7 @@
 				return;
 			}
 			const data = (await res.json()) as {
-				signedUrl: string;
+				conversationToken: string;
 				dynamicVariables: Record<string, string | number | boolean>;
 				systemPrompt: string;
 				voiceId: string;
@@ -83,7 +83,8 @@
 
 			sessionStartMs = Date.now();
 			conversation = await Conversation.startSession({
-				signedUrl: data.signedUrl,
+				conversationToken: data.conversationToken,
+				connectionType: 'webrtc',
 				dynamicVariables: data.dynamicVariables,
 				overrides: {
 					agent: { prompt: { prompt: data.systemPrompt }, language: data.language, firstMessage: '' },
