@@ -135,8 +135,24 @@ export const handle: Handle = async ({ event, resolve }) => {
 	if (!isRemoteMcpEndpoint) enforceSameOrigin(event);
 
 	const response = await resolve(event);
-	for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
-		if (!response.headers.has(name)) response.headers.set(name, value);
+
+	const missing = Object.entries(SECURITY_HEADERS).filter(([name]) => !response.headers.has(name));
+	if (missing.length === 0) return response;
+
+	try {
+		for (const [name, value] of missing) response.headers.set(name, value);
+		return response;
+	} catch {
+		// Responses served straight from the Cloudflare edge cache (e.g. cached TTS audio in
+		// /api/tts) — or any `fetch()` passthrough — have immutable headers, so `set()` throws
+		// "Can't modify immutable headers" and SvelteKit collapses it into a 500. Rebuild a
+		// mutable copy (the body stream is reused, not buffered) and add the headers there.
+		const headers = new Headers(response.headers);
+		for (const [name, value] of missing) headers.set(name, value);
+		return new Response(response.body, {
+			status: response.status,
+			statusText: response.statusText,
+			headers
+		});
 	}
-	return response;
 };
