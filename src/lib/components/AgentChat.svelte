@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import { fade, fly } from 'svelte/transition';
-	import { Conversation, type Conversation as ConversationType, type Mode } from '@elevenlabs/client';
+	// Type-only import (erased at build) so the heavy livekit/WebRTC runtime is NOT bundled into
+	// the review route — it's loaded on demand in start() when the tutor actually opens. This
+	// keeps deck-open off the critical path of a ~370kB dependency.
+	import type { Conversation as ConversationType, Mode } from '@elevenlabs/client';
 	import { t } from '$lib/i18n';
 	import { focusTrap } from '$lib/actions/focusTrap';
 
@@ -109,6 +112,8 @@
 			// idea explained. We send this as the opening turn so the agent leads with help.
 			kickoffMessage = answerRevealed ? $t('agent.kickoffExplain') : $t('agent.kickoffHint');
 			kickoffShown = false;
+
+			const { Conversation } = await import('@elevenlabs/client');
 
 			sessionStartMs = Date.now();
 			conversation = await Conversation.startSession({
@@ -342,17 +347,20 @@
 	.dot--live { background: var(--success); animation: pulse 1.4s ease-in-out infinite; }
 	/* Three bouncing dots — the universal "composing a reply" affordance. Used inline in the
 	   status row (small) and as a tutor bubble while we wait for the first/next turn. */
-	.typing { display: inline-flex; align-items: flex-end; gap: 0.28rem; height: 0.85rem; }
+	.typing { display: inline-flex; align-items: flex-end; gap: 0.34rem; height: 0.9rem; }
 	.typing i {
-		width: 0.45rem; height: 0.45rem; border-radius: 50%;
+		width: 0.5rem; height: 0.5rem; border-radius: 50%;
 		background: var(--primary);
-		animation: typing-bounce 1.2s ease-in-out infinite;
+		/* transform+opacity only → the compositor can keep this running even while the main
+		   thread is busy negotiating the WebRTC connection. will-change hints layer promotion. */
+		will-change: transform, opacity;
+		animation: typing-bounce 1.2s ease-in-out infinite both;
 	}
 	.typing i:nth-child(2) { animation-delay: 0.18s; }
 	.typing i:nth-child(3) { animation-delay: 0.36s; }
 	@keyframes typing-bounce {
-		0%, 80%, 100% { transform: translateY(0); opacity: 0.45; }
-		40% { transform: translateY(-0.32rem); opacity: 1; }
+		0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+		40% { transform: translateY(-0.34rem); opacity: 1; }
 	}
 
 	/* Animated equalizer while the tutor speaks — reads as "live audio" better than a dot. */
@@ -370,10 +378,20 @@
 		50% { transform: scaleY(1); }
 	}
 
+	/* Under Reduce Motion we must NOT freeze the loader — a static "loading" reads as broken.
+	   Swap the bounce/equalizer for a gentle opacity pulse (no translation), which is within the
+	   spirit of reduced motion while still signalling activity. */
 	@media (prefers-reduced-motion: reduce) {
-		.typing i, .bars i, .dot--live { animation: none; }
-		.typing i { opacity: 0.7; }
-		.bars i { transform: scaleY(0.6); }
+		.typing i {
+			animation: dot-fade 1.2s ease-in-out infinite both;
+			transform: none;
+		}
+		.bars i { animation: dot-fade 1.1s ease-in-out infinite both; transform: scaleY(0.7); }
+		.dot--live { animation: dot-fade 1.6s ease-in-out infinite; }
+	}
+	@keyframes dot-fade {
+		0%, 100% { opacity: 0.35; }
+		50% { opacity: 1; }
 	}
 	@keyframes pulse {
 		0%, 100% { opacity: 1; }
@@ -390,13 +408,24 @@
 		font-size: 0.92rem; line-height: 1.45;
 	}
 	.bubble {
-		display: flex; flex-direction: column; gap: 0.15rem;
-		padding: 0.45rem 0.6rem;
+		align-self: flex-start;
+		max-width: 86%;
+		display: flex; flex-direction: column; gap: 0.2rem;
+		padding: 0.5rem 0.7rem;
 		background: var(--surface-2);
-		border-radius: 8px;
+		border-radius: 14px;
+		border-bottom-left-radius: 5px;
 	}
-	.bubble.user { background: var(--surface-elevated, var(--surface-2)); }
-	.typing-bubble { align-self: flex-start; flex-direction: column; gap: 0.3rem; }
+	.bubble.user {
+		align-self: flex-end;
+		/* Fallback first, then a subtle primary tint where color-mix is supported (iOS 16.2+). */
+		background: var(--surface-elevated, var(--surface-2));
+		background: color-mix(in srgb, var(--primary) 18%, var(--surface-2));
+		border-radius: 14px;
+		border-bottom-left-radius: 14px;
+		border-bottom-right-radius: 5px;
+	}
+	.typing-bubble { gap: 0.35rem; padding: 0.6rem 0.75rem; }
 	.visually-hidden {
 		position: absolute; width: 1px; height: 1px;
 		padding: 0; margin: -1px; overflow: hidden;

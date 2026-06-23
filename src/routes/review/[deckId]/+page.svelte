@@ -213,6 +213,9 @@
 		started = true;
 		errorMsg = '';
 		document.body.classList.add('review-active');
+		// Warm the tutor's WebRTC bundle now (after deck-open paint, during the session) so it's
+		// parsed by the time the user opens the tutor — without weighing down deck open itself.
+		if (agentEnabled) void import('@elevenlabs/client').catch(() => {});
 		const options: StartOptions = {};
 		if (tagFilter.trim()) options.tags = tagFilter.trim();
 		if (cramMode) {
