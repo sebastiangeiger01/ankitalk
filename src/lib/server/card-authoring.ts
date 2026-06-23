@@ -1,4 +1,5 @@
 import { renderCard } from '$lib/client/card-renderer';
+import { serverCardSanitizer } from './card-sanitize';
 import { newId } from '$lib/server/db';
 
 export interface CardDraft {
@@ -56,7 +57,7 @@ export function validateCardDrafts(drafts: CardDraft[]): ValidatedDraft[] {
 		}
 		const fieldsJson = JSON.stringify(draft.fields);
 		const previews = ordinals.map((ordinal) => {
-			const rendered = renderCard(fieldsJson, draft.card_type ?? 'basic', ordinal, null, null);
+			const rendered = renderCard(fieldsJson, draft.card_type ?? 'basic', ordinal, null, null, serverCardSanitizer);
 			return { ordinal, question: rendered.front, answer: rendered.back };
 		});
 		return { draft_index: draftIndex, valid: errors.length === 0, errors, previews };

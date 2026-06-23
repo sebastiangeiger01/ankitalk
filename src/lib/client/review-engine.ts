@@ -3,6 +3,7 @@ import { createDeepgramClient } from './deepgram';
 import { createElevenLabsClient } from './elevenlabs';
 import type { SpeechClient } from './speech';
 import { renderCard } from './card-renderer';
+import { clientCardSanitizer } from './card-sanitize';
 import { matchCommand } from '../commands';
 import type { VoiceProvider } from '../voice';
 import type { ReviewPhase, VoiceCommand, RatingName } from '../types';
@@ -679,7 +680,8 @@ export function createReviewEngine(): ReviewEngine {
 				c.card_type as string,
 				(c.ordinal as number) ?? 0,
 				(c.front_template as string | null) ?? null,
-				(c.back_template as string | null) ?? null
+				(c.back_template as string | null) ?? null,
+				clientCardSanitizer
 			);
 			const intervals = (c.intervals as IntervalLabels) ?? defaultIntervals;
 			return {

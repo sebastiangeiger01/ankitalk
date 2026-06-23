@@ -7,7 +7,7 @@
 	import { t } from '$lib/i18n';
 	import { preloadTTS } from '$lib/client/audio';
 	import { getPrepareAudioAhead } from '$lib/client/preferences';
-	import { sanitizeCardHtml } from '$lib/sanitize';
+	import { clientCardSanitizer } from '$lib/client/card-sanitize';
 	import type { DeckWithDueCount } from '$lib/types';
 	import type { UserVoiceSettings } from '$lib/voice';
 
@@ -65,9 +65,7 @@
 					const rawHtml = isCloze
 						? firstValue.replace(/\{\{c\d+::(.*?)(?:::(.*?))?\}\}/g, (_m, _a, hint) => hint || 'blank')
 						: firstValue;
-					const div = document.createElement('div');
-					div.innerHTML = sanitizeCardHtml(rawHtml);
-					const plain = (div.textContent ?? '').trim();
+					const plain = clientCardSanitizer.toText(rawHtml);
 					if (plain) preloadTTS(plain);
 				})
 				.catch(() => {});
