@@ -7,6 +7,7 @@
 	import { locale, t } from '$lib/i18n';
 	import { focusTrap } from '$lib/actions/focusTrap';
 	import { clientCardSanitizer } from '$lib/client/card-sanitize';
+	import { renderCard } from '$lib/client/card-renderer';
 	import type { ReviewPhase } from '$lib/types';
 	import { sttLanguageForVoiceCommandLanguage, type UserVoiceSettings } from '$lib/voice';
 	import AgentChat from '$lib/components/AgentChat.svelte';
@@ -59,6 +60,7 @@
 	let helpOpen = $state(false);
 	let shortcutsOpen = $state(false);
 	let prefetchedCards = $state<PrefetchedCards | null>(null);
+	let reviewPrepared = $state(false);
 	let highlightRating = $state<string>('');
 	let highlightTimer: ReturnType<typeof setTimeout> | null = null;
 	type ApiKeyStatus = { openai: boolean; deepgram: boolean; anthropic: boolean; elevenlabs: boolean };
@@ -326,38 +328,42 @@
 		fetch(`/api/cards/next?${new URLSearchParams({ deckId: deckId!, limit: '50' })}`)
 			.then((r) => r.ok ? r.json() : null)
 			.then((data) => {
-				if (!data) return;
+				if (!data) { reviewPrepared = true; return; }
 				prefetchedCards = data as PrefetchedCards;
-				if (!getPrepareAudioAhead()) return;
-				const cards = (data as { cards: { fields: string; card_type: string }[] }).cards;
-				if (!cards?.length) return;
-				// Preload first 3 fronts + first 2 backs in parallel so early cards play instantly.
-				// The TTS endpoint serves from Cloudflare edge cache after the first synthesis.
+				if (!getPrepareAudioAhead()) { reviewPrepared = true; return; }
+				const cards = (data as PrefetchedCards).cards;
+				if (!cards?.length) { reviewPrepared = true; return; }
+				// Use the same renderer as the engine so the cached first front is an exact key match.
+				// Start becomes available when that MP3 is ready for synchronous gesture playback.
 				const seen = new Set<string>();
-				const tryPreload = (rawHtml: string) => {
-					const plain = clientCardSanitizer.toText(rawHtml);
-					if (plain && !seen.has(plain)) { seen.add(plain); preloadTTS(plain); }
+				const tryPreload = (text: string): Promise<boolean> | null => {
+					if (!text || seen.has(text)) return null;
+					seen.add(text);
+					return preloadTTS(text);
 				};
+				let firstFrontPreparation: Promise<boolean> | null = null;
 				const limit = Math.min(3, cards.length);
 				for (let i = 0; i < limit; i++) {
 					try {
 						const card = cards[i];
-						const fields = JSON.parse(card.fields) as { value: string }[];
-						if (!fields.length) continue;
-						const firstValue = fields[0]?.value ?? '';
-						const isCloze = card.card_type === 'cloze' || /\{\{c\d+::/.test(firstValue);
-						if (isCloze) {
-							// front: replace answers with hints/blank; back: reveal answers
-							tryPreload(firstValue.replace(/\{\{c\d+::(.*?)(?:::(.*?))?\}\}/g, (_m, _a, hint) => hint || 'blank'));
-							if (i < 2) tryPreload(firstValue.replace(/\{\{c\d+::(.*?)(?:::(.*?))?\}\}/g, (_m, a) => a));
-						} else {
-							tryPreload(firstValue);
-							if (i < 2 && fields[1]?.value) tryPreload(fields[1].value);
-						}
+						const rendered = renderCard(
+							card.fields as string,
+							card.card_type as string,
+							(card.ordinal as number) ?? 0,
+							(card.front_template as string | null) ?? null,
+							(card.back_template as string | null) ?? null,
+							clientCardSanitizer
+						);
+						const frontPreparation = tryPreload(rendered.front);
+						if (i === 0) firstFrontPreparation = frontPreparation;
+						if (i < 2) tryPreload(rendered.back);
 					} catch { /* ignore parse errors */ }
 				}
+				void (firstFrontPreparation ?? Promise.resolve(false)).then(() => {
+					reviewPrepared = true;
+				});
 			})
-			.catch(() => {});
+			.catch(() => { reviewPrepared = true; });
 	});
 
 	onDestroy(() => {
@@ -399,7 +405,7 @@
 				<p class="start-error">{errorMsg}</p>
 			{/if}
 
-			<button class="start-btn" onclick={startReview}>{cramMode ? $t('review.startCram') : $t('review.startReview')}</button>
+			<button class="start-btn" onclick={startReview} disabled={!reviewPrepared} aria-busy={!reviewPrepared}>{!reviewPrepared ? $t('common.loading') : cramMode ? $t('review.startCram') : $t('review.startReview')}</button>
 
 			<div class="review-options">
 				<label class="option-label">
@@ -757,6 +763,12 @@
 
 	.start-btn:active {
 		transform: scale(0.97);
+	}
+
+	.start-btn:disabled {
+		opacity: 0.55;
+		cursor: wait;
+		transform: none;
 	}
 
 	.review-options {

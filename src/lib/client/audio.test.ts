@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let audioContextConstructions = 0;
 let audioElementConstructions = 0;
+let lastAudioElement: FakeAudioElement | null = null;
 
 class FakeAudioElement {
 	src = '';
@@ -9,15 +10,21 @@ class FakeAudioElement {
 	playsInline = false;
 	currentTime = 0;
 	error: MediaError | null = null;
+	pauseCalls = 0;
+	playCalls = 0;
 	private listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
 
 	constructor() {
 		audioElementConstructions++;
+		lastAudioElement = this;
 	}
 
 	load() {}
-	pause() {}
+	pause() {
+		this.pauseCalls++;
+	}
 	play() {
+		this.playCalls++;
 		queueMicrotask(() => {
 			this.dispatch('playing');
 			this.dispatch('ended');
@@ -87,6 +94,7 @@ describe('review audio', () => {
 		vi.resetModules();
 		audioContextConstructions = 0;
 		audioElementConstructions = 0;
+		lastAudioElement = null;
 		vi.stubGlobal('AudioContext', FakeAudioContext);
 		vi.stubGlobal('Audio', FakeAudioElement);
 		vi.stubGlobal('URL', {
@@ -107,22 +115,20 @@ describe('review audio', () => {
 		const fetchMock = vi.fn(() => response);
 		vi.stubGlobal('fetch', fetchMock);
 
-		const { preloadTTS, speak, unlockAudio } = await import('./audio');
-		preloadTTS('first card');
+		const { preloadTTS, speak } = await import('./audio');
+		const preparation = preloadTTS('first card');
 		await Promise.resolve();
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 		expect(audioContextConstructions).toBe(0);
+		expect(audioElementConstructions).toBe(0);
 
-		await unlockAudio();
-		expect(audioContextConstructions).toBe(0);
-		expect(audioElementConstructions).toBe(1);
+		resolveResponse(new Response(new Uint8Array([1]), { status: 200 }));
+		expect(await preparation).toBe(true);
 
 		const playbackStarted = vi.fn();
 		const playback = speak('first card', undefined, undefined, playbackStarted);
-		await Promise.resolve();
 		expect(fetchMock).toHaveBeenCalledTimes(1);
-
-		resolveResponse(new Response(new Uint8Array([1]), { status: 200 }));
+		expect(lastAudioElement?.playCalls).toBe(1);
 		await playback;
 		expect(audioElementConstructions).toBe(1);
 		expect(audioContextConstructions).toBe(0);

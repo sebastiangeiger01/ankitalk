@@ -65,9 +65,6 @@ describe('review engine startup', () => {
 			}
 		});
 
-		await Promise.resolve();
-		await Promise.resolve();
-
 		expect(events).toContain('card_change');
 		await start;
 		engine.destroy();
