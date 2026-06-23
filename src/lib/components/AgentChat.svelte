@@ -40,11 +40,9 @@
 	const canSend = $derived(
 		conversation !== null && (phase === 'thinking' || phase === 'listening' || phase === 'speaking')
 	);
-	// Show a lively "composing" indicator whenever we're waiting on the agent's next turn with
-	// nothing yet to read — this fills the silent connect/think gap that otherwise feels slow.
-	const showTyping = $derived(
-		phase === 'connecting' || phase === 'thinking' || (phase === 'speaking' && messages.length === 0)
-	);
+	// The chat "typing" bubble is the single loading indicator: shown while we connect and wait
+	// for the tutor's first/next turn. This fills the silent gap that otherwise feels slow.
+	const showTyping = $derived(phase === 'connecting' || phase === 'thinking');
 
 	function sendText() {
 		const text = draft.trim();
@@ -216,10 +214,8 @@
 	}
 </script>
 
-{#snippet dots(small: boolean)}
-	<span class="typing" class:typing--sm={small} aria-hidden="true">
-		<i></i><i></i><i></i>
-	</span>
+{#snippet dots()}
+	<span class="typing" aria-hidden="true"><i></i><i></i><i></i></span>
 {/snippet}
 
 {#if open}
@@ -239,13 +235,10 @@
 				<button class="close-btn" onclick={close} aria-label={$t('common.close')}>×</button>
 			</div>
 
+			<!-- Connecting/thinking show no status text: the chat "typing" bubble below is the single
+			     loading indicator. The status row covers the turn-taking states only. -->
 			<div class="status" role="status" aria-live="polite">
-				{#if phase === 'connecting' || phase === 'thinking'}
-					<!-- Connecting and waiting-for-first-reply are one wait to the user: show a single
-					     continuous "preparing" state rather than flipping through two messages. -->
-					{@render dots(true)}
-					<span>{$t('agent.status.thinking')}</span>
-				{:else if phase === 'listening'}
+				{#if phase === 'listening'}
 					<span class="dot dot--live"></span>
 					<span>{$t('agent.status.listening')}</span>
 				{:else if phase === 'speaking'}
@@ -272,9 +265,10 @@
 				{#if showTyping}
 					<div class="bubble typing-bubble" in:fade={{ duration: 150 }} out:fade={{ duration: 120 }}>
 						<span class="who">{$t('agent.agent')}</span>
-						{@render dots(false)}
+						{@render dots()}
+						<span class="visually-hidden">{$t('agent.status.thinking')}</span>
 					</div>
-				{:else if messages.length === 0 && phase !== 'error'}
+				{:else if messages.length === 0 && phase !== 'speaking' && phase !== 'error'}
 					<p class="hint" in:fade={{ duration: 150 }}>
 						{answerRevealed ? $t('agent.hint') : $t('agent.preRevealHint')}
 					</p>
@@ -354,8 +348,6 @@
 		background: var(--primary);
 		animation: typing-bounce 1.2s ease-in-out infinite;
 	}
-	.typing--sm { height: 0.6rem; gap: 0.2rem; }
-	.typing--sm i { width: 0.34rem; height: 0.34rem; background: currentColor; }
 	.typing i:nth-child(2) { animation-delay: 0.18s; }
 	.typing i:nth-child(3) { animation-delay: 0.36s; }
 	@keyframes typing-bounce {
@@ -405,6 +397,11 @@
 	}
 	.bubble.user { background: var(--surface-elevated, var(--surface-2)); }
 	.typing-bubble { align-self: flex-start; flex-direction: column; gap: 0.3rem; }
+	.visually-hidden {
+		position: absolute; width: 1px; height: 1px;
+		padding: 0; margin: -1px; overflow: hidden;
+		clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+	}
 	.who { font-size: 0.7rem; color: var(--text-subtle); text-transform: uppercase; letter-spacing: 0.05em; }
 	.text { color: var(--text); overflow-wrap: anywhere; }
 	.hint { color: var(--text-subtle); font-size: 0.85rem; margin: 0; text-align: center; padding: 1rem; }
