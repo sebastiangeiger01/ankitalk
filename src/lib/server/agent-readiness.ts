@@ -12,6 +12,7 @@ export type AgentReadinessIssue =
 	| 'agent_not_found'
 	| 'invalid_api_key'
 	| 'insufficient_permissions'
+	| 'agent_session_unavailable'
 	| 'mcp_server_not_found'
 	| 'mcp_auth_failed'
 	| 'mcp_not_assigned'
@@ -21,7 +22,7 @@ export type AgentReadinessIssue =
 export interface AgentReadiness {
 	ready: boolean;
 	issues: AgentReadinessIssue[];
-	agent: { configured: boolean; reachable: boolean };
+	agent: { configured: boolean; reachable: boolean; session_available: boolean };
 	mcp: {
 		server_found: boolean;
 		authenticated: boolean;
@@ -76,7 +77,7 @@ function emptyReadiness(issue: AgentReadinessIssue, configured: boolean): AgentR
 	return {
 		ready: false,
 		issues: [issue],
-		agent: { configured, reachable: false },
+		agent: { configured, reachable: false, session_available: false },
 		mcp: { server_found: false, authenticated: false, assigned_to_agent: false, tools_found: [], missing_tools: [...REQUIRED_STUDY_TOOLS] }
 	};
 }
@@ -108,9 +109,32 @@ export async function checkAgentReadiness(
 	const result: AgentReadiness = {
 		ready: false,
 		issues: [],
-		agent: { configured: true, reachable: true },
+		agent: { configured: true, reachable: true, session_available: false },
 		mcp: { server_found: false, authenticated: false, assigned_to_agent: false, tools_found: [], missing_tools: [...REQUIRED_STUDY_TOOLS] }
 	};
+
+	let sessionResponse: Response;
+	try {
+		const sessionUrl = new URL(`${ELEVENLABS_API}/conversation/get-signed-url`);
+		sessionUrl.searchParams.set('agent_id', agentId);
+		sessionResponse = await fetchFn(sessionUrl, { headers });
+	} catch {
+		result.issues.push('agent_session_unavailable');
+		return result;
+	}
+	if (sessionResponse.status === 401) result.issues.push('invalid_api_key');
+	else if (sessionResponse.status === 403) result.issues.push('insufficient_permissions');
+	else if (sessionResponse.status === 404 || sessionResponse.status === 400) result.issues.push('agent_not_found');
+	else if (!sessionResponse.ok) result.issues.push('agent_session_unavailable');
+	if (!sessionResponse.ok) return result;
+	const sessionBody = await jsonBody(sessionResponse);
+	result.agent.session_available = Boolean(
+		sessionBody && typeof sessionBody === 'object' && typeof (sessionBody as Record<string, unknown>).signed_url === 'string'
+	);
+	if (!result.agent.session_available) {
+		result.issues.push('agent_session_unavailable');
+		return result;
+	}
 
 	let listResponse: Response;
 	try {

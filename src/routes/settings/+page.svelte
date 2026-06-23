@@ -76,15 +76,16 @@
 	 * below the figure.
 	 */
 	let agentUsage = $state<{ month_seconds: number; month_cost_usd: number } | null>(null);
-	type AgentReadinessIssue = 'agent_not_configured' | 'agent_not_found' | 'invalid_api_key' | 'insufficient_permissions' | 'mcp_server_not_found' | 'mcp_auth_failed' | 'mcp_not_assigned' | 'mcp_tools_missing' | 'elevenlabs_unavailable';
+	type AgentReadinessIssue = 'agent_not_configured' | 'agent_not_found' | 'invalid_api_key' | 'insufficient_permissions' | 'agent_session_unavailable' | 'mcp_server_not_found' | 'mcp_auth_failed' | 'mcp_not_assigned' | 'mcp_tools_missing' | 'elevenlabs_unavailable';
 	interface AgentReadiness {
 		ready: boolean;
 		issues: AgentReadinessIssue[];
-		agent: { configured: boolean; reachable: boolean };
+		agent: { configured: boolean; reachable: boolean; session_available: boolean };
 		mcp: { server_found: boolean; authenticated: boolean; assigned_to_agent: boolean; tools_found: string[]; missing_tools: string[] };
 	}
 	let agentReadiness = $state<AgentReadiness | null>(null);
 	let checkingAgentReadiness = $state(false);
+	let loadingAgentConfiguration = $state(true);
 
 	async function checkAgentSetup() {
 		if (checkingAgentReadiness) return;
@@ -101,6 +102,23 @@
 
 	function readinessIssueText(issue: AgentReadinessIssue): string {
 		return $t(`settings.agent.readiness.issues.${issue}`);
+	}
+
+	type ElevenLabsCapability = 'speech_to_text' | 'text_to_speech' | 'voices_read' | 'user_read';
+	const elevenLabsCapabilityKeys: Record<ElevenLabsCapability, string> = {
+		speech_to_text: 'settings.apiKeys.elevenlabsPerms.stt',
+		text_to_speech: 'settings.apiKeys.elevenlabsPerms.tts',
+		voices_read: 'settings.apiKeys.elevenlabsPerms.voices',
+		user_read: 'settings.apiKeys.elevenlabsPerms.user'
+	};
+
+	function elevenLabsPermissionError(capability: unknown): string {
+		if (typeof capability !== 'string' || !(capability in elevenLabsCapabilityKeys)) {
+			return $t('settings.apiKeys.elevenlabsPermissions');
+		}
+		return $t('settings.apiKeys.elevenlabsPermissionMissing', {
+			permission: $t(elevenLabsCapabilityKeys[capability as ElevenLabsCapability])
+		});
 	}
 
 	// MCP token management. Plaintext tokens are only available at creation time; after
@@ -210,6 +228,7 @@
 		} catch {
 			// defaults stay active
 		}
+		loadingAgentConfiguration = false;
 		if (keyStatus.elevenlabs && voiceSettings.elevenlabs_agent_id) void checkAgentSetup();
 
 		loadingUsage = true;
@@ -310,13 +329,16 @@
 				messages[service] = { text: $t('settings.apiKeys.saved'), ok: true };
 				if (service === 'elevenlabs' && voiceSettings.elevenlabs_agent_id) void checkAgentSetup();
 			} else {
+				const errorBody = await res.json().catch(() => null) as { missing_permission?: unknown } | null;
+				if (res.status === 403 && service === 'elevenlabs') {
+					messages[service] = { text: elevenLabsPermissionError(errorBody?.missing_permission), ok: false };
+					return;
+				}
 				const errKey = res.status === 429
 					? 'settings.apiKeys.rateLimited'
 					: res.status === 403 && service === 'deepgram'
 						? 'settings.apiKeys.deepgramPermissions'
-						: res.status === 403 && service === 'elevenlabs'
-							? 'settings.apiKeys.elevenlabsPermissions'
-							: 'settings.apiKeys.invalid';
+						: 'settings.apiKeys.invalid';
 				messages[service] = { text: $t(errKey), ok: false };
 			}
 		} catch {
@@ -542,6 +564,7 @@
 								<ul class="perm-list">
 									<li>{$t('settings.apiKeys.elevenlabsPerms.tts')}</li>
 									<li>{$t('settings.apiKeys.elevenlabsPerms.stt')}</li>
+									<li>{$t('settings.apiKeys.elevenlabsPerms.agents')}</li>
 									<li>{$t('settings.apiKeys.elevenlabsPerms.voices')}</li>
 									<li>{$t('settings.apiKeys.elevenlabsPerms.user')}</li>
 								</ul>
@@ -655,7 +678,9 @@
 	<section class="section">
 		<h2>
 			{$t('settings.agent.title')}
-			{#if agentReadiness?.ready}
+			{#if loadingAgentConfiguration || checkingAgentReadiness}
+				<span class="badge badge--checking">{$t('settings.agent.readiness.checking')}</span>
+			{:else if agentReadiness?.ready}
 				<span class="badge badge--configured">{$t('settings.apiKeys.configured')}</span>
 			{:else}
 				<span class="badge badge--not-configured">{$t('settings.apiKeys.notConfigured')}</span>
@@ -703,6 +728,7 @@
 			{#if agentReadiness}
 				<ul class="agent-readiness-list">
 					<li class:ok={agentReadiness.agent.reachable}>{agentReadiness.agent.reachable ? '✓' : '○'} {$t('settings.agent.readiness.agent')}</li>
+					<li class:ok={agentReadiness.agent.session_available}>{agentReadiness.agent.session_available ? '✓' : '○'} {$t('settings.agent.readiness.session')}</li>
 					<li class:ok={agentReadiness.mcp.server_found}>{agentReadiness.mcp.server_found ? '✓' : '○'} {$t('settings.agent.readiness.server')}</li>
 					<li class:ok={agentReadiness.mcp.authenticated}>{agentReadiness.mcp.authenticated ? '✓' : '○'} {$t('settings.agent.readiness.auth')}</li>
 					<li class:ok={agentReadiness.mcp.assigned_to_agent}>{agentReadiness.mcp.assigned_to_agent ? '✓' : '○'} {$t('settings.agent.readiness.assignment')}</li>
@@ -1129,6 +1155,12 @@
 		background: var(--surface);
 		color: #6a6a8a;
 		border: 1px solid var(--border);
+	}
+
+	.badge--checking {
+		background: color-mix(in srgb, var(--primary) 14%, var(--surface));
+		color: var(--text-muted);
+		border: 1px solid color-mix(in srgb, var(--primary) 35%, var(--border));
 	}
 
 	.action-btn {
