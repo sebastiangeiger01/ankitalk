@@ -85,6 +85,7 @@
 	}
 	let agentReadiness = $state<AgentReadiness | null>(null);
 	let checkingAgentReadiness = $state(false);
+	let loadingAgentConfiguration = $state(true);
 
 	async function checkAgentSetup() {
 		if (checkingAgentReadiness) return;
@@ -101,6 +102,23 @@
 
 	function readinessIssueText(issue: AgentReadinessIssue): string {
 		return $t(`settings.agent.readiness.issues.${issue}`);
+	}
+
+	type ElevenLabsCapability = 'speech_to_text' | 'text_to_speech' | 'voices_read' | 'user_read';
+	const elevenLabsCapabilityKeys: Record<ElevenLabsCapability, string> = {
+		speech_to_text: 'settings.apiKeys.elevenlabsPerms.stt',
+		text_to_speech: 'settings.apiKeys.elevenlabsPerms.tts',
+		voices_read: 'settings.apiKeys.elevenlabsPerms.voices',
+		user_read: 'settings.apiKeys.elevenlabsPerms.user'
+	};
+
+	function elevenLabsPermissionError(capability: unknown): string {
+		if (typeof capability !== 'string' || !(capability in elevenLabsCapabilityKeys)) {
+			return $t('settings.apiKeys.elevenlabsPermissions');
+		}
+		return $t('settings.apiKeys.elevenlabsPermissionMissing', {
+			permission: $t(elevenLabsCapabilityKeys[capability as ElevenLabsCapability])
+		});
 	}
 
 	// MCP token management. Plaintext tokens are only available at creation time; after
@@ -210,6 +228,7 @@
 		} catch {
 			// defaults stay active
 		}
+		loadingAgentConfiguration = false;
 		if (keyStatus.elevenlabs && voiceSettings.elevenlabs_agent_id) void checkAgentSetup();
 
 		loadingUsage = true;
@@ -310,13 +329,16 @@
 				messages[service] = { text: $t('settings.apiKeys.saved'), ok: true };
 				if (service === 'elevenlabs' && voiceSettings.elevenlabs_agent_id) void checkAgentSetup();
 			} else {
+				const errorBody = await res.json().catch(() => null) as { missing_permission?: unknown } | null;
+				if (res.status === 403 && service === 'elevenlabs') {
+					messages[service] = { text: elevenLabsPermissionError(errorBody?.missing_permission), ok: false };
+					return;
+				}
 				const errKey = res.status === 429
 					? 'settings.apiKeys.rateLimited'
 					: res.status === 403 && service === 'deepgram'
 						? 'settings.apiKeys.deepgramPermissions'
-						: res.status === 403 && service === 'elevenlabs'
-							? 'settings.apiKeys.elevenlabsPermissions'
-							: 'settings.apiKeys.invalid';
+						: 'settings.apiKeys.invalid';
 				messages[service] = { text: $t(errKey), ok: false };
 			}
 		} catch {
@@ -656,7 +678,9 @@
 	<section class="section">
 		<h2>
 			{$t('settings.agent.title')}
-			{#if agentReadiness?.ready}
+			{#if loadingAgentConfiguration || checkingAgentReadiness}
+				<span class="badge badge--checking">{$t('settings.agent.readiness.checking')}</span>
+			{:else if agentReadiness?.ready}
 				<span class="badge badge--configured">{$t('settings.apiKeys.configured')}</span>
 			{:else}
 				<span class="badge badge--not-configured">{$t('settings.apiKeys.notConfigured')}</span>
@@ -1131,6 +1155,12 @@
 		background: var(--surface);
 		color: #6a6a8a;
 		border: 1px solid var(--border);
+	}
+
+	.badge--checking {
+		background: color-mix(in srgb, var(--primary) 14%, var(--surface));
+		color: var(--text-muted);
+		border: 1px solid color-mix(in srgb, var(--primary) 35%, var(--border));
 	}
 
 	.action-btn {

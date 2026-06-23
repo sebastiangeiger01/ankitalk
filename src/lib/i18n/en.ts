@@ -247,6 +247,7 @@ export const en: Record<string, string> = {
 	'settings.apiKeys.invalid': 'Invalid API key — please check and try again',
 	'settings.apiKeys.rateLimited': 'Provider rate limit reached — please wait and try again',
 	'settings.apiKeys.elevenlabsPermissions': 'The key is missing a required permission. Enable Text to Speech, Speech to Text, Voices Read, User Read, and ElevenAgents Read.',
+	'settings.apiKeys.elevenlabsPermissionMissing': 'Missing required permission: {permission}',
 	'settings.apiKeys.elevenlabsPerms.title': 'Required key permissions',
 	'settings.apiKeys.elevenlabsPerms.intro': 'When creating a scoped key, enable these so every feature works (or use an unrestricted key):',
 	'settings.apiKeys.elevenlabsPerms.tts': 'Text to Speech — reads cards aloud',

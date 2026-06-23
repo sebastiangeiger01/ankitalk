@@ -2,7 +2,7 @@ import { error, json } from '@sveltejs/kit';
 import { encryptApiKey } from '$lib/server/crypto';
 import { getUserApiKeyStatus } from '$lib/server/user-keys';
 import { getDb } from '$lib/server/db';
-import { validateElevenLabsKey } from '$lib/server/api-key-validation';
+import { validateElevenLabsKey, type ElevenLabsCapability } from '$lib/server/api-key-validation';
 import type { RequestHandler } from './$types';
 import type { ServiceName } from '$lib/server/user-keys';
 
@@ -25,7 +25,7 @@ function validateKeyFormat(service: ServiceName, key: string): boolean {
 	}
 }
 
-async function testApiKey(service: ServiceName, key: string): Promise<void> {
+async function testApiKey(service: ServiceName, key: string): Promise<ElevenLabsCapability | null> {
 	let response: Response;
 
 	try {
@@ -44,7 +44,8 @@ async function testApiKey(service: ServiceName, key: string): Promise<void> {
 			});
 		} else if (service === 'elevenlabs') {
 			const result = await validateElevenLabsKey(key);
-			if (result.ok) return;
+			if (result.ok) return null;
+			if (result.status === 403) return result.capability;
 			response = new Response(null, { status: result.status });
 		} else {
 			// anthropic
@@ -70,7 +71,7 @@ async function testApiKey(service: ServiceName, key: string): Promise<void> {
 		}
 	}
 
-	if (response.ok) return;
+	if (response.ok) return null;
 
 	switch (response.status) {
 		case 401:
@@ -113,7 +114,13 @@ export const PUT: RequestHandler = async ({ request, platform, locals }) => {
 		throw error(400, `Invalid key format for ${service}`);
 	}
 
-	await testApiKey(service, trimmedKey);
+	const missingPermission = await testApiKey(service, trimmedKey);
+	if (missingPermission) {
+		return json(
+			{ error: 'insufficient_permissions', missing_permission: missingPermission },
+			{ status: 403 }
+		);
+	}
 
 	const encryptionKey = platform?.env.ENCRYPTION_KEY;
 	if (!encryptionKey) throw error(500, 'Encryption key not configured');

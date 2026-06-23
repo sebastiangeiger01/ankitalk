@@ -247,6 +247,7 @@ export const de: Record<string, string> = {
 	'settings.apiKeys.invalid': 'Ungültiger API-Schlüssel — bitte überprüfen und erneut versuchen',
 	'settings.apiKeys.rateLimited': 'Anbieter-Limit erreicht — bitte warte kurz und versuche es erneut',
 	'settings.apiKeys.elevenlabsPermissions': 'Dem Schlüssel fehlt eine benötigte Berechtigung. Aktiviere Text to Speech, Speech to Text, Voices Lesen, User Lesen und ElevenAgents Lesen.',
+	'settings.apiKeys.elevenlabsPermissionMissing': 'Fehlende benötigte Berechtigung: {permission}',
 	'settings.apiKeys.elevenlabsPerms.title': 'Benötigte Schlüssel-Berechtigungen',
 	'settings.apiKeys.elevenlabsPerms.intro': 'Aktiviere diese beim Erstellen eines eingeschränkten Schlüssels, damit alle Funktionen laufen (oder nutze einen uneingeschränkten Schlüssel):',
 	'settings.apiKeys.elevenlabsPerms.tts': 'Text to Speech — liest Karten vor',
