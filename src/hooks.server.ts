@@ -61,16 +61,14 @@ const UPDATED_AT_TTL_SECONDS = 24 * 60 * 60;
 
 /**
  * SvelteKit calls this for every *unexpected* error anywhere in the request lifecycle —
- * inside `handle`, inside an endpoint, or while streaming a response body. By default it
- * hides the cause behind `{"message":"Internal Error"}`. On staging we want the truth: log
- * the full error+stack (visible via `wrangler tail` / the Pages real-time log) and return the
- * real name+message in the body so the client surfaces it instead of an opaque 500. The
- * distinctive prefix also proves which build is live.
+ * inside `handle`, inside an endpoint, or while streaming a response body. We log the full
+ * error + stack server-side (visible via `wrangler tail` / the Pages real-time log) so the
+ * cause is always recoverable, but return only a generic message to the client — the raw
+ * error text can leak internals, so it stays in the logs.
  */
 export const handleError: HandleServerError = ({ error, event }) => {
-	const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 	console.error(`[handleError] ${event.request.method} ${event.url.pathname}:`, error);
-	return { message: `Server error — ${detail}`.slice(0, 400) };
+	return { message: 'Internal Error' };
 };
 
 export const handle: Handle = async ({ event, resolve }) => {

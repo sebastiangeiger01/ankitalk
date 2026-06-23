@@ -333,32 +333,24 @@
 				if (!getPrepareAudioAhead()) { reviewPrepared = true; return; }
 				const cards = (data as PrefetchedCards).cards;
 				if (!cards?.length) { reviewPrepared = true; return; }
-				// Use the same renderer as the engine so the cached first front is an exact key match.
-				// Start becomes available when that MP3 is ready for synchronous gesture playback.
-				const seen = new Set<string>();
-				const tryPreload = (text: string): Promise<boolean> | null => {
-					if (!text || seen.has(text)) return null;
-					seen.add(text);
-					return preloadTTS(text);
-				};
+				// Preload ONLY the first card's front, rendered with the same sanitizer as the engine
+				// so the cached MP3 is an exact key match for synchronous gesture playback on Start.
+				// The engine preloads everything else lazily during the session (the answer while the
+				// question plays, the next front while the answer plays), so a wider mount-time burst
+				// just hammers /api/tts for audio that may never be reached.
 				let firstFrontPreparation: Promise<boolean> | null = null;
-				const limit = Math.min(3, cards.length);
-				for (let i = 0; i < limit; i++) {
-					try {
-						const card = cards[i];
-						const rendered = renderCard(
-							card.fields as string,
-							card.card_type as string,
-							(card.ordinal as number) ?? 0,
-							(card.front_template as string | null) ?? null,
-							(card.back_template as string | null) ?? null,
-							clientCardSanitizer
-						);
-						const frontPreparation = tryPreload(rendered.front);
-						if (i === 0) firstFrontPreparation = frontPreparation;
-						if (i < 2) tryPreload(rendered.back);
-					} catch { /* ignore parse errors */ }
-				}
+				try {
+					const card = cards[0];
+					const rendered = renderCard(
+						card.fields as string,
+						card.card_type as string,
+						(card.ordinal as number) ?? 0,
+						(card.front_template as string | null) ?? null,
+						(card.back_template as string | null) ?? null,
+						clientCardSanitizer
+					);
+					if (rendered.front) firstFrontPreparation = preloadTTS(rendered.front);
+				} catch { /* ignore parse errors */ }
 				void (firstFrontPreparation ?? Promise.resolve(false)).then(() => {
 					reviewPrepared = true;
 				});
