@@ -240,10 +240,9 @@
 			</div>
 
 			<div class="status" role="status" aria-live="polite">
-				{#if phase === 'connecting'}
-					{@render dots(true)}
-					<span>{$t('agent.status.connecting')}</span>
-				{:else if phase === 'thinking'}
+				{#if phase === 'connecting' || phase === 'thinking'}
+					<!-- Connecting and waiting-for-first-reply are one wait to the user: show a single
+					     continuous "preparing" state rather than flipping through two messages. -->
 					{@render dots(true)}
 					<span>{$t('agent.status.thinking')}</span>
 				{:else if phase === 'listening'}
