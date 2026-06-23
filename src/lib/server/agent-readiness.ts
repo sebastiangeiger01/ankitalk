@@ -169,7 +169,7 @@ export async function checkAgentReadiness(
 			const sessionUrl = new URL(`${ELEVENLABS_API}/conversation/get-signed-url`);
 			sessionUrl.searchParams.set('agent_id', agentId);
 			const sessionResponse = await fetchFn(sessionUrl, { headers });
-			if (sessionResponse.status === 403) addIssue(result, 'insufficient_permissions');
+			if (sessionResponse.status === 401 || sessionResponse.status === 403) addIssue(result, 'insufficient_permissions');
 			else if (sessionResponse.status === 404 || sessionResponse.status === 400) addIssue(result, 'agent_not_found');
 			else if (!sessionResponse.ok) addIssue(result, 'agent_session_unavailable');
 
