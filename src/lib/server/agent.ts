@@ -2,37 +2,37 @@
  * ElevenLabs Conversational AI agent helpers.
  *
  * The user creates one "AnkiTalk Tutor" agent in their own ElevenLabs dashboard and pastes
- * the `agent_…` id into AnkiTalk settings. We mint short-lived signed URLs against it on
- * each session and pass per-conversation context via `dynamic_variables` and
+ * the `agent_…` id into AnkiTalk settings. We mint a short-lived WebRTC conversation token
+ * against it on each session and pass per-conversation context via `dynamic_variables` and
  * `conversation_config_override` — the agent's own configuration in ElevenLabs doesn't
  * need to be tuned because we replace the prompt, voice, and language at conversation start.
  *
- * Docs:
- *  - https://elevenlabs.io/docs/api-reference/conversations/get-signed-url
- *  - https://elevenlabs.io/docs/agents-platform/customization/personalization/dynamic-variables
+ * WebRTC (vs. a signed WebSocket URL) is ElevenLabs' lower-latency path, which matters most
+ * for the first spoken turn of the tutor.
  *
- * The signed URL is valid for 15 minutes from issuance; the conversation itself can run
- * longer once it's been initiated within that window.
+ * Docs:
+ *  - https://elevenlabs.io/docs/api-reference/conversations/get-conversation-token
+ *  - https://elevenlabs.io/docs/agents-platform/customization/personalization/dynamic-variables
  */
 
-const SIGNED_URL_ENDPOINT = 'https://api.elevenlabs.io/v1/convai/conversation/get-signed-url';
+const TOKEN_ENDPOINT = 'https://api.elevenlabs.io/v1/convai/conversation/token';
 
-export type SignedUrlResult =
-	| { signedUrl: string }
+export type ConversationTokenResult =
+	| { token: string }
 	| { error: 'bad_agent' | 'bad_key' | 'rate_limited' | 'upstream' };
 
 /**
- * Fetch a signed WebSocket URL for the given agent. Returns the bare URL on success;
- * surfaces a discriminated error on failure so the route can map it to a sensible 4xx/5xx
- * without leaking provider detail strings.
+ * Fetch a short-lived WebRTC conversation token for the given agent. Returns the bare token
+ * on success; surfaces a discriminated error on failure so the route can map it to a sensible
+ * 4xx/5xx without leaking provider detail strings.
  */
-export async function getSignedAgentUrl(apiKey: string, agentId: string): Promise<SignedUrlResult> {
-	const url = new URL(SIGNED_URL_ENDPOINT);
+export async function getAgentConversationToken(apiKey: string, agentId: string): Promise<ConversationTokenResult> {
+	const url = new URL(TOKEN_ENDPOINT);
 	url.searchParams.set('agent_id', agentId);
 	const res = await fetch(url, { headers: { 'xi-api-key': apiKey } });
 	if (res.ok) {
-		const body = (await res.json().catch(() => null)) as { signed_url?: string } | null;
-		if (body?.signed_url) return { signedUrl: body.signed_url };
+		const body = (await res.json().catch(() => null)) as { token?: string } | null;
+		if (body?.token) return { token: body.token };
 		return { error: 'upstream' };
 	}
 	if (res.status === 401 || res.status === 403) return { error: 'bad_key' };

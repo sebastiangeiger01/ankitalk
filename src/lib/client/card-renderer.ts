@@ -1,17 +1,16 @@
-import { sanitizeAndRewriteCardHtml, sanitizeCardHtml } from '../sanitize';
-import sanitizeHtml from 'sanitize-html';
 import type { NoteField } from '../types';
 
 /**
- * Strip HTML tags and decode entities for TTS.
+ * Card HTML sanitizer, injected so `renderCard` stays isomorphic: the browser passes a
+ * DOMPurify-backed implementation (small, native parsing) and the server passes the
+ * `sanitize-html`-backed one (no DOM required). Both must sanitize the *composed* output —
+ * combining individually-safe fields and templates can still produce dangerous HTML.
  */
-export function stripHtml(html: string): string {
-	return sanitizeHtml(sanitizeCardHtml(html), {
-		allowedTags: [],
-		allowedAttributes: {}
-	})
-		.replace(/\s+/g, ' ')
-		.trim();
+export interface CardHtmlSanitizer {
+	/** Sanitize composed card HTML and rewrite relative media URLs to the media endpoint. */
+	sanitizeAndRewrite(html: string): string;
+	/** Strip all markup to plain text (for TTS). */
+	toText(html: string): string;
 }
 
 /**
@@ -42,19 +41,19 @@ function fieldMap(fields: NoteField[]): Map<string, string> {
 	return new Map(fields.map((field) => [field.name, field.value]));
 }
 
-function fieldIsFilled(fields: Map<string, string>, name: string): boolean {
-	return stripHtml(fields.get(name) ?? '').trim().length > 0;
+function fieldIsFilled(fields: Map<string, string>, name: string, sanitizer: CardHtmlSanitizer): boolean {
+	return sanitizer.toText(fields.get(name) ?? '').trim().length > 0;
 }
 
-function applyConditionals(template: string, fields: Map<string, string>): string {
+function applyConditionals(template: string, fields: Map<string, string>, sanitizer: CardHtmlSanitizer): string {
 	let output = template;
 	for (let i = 0; i < 10; i++) {
 		const next = output
 			.replace(/\{\{#([^}]+)\}\}([\s\S]*?)\{\{\/\1\}\}/g, (_match, name, body) =>
-				fieldIsFilled(fields, String(name).trim()) ? body : ''
+				fieldIsFilled(fields, String(name).trim(), sanitizer) ? body : ''
 			)
 			.replace(/\{\{\^([^}]+)\}\}([\s\S]*?)\{\{\/\1\}\}/g, (_match, name, body) =>
-				fieldIsFilled(fields, String(name).trim()) ? '' : body
+				fieldIsFilled(fields, String(name).trim(), sanitizer) ? '' : body
 			);
 		if (next === output) break;
 		output = next;
@@ -67,10 +66,11 @@ function renderTemplate(
 	fields: NoteField[],
 	frontSide: string,
 	clozeNumber: number,
-	showAnswer: boolean
+	showAnswer: boolean,
+	sanitizer: CardHtmlSanitizer
 ): string {
 	const fieldsByName = fieldMap(fields);
-	let output = applyConditionals(template, fieldsByName);
+	let output = applyConditionals(template, fieldsByName, sanitizer);
 
 	output = output.replace(/\{\{FrontSide\}\}/g, frontSide);
 	output = output.replace(/\{\{type:[^}]+\}\}/g, '');
@@ -80,7 +80,7 @@ function renderTemplate(
 	});
 	output = output.replace(/\{\{text:([^}]+)\}\}/g, (_match, rawName) => {
 		const name = String(rawName).trim();
-		return stripHtml(fieldsByName.get(name) ?? '');
+		return sanitizer.toText(fieldsByName.get(name) ?? '');
 	});
 	output = output.replace(/\{\{([^}]+)\}\}/g, (_match, rawName) => {
 		const name = String(rawName).trim();
@@ -92,13 +92,15 @@ function renderTemplate(
 
 /**
  * Parse card fields and extract front/back as both HTML (display) and plain text (TTS).
+ * `sanitizer` is injected so this stays usable on both the client and the server.
  */
 export function renderCard(
 	fieldsJson: string,
 	cardType: string,
-	ordinal = 0,
-	frontTemplate?: string | null,
-	backTemplate?: string | null
+	ordinal: number,
+	frontTemplate: string | null | undefined,
+	backTemplate: string | null | undefined,
+	sanitizer: CardHtmlSanitizer
 ): { front: string; back: string; frontHtml: string; backHtml: string } {
 	let fields: NoteField[];
 	try {
@@ -117,20 +119,20 @@ export function renderCard(
 
 	if (frontTemplate || backTemplate) {
 		const rawFront = frontTemplate
-			? renderTemplate(frontTemplate, fields, '', clozeNumber, false)
+			? renderTemplate(frontTemplate, fields, '', clozeNumber, false, sanitizer)
 			: isCloze
 				? processClozeHtml(firstValue, false, clozeNumber)
 				: fields[0]?.value ?? '';
-		const frontHtml = sanitizeAndRewriteCardHtml(rawFront);
+		const frontHtml = sanitizer.sanitizeAndRewrite(rawFront);
 		const rawBack = backTemplate
-			? renderTemplate(backTemplate, fields, frontHtml, clozeNumber, true)
+			? renderTemplate(backTemplate, fields, frontHtml, clozeNumber, true, sanitizer)
 			: isCloze
 				? processClozeHtml(firstValue, true, clozeNumber)
 				: fields[1]?.value ?? fields[0]?.value ?? '';
-		const backHtml = sanitizeAndRewriteCardHtml(rawBack);
+		const backHtml = sanitizer.sanitizeAndRewrite(rawBack);
 		return {
-			front: stripHtml(frontHtml),
-			back: stripHtml(backHtml),
+			front: sanitizer.toText(frontHtml),
+			back: sanitizer.toText(backHtml),
 			frontHtml,
 			backHtml
 		};
@@ -138,19 +140,19 @@ export function renderCard(
 
 	if (isCloze) {
 		return {
-			front: stripHtml(processCloze(firstValue, false, clozeNumber)),
-			back: stripHtml(processCloze(firstValue, true, clozeNumber)),
-			frontHtml: sanitizeAndRewriteCardHtml(processClozeHtml(firstValue, false, clozeNumber)),
-			backHtml: sanitizeAndRewriteCardHtml(processClozeHtml(firstValue, true, clozeNumber))
+			front: sanitizer.toText(processCloze(firstValue, false, clozeNumber)),
+			back: sanitizer.toText(processCloze(firstValue, true, clozeNumber)),
+			frontHtml: sanitizer.sanitizeAndRewrite(processClozeHtml(firstValue, false, clozeNumber)),
+			backHtml: sanitizer.sanitizeAndRewrite(processClozeHtml(firstValue, true, clozeNumber))
 		};
 	}
 
 	const rawFront = fields[0]?.value ?? '';
 	const rawBack = fields[1]?.value ?? rawFront;
 	return {
-		front: stripHtml(rawFront),
-		back: stripHtml(rawBack),
-		frontHtml: sanitizeAndRewriteCardHtml(rawFront),
-		backHtml: sanitizeAndRewriteCardHtml(rawBack)
+		front: sanitizer.toText(rawFront),
+		back: sanitizer.toText(rawBack),
+		frontHtml: sanitizer.sanitizeAndRewrite(rawFront),
+		backHtml: sanitizer.sanitizeAndRewrite(rawBack)
 	};
 }

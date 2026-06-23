@@ -6,7 +6,7 @@
 	import { getPrepareAudioAhead } from '$lib/client/preferences';
 	import { locale, t } from '$lib/i18n';
 	import { focusTrap } from '$lib/actions/focusTrap';
-	import { sanitizeCardHtml } from '$lib/sanitize';
+	import { clientCardSanitizer } from '$lib/client/card-sanitize';
 	import type { ReviewPhase } from '$lib/types';
 	import { sttLanguageForVoiceCommandLanguage, type UserVoiceSettings } from '$lib/voice';
 	import AgentChat from '$lib/components/AgentChat.svelte';
@@ -335,9 +335,7 @@
 				// The TTS endpoint serves from Cloudflare edge cache after the first synthesis.
 				const seen = new Set<string>();
 				const tryPreload = (rawHtml: string) => {
-					const div = document.createElement('div');
-					div.innerHTML = sanitizeCardHtml(rawHtml);
-					const plain = (div.textContent ?? '').trim();
+					const plain = clientCardSanitizer.toText(rawHtml);
 					if (plain && !seen.has(plain)) { seen.add(plain); preloadTTS(plain); }
 				};
 				const limit = Math.min(3, cards.length);

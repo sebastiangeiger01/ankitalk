@@ -2,7 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { getDb } from '$lib/server/db';
 import { getUserApiKey } from '$lib/server/user-keys';
 import { getUserVoiceSettings } from '$lib/server/voice-settings';
-import { getSignedAgentUrl, getTutorAnswerContext, sanitizeAgentContext } from '$lib/server/agent';
+import { getAgentConversationToken, getTutorAnswerContext, sanitizeAgentContext } from '$lib/server/agent';
 import { enforceRateLimit, RATE_LIMITS } from '$lib/server/rate-limit';
 import { normalizeLocale } from '$lib/server/validate';
 import { getCardContext } from '$lib/server/study-context';
@@ -75,7 +75,7 @@ interface SessionRequest {
 }
 
 interface SessionResponse {
-	signedUrl: string;
+	conversationToken: string;
 	dynamicVariables: Record<string, string | number | boolean>;
 	systemPrompt: string;
 	voiceId: string;
@@ -107,8 +107,17 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 	const answerRevealed = body.answer_revealed === true;
 
 	const db = getDb(platform!);
-	const context = await getCardContext(db, userId, cardId);
+	// These three reads are independent — run them concurrently so the session handshake
+	// isn't three sequential round trips before we even mint the signed URL.
+	const [context, settings, apiKey] = await Promise.all([
+		getCardContext(db, userId, cardId),
+		getUserVoiceSettings(db, userId),
+		getUserApiKey(db, userId, 'elevenlabs', platform!.env.ENCRYPTION_KEY)
+	]);
 	if (!context) return json({ error: 'card_not_found' }, { status: 404 });
+	if (!settings.elevenlabs_agent_id) return json({ error: 'no_agent' }, { status: 400 });
+	if (!apiKey) return json({ error: 'no_key' }, { status: 400 });
+
 	const current = context.card;
 	const front = sanitizeAgentContext(current.question, MAX_CONTEXT_FIELD);
 	const answerContext = getTutorAnswerContext(current.answer, answerRevealed, MAX_CONTEXT_FIELD);
@@ -119,15 +128,8 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 	const cardReps = clampInt(current.reps, 0, 100_000);
 	const cardLapses = clampInt(current.lapses, 0, 100_000);
 	const recentRatings = context.recent_reviews.map((review) => review.rating).join(', ') || 'none';
-	const settings = await getUserVoiceSettings(db, userId);
-	if (!settings.elevenlabs_agent_id) {
-		return json({ error: 'no_agent' }, { status: 400 });
-	}
 
-	const apiKey = await getUserApiKey(db, userId, 'elevenlabs', platform!.env.ENCRYPTION_KEY);
-	if (!apiKey) return json({ error: 'no_key' }, { status: 400 });
-
-	const result = await getSignedAgentUrl(apiKey, settings.elevenlabs_agent_id);
+	const result = await getAgentConversationToken(apiKey, settings.elevenlabs_agent_id);
 	if ('error' in result) {
 		const map: Record<string, number> = { bad_agent: 400, bad_key: 400, rate_limited: 429, upstream: 502 };
 		return json({ error: result.error }, { status: map[result.error] ?? 502 });
@@ -137,7 +139,7 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 	const systemPrompt = language === 'de' ? PROMPT_TEMPLATE_DE : PROMPT_TEMPLATE_EN;
 
 	const payload: SessionResponse = {
-		signedUrl: result.signedUrl,
+		conversationToken: result.token,
 		// Plain strings only — the agent platform supports string/number/integer/boolean and
 		// we always stringify here so the system-prompt template doesn't render "[object …]"
 		// if a deck name happens to be numeric.

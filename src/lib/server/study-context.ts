@@ -1,4 +1,5 @@
 import { renderCard } from '$lib/client/card-renderer';
+import { serverCardSanitizer } from './card-sanitize';
 
 const MAX_TEXT_CHARS = 2_000;
 const MAX_CONTEXT_FIELDS = 20;
@@ -94,7 +95,8 @@ export function renderStudyCard(row: CardRow): RenderedStudyCard {
 		row.card_type,
 		row.ordinal,
 		row.front_template,
-		row.back_template
+		row.back_template,
+		serverCardSanitizer
 	);
 	return {
 		card_id: row.card_id,

@@ -1,4 +1,9 @@
 import sanitizeHtml from 'sanitize-html';
+import { byteLength, isSafeMediaFilename, mediaFilenameSafetyError, rewriteMediaUrls } from './media-url';
+
+// Re-export the pure media helpers so existing `$lib/sanitize` importers keep working while the
+// implementations live in the sanitizer-free `$lib/media-url` module.
+export { byteLength, isSafeMediaFilename, mediaFilenameSafetyError, rewriteMediaUrls };
 
 export const IMPORT_LIMITS = {
 	maxApkgBytes: 100 * 1024 * 1024,
@@ -15,15 +20,10 @@ export const IMPORT_LIMITS = {
 	maxFilenameBytes: 240
 } as const;
 
-const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
 const colorPattern =
 	/^(#[0-9a-f]{3,8}|rgb\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)|rgba\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*(0|1|0?\.\d+)\s*\)|[a-z]+)$/i;
-
-export function byteLength(value: string): number {
-	return textEncoder.encode(value).byteLength;
-}
 
 export function assertMaxBytes(value: string, maxBytes: number, label: string): void {
 	if (byteLength(value) > maxBytes) {
@@ -37,39 +37,6 @@ export function sanitizePlainText(value: unknown, maxBytes = IMPORT_LIMITS.maxFi
 		.trim();
 	assertMaxBytes(text, maxBytes, 'Text');
 	return text;
-}
-
-export function mediaFilenameSafetyError(filename: string): string | null {
-	if (!filename) return 'Media filename is empty';
-	if (filename !== filename.trim()) {
-		return `Media filename has leading or trailing whitespace: ${filename}`;
-	}
-	if (byteLength(filename) > IMPORT_LIMITS.maxFilenameBytes) {
-		return `Media filename is too long: ${filename}`;
-	}
-	if (/[\u0000-\u001f\u007f]/.test(filename)) {
-		return `Media filename contains control characters: ${filename}`;
-	}
-	if (filename.startsWith('.') || filename.endsWith('.')) {
-		return `Media filename must not start or end with a dot: ${filename}`;
-	}
-	if (filename.includes('..')) {
-		return `Media filename contains path traversal (".."): ${filename}`;
-	}
-	if (filename.includes('/') || filename.includes('\\')) {
-		return `Media filename must not include folders or path separators: ${filename}`;
-	}
-	if (filename.includes(':')) {
-		return `Media filename must not include drive or URL separators (:): ${filename}`;
-	}
-	if (/[<>|?*"`]/g.test(filename)) {
-		return `Media filename contains unsupported filesystem characters: ${filename}`;
-	}
-	return null;
-}
-
-export function isSafeMediaFilename(filename: string): boolean {
-	return mediaFilenameSafetyError(filename) === null;
 }
 
 export function mediaContentTypeForFilename(filename: string): string | null {
@@ -641,12 +608,6 @@ export function sanitizeMediaBytes(filename: string, bytes: Uint8Array): Blob {
 	return new Blob([sanitizeSvgMarkup(textDecoder.decode(bytes))], { type: contentType });
 }
 
-function normalizeMediaFilename(filename: string): string | null {
-	const trimmed = filename.trim().replace(/^\.\//, '');
-	if (!isSafeMediaFilename(trimmed)) return null;
-	return trimmed;
-}
-
 export function sanitizeCardHtml(value: unknown): string {
 	const html = String(value ?? '');
 	assertMaxBytes(html, IMPORT_LIMITS.maxFieldBytes, 'Card field');
@@ -738,17 +699,6 @@ export function sanitizeCardHtml(value: unknown): string {
 			a: sanitizeHtml.simpleTransform('a', { rel: 'noopener noreferrer' }, true)
 		}
 	}).trim();
-}
-
-export function rewriteMediaUrls(html: string): string {
-	return html.replace(
-		/(<(?:img|audio|source)\b[^>]*\bsrc\s*=\s*["'])(?!https?:\/\/|\/api\/|data:)([^"']+)(["'])/gi,
-		(_match, prefix, filename, suffix) => {
-			const normalized = normalizeMediaFilename(filename);
-			if (!normalized) return `${prefix}${suffix}`;
-			return `${prefix}/api/media/${encodeURIComponent(normalized)}${suffix}`;
-		}
-	);
 }
 
 export function sanitizeAndRewriteCardHtml(value: unknown): string {
