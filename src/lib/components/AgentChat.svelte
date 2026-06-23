@@ -65,6 +65,16 @@
 		}
 	}
 
+	// Half-duplex mic control (see onModeChange). Fire-and-forget; a not-yet-ready or closed
+	// session simply ignores it.
+	function setMicMuted(muted: boolean) {
+		try {
+			void conversation?.setMicMuted(muted);
+		} catch {
+			/* session not live yet — the post-connect mute / next mode change will catch up */
+		}
+	}
+
 	function onInputKey(e: KeyboardEvent) {
 		if (e.key === 'Enter' && !e.shiftKey) {
 			e.preventDefault();
@@ -128,6 +138,9 @@
 				conversationToken: data.conversationToken,
 				connectionType: 'webrtc',
 				dynamicVariables: data.dynamicVariables,
+				// Use the headset mic when one is plugged into an iPhone — it sidesteps speaker
+				// echo entirely. The half-duplex muting below covers the loudspeaker case.
+				preferHeadphonesForIosDevices: true,
 				overrides: {
 					agent: { prompt: { prompt: data.systemPrompt }, language: data.language, firstMessage: '' },
 					tts: { voiceId: data.voiceId }
@@ -171,6 +184,12 @@
 				onModeChange: ({ mode }: { mode: Mode }) => {
 					// `mode` is "speaking" while the agent is talking, "listening" while it
 					// waits for user input. Surface it so the user knows whose turn it is.
+					// Half-duplex: on a phone using the loudspeaker the mic hears the agent's own
+					// voice and treats it as the student speaking (the agent "reacts to its echo").
+					// Muting the input while the agent talks, and unmuting when it's the student's
+					// turn, stops that feedback loop. Trade-off: no voice barge-in mid-answer — the
+					// text composer is the way to interject.
+					setMicMuted(mode === 'speaking');
 					if (phase === 'connecting' || phase === 'ended' || phase === 'error') return;
 					if (mode === 'speaking') { phase = 'speaking'; return; }
 					// Stay in "thinking" until the kicked-off first turn actually starts, so the
@@ -183,6 +202,10 @@
 					phase = 'error';
 				}
 			});
+
+			// The agent speaks first (the kickoff turn), so start muted — onModeChange may not have
+			// fired yet when that audio begins, and we don't want it hearing its own opening line.
+			if (kickoffMessage) setMicMuted(true);
 
 			// Trigger the agent's first turn immediately so it leads with a hint/explanation
 			// rather than waiting on the now-empty greeting. Non-fatal if it fails — the
