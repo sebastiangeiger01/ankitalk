@@ -91,7 +91,7 @@
 	function showReviewError(message: string) {
 		errorMsg = message;
 		if (errorTimer) clearTimeout(errorTimer);
-		errorTimer = setTimeout(() => { errorMsg = ''; }, 5000);
+		errorTimer = setTimeout(() => { errorMsg = ''; }, 15000);
 	}
 
 	function openTutor() {

@@ -201,7 +201,14 @@ export function createReviewEngine(): ReviewEngine {
 			.then(() => {
 				if (gen === speakGen) playSound('/listen.mp3').catch(() => {});
 			})
-			.catch(() => {})
+			.catch((error: unknown) => {
+				if (gen === speakGen && !destroyed) {
+					emit({
+						type: 'error',
+						message: error instanceof Error ? error.message : 'TTS failed with an unknown error'
+					});
+				}
+			})
 			.finally(() => {
 				if (gen === speakGen) {
 					isSpeaking = false;

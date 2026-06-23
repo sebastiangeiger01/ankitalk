@@ -21,23 +21,41 @@ function cacheKey(text: string, voice?: string, speed?: number): string {
 	return `${text}|${voice ?? ''}|${speed ?? ''}`;
 }
 
+function errorDetail(error: unknown): string {
+	if (error && typeof error === 'object') {
+		const value = error as { name?: unknown; message?: unknown };
+		const name = typeof value.name === 'string' ? value.name : 'Error';
+		const message = typeof value.message === 'string' ? value.message : '';
+		return message ? `${name}: ${message}` : name;
+	}
+	return typeof error === 'string' ? error : 'unknown error';
+}
+
 async function fetchTTSAudio(text: string, voice?: string, speed?: number, signal?: AbortSignal): Promise<Blob> {
 	const params: Record<string, string> = { text };
 	if (voice) params.voice = voice;
 	if (speed) params.speed = String(speed);
 
-	const response = await fetch('/api/tts', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(params),
-		signal
-	});
+	let response: Response;
+	try {
+		response = await fetch('/api/tts', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(params),
+			signal
+		});
+	} catch (error) {
+		if (signal?.aborted) throw error;
+		throw new Error(`TTS request failed: ${errorDetail(error)}`);
+	}
 
 	if (!response.ok) {
-		throw new Error(`TTS failed: ${response.status}`);
+		const detail = (await response.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 180);
+		throw new Error(`TTS HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
 	}
 
 	const audio = await response.blob();
+	if (audio.size === 0) throw new Error('TTS returned an empty audio response');
 	return audio.type ? audio : new Blob([audio], { type: 'audio/mpeg' });
 }
 
@@ -72,7 +90,15 @@ function stopCurrentPlayback(): void {
 	audioElement?.pause();
 }
 
-function playSource(src: string, onPlaybackStart?: () => void, objectUrl?: string): Promise<void> {
+function mediaErrorName(code: number): string {
+	return ({ 1: 'aborted', 2: 'network', 3: 'decode', 4: 'source-not-supported' } as Record<number, string>)[code] ?? 'unknown';
+}
+
+function mediaState(player: HTMLAudioElement): string {
+	return `readyState=${player.readyState}, networkState=${player.networkState}`;
+}
+
+function playSource(src: string, onPlaybackStart?: () => void, objectUrl?: string, sourceInfo?: string): Promise<void> {
 	stopCurrentPlayback();
 	const player = getAudioElement();
 	player.src = src;
@@ -81,8 +107,12 @@ function playSource(src: string, onPlaybackStart?: () => void, objectUrl?: strin
 	return new Promise<void>((resolve, reject) => {
 		let settled = false;
 		let started = false;
+		const timeout = setTimeout(() => {
+			settle(new Error(`TTS playback timed out (${sourceInfo ?? 'unknown source'}; ${mediaState(player)})`));
+		}, 8000);
 
 		const cleanup = () => {
+			clearTimeout(timeout);
 			player.removeEventListener('playing', handlePlaying);
 			player.removeEventListener('ended', handleEnded);
 			player.removeEventListener('error', handleError);
@@ -106,14 +136,16 @@ function playSource(src: string, onPlaybackStart?: () => void, objectUrl?: strin
 			onPlaybackStart?.();
 		};
 		const handleEnded = () => settle();
-		const handleError = () => settle(new Error(`Audio playback failed${player.error ? ` (${player.error.code})` : ''}`));
+		const handleError = () => settle(new Error(
+			`TTS media error: ${player.error ? `${mediaErrorName(player.error.code)} (${player.error.code})` : 'unknown'} (${sourceInfo ?? 'unknown source'}; ${mediaState(player)})`
+		));
 
 		currentPlayback = { stop };
 		player.addEventListener('playing', handlePlaying);
 		player.addEventListener('ended', handleEnded);
 		player.addEventListener('error', handleError);
 		player.play().catch((error: unknown) => {
-			settle(error instanceof Error ? error : new Error('Audio playback failed'));
+			settle(new Error(`TTS play() rejected: ${errorDetail(error)} (${sourceInfo ?? 'unknown source'}; ${mediaState(player)})`));
 		});
 	});
 }
@@ -146,9 +178,13 @@ export async function speak(text: string, voice?: string, speed?: number, onPlay
 
 	if (abort !== currentAbort || abort.signal.aborted) return;
 
+	const mime = audio.type || 'audio/mpeg';
+	const support = getAudioElement().canPlayType(mime);
+	if (!support) throw new Error(`Safari reports unsupported TTS format: ${mime} (${audio.size} bytes)`);
+
 	const objectUrl = URL.createObjectURL(audio);
 	try {
-		await playSource(objectUrl, onPlaybackStart, objectUrl);
+		await playSource(objectUrl, onPlaybackStart, objectUrl, `${mime}, ${audio.size} bytes, canPlayType=${support}`);
 	} finally {
 		if (currentAbort === abort) currentAbort = null;
 	}
