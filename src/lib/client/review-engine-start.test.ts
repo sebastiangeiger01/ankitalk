@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
 const pending = new Promise<void>(() => {});
+const audioMocks = vi.hoisted(() => ({
+	speak: vi.fn(() => Promise.reject(new Error('TTS diagnostic')))
+}));
 
 vi.mock('./audio', () => ({
 	unlockAudio: vi.fn(() => pending),
-	speak: vi.fn(() => Promise.resolve()),
+	speak: audioMocks.speak,
 	stopPlayback: vi.fn(),
 	getLastSpokenText: vi.fn(() => ''),
 	playSound: vi.fn(() => Promise.resolve()),
@@ -39,7 +42,11 @@ describe('review engine startup', () => {
 		const { createReviewEngine } = await import('./review-engine');
 		const engine = createReviewEngine();
 		const events: string[] = [];
-		engine.onEvent((event) => events.push(event.type));
+		const errors: string[] = [];
+		engine.onEvent((event) => {
+			events.push(event.type);
+			if (event.type === 'error') errors.push(event.message);
+		});
 
 		const start = engine.start('deck-1', {
 			prefetchedCards: {
@@ -67,6 +74,8 @@ describe('review engine startup', () => {
 
 		expect(events).toContain('card_change');
 		await start;
+		await Promise.resolve();
+		expect(errors).toContain('TTS diagnostic');
 		engine.destroy();
 	});
 });

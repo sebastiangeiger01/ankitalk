@@ -3,12 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 let audioContextConstructions = 0;
 let audioElementConstructions = 0;
 let lastAudioElement: FakeAudioElement | null = null;
+let rejectNextPlay = false;
 
 class FakeAudioElement {
 	src = '';
 	preload = '';
 	playsInline = false;
 	currentTime = 0;
+	readyState = 4;
+	networkState = 1;
 	error: MediaError | null = null;
 	pauseCalls = 0;
 	playCalls = 0;
@@ -20,11 +23,18 @@ class FakeAudioElement {
 	}
 
 	load() {}
+	canPlayType() {
+		return 'probably';
+	}
 	pause() {
 		this.pauseCalls++;
 	}
 	play() {
 		this.playCalls++;
+		if (rejectNextPlay) {
+			rejectNextPlay = false;
+			return Promise.reject(new DOMException('User gesture required', 'NotAllowedError'));
+		}
 		queueMicrotask(() => {
 			this.dispatch('playing');
 			this.dispatch('ended');
@@ -95,6 +105,7 @@ describe('review audio', () => {
 		audioContextConstructions = 0;
 		audioElementConstructions = 0;
 		lastAudioElement = null;
+		rejectNextPlay = false;
 		vi.stubGlobal('AudioContext', FakeAudioContext);
 		vi.stubGlobal('Audio', FakeAudioElement);
 		vi.stubGlobal('URL', {
@@ -144,5 +155,19 @@ describe('review audio', () => {
 		preloadTTS('first card');
 
 		expect(audioContextConstructions).toBe(0);
+	});
+
+	it('reports Safari play rejections with actionable media diagnostics', async () => {
+		vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1]), {
+			status: 200,
+			headers: { 'Content-Type': 'audio/mpeg' }
+		})));
+		const { preloadTTS, speak } = await import('./audio');
+		expect(await preloadTTS('first card')).toBe(true);
+		rejectNextPlay = true;
+
+		await expect(speak('first card')).rejects.toThrow(
+			'TTS play() rejected: NotAllowedError: User gesture required (audio/mpeg, 1 bytes, canPlayType=probably; readyState=4, networkState=1)'
+		);
 	});
 });
