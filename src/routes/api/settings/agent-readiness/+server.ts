@@ -18,7 +18,7 @@ export const GET: RequestHandler = async ({ url, platform, locals, fetch }) => {
 		const result: AgentReadiness = {
 			ready: false,
 			issues: ['invalid_api_key'],
-			agent: { configured: Boolean(settings.elevenlabs_agent_id), reachable: false },
+			agent: { configured: Boolean(settings.elevenlabs_agent_id), reachable: false, session_available: false },
 			mcp: { server_found: false, authenticated: false, assigned_to_agent: false, tools_found: [], missing_tools: [] }
 		};
 		return json(result, { headers: { 'cache-control': 'no-store' } });

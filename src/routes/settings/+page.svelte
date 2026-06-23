@@ -76,11 +76,11 @@
 	 * below the figure.
 	 */
 	let agentUsage = $state<{ month_seconds: number; month_cost_usd: number } | null>(null);
-	type AgentReadinessIssue = 'agent_not_configured' | 'agent_not_found' | 'invalid_api_key' | 'insufficient_permissions' | 'mcp_server_not_found' | 'mcp_auth_failed' | 'mcp_not_assigned' | 'mcp_tools_missing' | 'elevenlabs_unavailable';
+	type AgentReadinessIssue = 'agent_not_configured' | 'agent_not_found' | 'invalid_api_key' | 'insufficient_permissions' | 'agent_session_unavailable' | 'mcp_server_not_found' | 'mcp_auth_failed' | 'mcp_not_assigned' | 'mcp_tools_missing' | 'elevenlabs_unavailable';
 	interface AgentReadiness {
 		ready: boolean;
 		issues: AgentReadinessIssue[];
-		agent: { configured: boolean; reachable: boolean };
+		agent: { configured: boolean; reachable: boolean; session_available: boolean };
 		mcp: { server_found: boolean; authenticated: boolean; assigned_to_agent: boolean; tools_found: string[]; missing_tools: string[] };
 	}
 	let agentReadiness = $state<AgentReadiness | null>(null);
@@ -704,6 +704,7 @@
 			{#if agentReadiness}
 				<ul class="agent-readiness-list">
 					<li class:ok={agentReadiness.agent.reachable}>{agentReadiness.agent.reachable ? '✓' : '○'} {$t('settings.agent.readiness.agent')}</li>
+					<li class:ok={agentReadiness.agent.session_available}>{agentReadiness.agent.session_available ? '✓' : '○'} {$t('settings.agent.readiness.session')}</li>
 					<li class:ok={agentReadiness.mcp.server_found}>{agentReadiness.mcp.server_found ? '✓' : '○'} {$t('settings.agent.readiness.server')}</li>
 					<li class:ok={agentReadiness.mcp.authenticated}>{agentReadiness.mcp.authenticated ? '✓' : '○'} {$t('settings.agent.readiness.auth')}</li>
 					<li class:ok={agentReadiness.mcp.assigned_to_agent}>{agentReadiness.mcp.assigned_to_agent ? '✓' : '○'} {$t('settings.agent.readiness.assignment')}</li>
