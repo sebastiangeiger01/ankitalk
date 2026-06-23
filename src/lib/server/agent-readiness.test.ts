@@ -12,7 +12,7 @@ const readyAgent = {
 		auth: { enable_auth: true },
 		overrides: {
 			conversation_config_override: {
-				agent: { language: true, prompt: { prompt: true } },
+				agent: { first_message: true, language: true, prompt: { prompt: true } },
 				tts: { voice_id: true }
 			}
 		}
@@ -120,7 +120,7 @@ describe('checkAgentReadiness', () => {
 		const result = await checkAgentReadiness('secret', 'agent-1', 'https://staging.example/api/mcp', fetchFn);
 
 		expect(result.agent.authentication_enabled).toBe(false);
-		expect(result.agent.missing_overrides).toEqual(['prompt', 'language', 'voice_id']);
+		expect(result.agent.missing_overrides).toEqual(['prompt', 'first_message', 'language', 'voice_id']);
 		expect(result.issues).toEqual([
 			'agent_auth_disabled',
 			'agent_overrides_missing',

@@ -28,6 +28,11 @@
 	let messages = $state<{ role: 'user' | 'agent'; text: string }[]>([]);
 	let conversation: ConversationType | null = null;
 	let sessionStartMs = 0;
+	// The agent opens the conversation itself: we suppress the dashboard greeting (firstMessage
+	// override) and inject a hidden intent message so its first spoken turn is a real,
+	// card-specific hint or explanation instead of a generic "what brings you here?" greeting.
+	let kickoffMessage = '';
+	let kickoffShown = false;
 
 	// Auto-start when the modal opens. The browser requires the connect step to be on a
 	// user-gesture stack for mic permission, so we rely on the parent only flipping
@@ -71,18 +76,28 @@
 				language: 'en' | 'de';
 			};
 
+			// Before the answer is revealed the student wants a hint; afterwards they want the
+			// idea explained. We send this as the opening turn so the agent leads with help.
+			kickoffMessage = answerRevealed ? $t('agent.kickoffExplain') : $t('agent.kickoffHint');
+			kickoffShown = false;
+
 			sessionStartMs = Date.now();
 			conversation = await Conversation.startSession({
 				signedUrl: data.signedUrl,
 				dynamicVariables: data.dynamicVariables,
 				overrides: {
-					agent: { prompt: { prompt: data.systemPrompt }, language: data.language },
+					agent: { prompt: { prompt: data.systemPrompt }, language: data.language, firstMessage: '' },
 					tts: { voiceId: data.voiceId }
 				},
 				onConnect: () => (phase = 'listening'),
 				onDisconnect: () => onSessionEnded(),
 				onMessage: ({ message, role }) => {
 					if (!message) return;
+					// Hide the kickoff turn we inject below so it doesn't read as if the student typed it.
+					if (role === 'user' && !kickoffShown && message.trim() === kickoffMessage.trim()) {
+						kickoffShown = true;
+						return;
+					}
 					messages = [...messages, { role, text: message }];
 				},
 				onModeChange: ({ mode }: { mode: Mode }) => {
@@ -97,6 +112,17 @@
 					phase = 'error';
 				}
 			});
+
+			// Trigger the agent's first turn immediately so it leads with a hint/explanation
+			// rather than waiting on the now-empty greeting. Non-fatal if it fails — the
+			// student can simply speak first.
+			if (kickoffMessage) {
+				try {
+					conversation.sendUserMessage(kickoffMessage);
+				} catch {
+					/* ignore — fall back to the student speaking first */
+				}
+			}
 		} catch (e) {
 			errorMsg = e instanceof Error ? e.message : $t('agent.error');
 			phase = 'error';
