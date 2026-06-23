@@ -76,6 +76,32 @@
 	 * below the figure.
 	 */
 	let agentUsage = $state<{ month_seconds: number; month_cost_usd: number } | null>(null);
+	type AgentReadinessIssue = 'agent_not_configured' | 'agent_not_found' | 'invalid_api_key' | 'insufficient_permissions' | 'mcp_server_not_found' | 'mcp_auth_failed' | 'mcp_not_assigned' | 'mcp_tools_missing' | 'elevenlabs_unavailable';
+	interface AgentReadiness {
+		ready: boolean;
+		issues: AgentReadinessIssue[];
+		agent: { configured: boolean; reachable: boolean };
+		mcp: { server_found: boolean; authenticated: boolean; assigned_to_agent: boolean; tools_found: string[]; missing_tools: string[] };
+	}
+	let agentReadiness = $state<AgentReadiness | null>(null);
+	let checkingAgentReadiness = $state(false);
+
+	async function checkAgentSetup() {
+		if (checkingAgentReadiness) return;
+		checkingAgentReadiness = true;
+		try {
+			const res = await fetch('/api/settings/agent-readiness', { cache: 'no-store' });
+			agentReadiness = res.ok ? await res.json() as AgentReadiness : null;
+		} catch {
+			agentReadiness = null;
+		} finally {
+			checkingAgentReadiness = false;
+		}
+	}
+
+	function readinessIssueText(issue: AgentReadinessIssue): string {
+		return $t(`settings.agent.readiness.issues.${issue}`);
+	}
 
 	// MCP token management. Plaintext tokens are only available at creation time; after
 	// that we only ever show the prefix and metadata. `mcpTokenJustCreated` holds the
@@ -184,6 +210,7 @@
 		} catch {
 			// defaults stay active
 		}
+		if (keyStatus.elevenlabs && voiceSettings.elevenlabs_agent_id) void checkAgentSetup();
 
 		loadingUsage = true;
 		try {
@@ -230,6 +257,7 @@
 				voiceSettings = data.settings;
 				voiceSettingsMessage = { text: $t('settings.voice.saved'), ok: true };
 				setTimeout(() => { voiceSettingsMessage = null; }, 2000);
+				if (data.settings.elevenlabs_agent_id !== previousSettings.elevenlabs_agent_id && keyStatus.elevenlabs) void checkAgentSetup();
 			} else {
 				throw new Error('Failed to save voice settings');
 			}
@@ -280,6 +308,7 @@
 				keyInputs[service] = '';
 				expanded[service] = false;
 				messages[service] = { text: $t('settings.apiKeys.saved'), ok: true };
+				if (service === 'elevenlabs' && voiceSettings.elevenlabs_agent_id) void checkAgentSetup();
 			} else {
 				const errKey = res.status === 429
 					? 'settings.apiKeys.rateLimited'
@@ -328,8 +357,8 @@
 	}
 
 	const primaryServices: Service[] = ['elevenlabs'];
-	const advancedServices: Service[] = ['openai', 'deepgram', 'anthropic'];
-	const usageServices: Service[] = ['elevenlabs', 'openai', 'deepgram', 'anthropic'];
+	const advancedServices: Service[] = ['openai', 'deepgram'];
+	const usageServices: Service[] = ['elevenlabs', 'openai', 'deepgram'];
 	const voiceCommandLanguages: VoiceCommandLanguage[] = ['auto', 'en', 'de'];
 
 	function serviceLabel(s: Service): string {
@@ -626,7 +655,7 @@
 	<section class="section">
 		<h2>
 			{$t('settings.agent.title')}
-			{#if voiceSettings.elevenlabs_agent_id}
+			{#if agentReadiness?.ready}
 				<span class="badge badge--configured">{$t('settings.apiKeys.configured')}</span>
 			{:else}
 				<span class="badge badge--not-configured">{$t('settings.apiKeys.notConfigured')}</span>
@@ -660,6 +689,32 @@
 			/>
 		</label>
 		<p class="agent-help">{$t('settings.agent.agentIdHelp')}</p>
+
+		<div class="agent-readiness" class:agent-readiness--ready={agentReadiness?.ready}>
+			<div class="agent-readiness-head">
+				<div>
+					<strong>{agentReadiness?.ready ? $t('settings.agent.readiness.ready') : $t('settings.agent.readiness.title')}</strong>
+					<p>{agentReadiness?.ready ? $t('settings.agent.readiness.readyDesc') : $t('settings.agent.readiness.desc')}</p>
+				</div>
+				<button class="action-btn" type="button" onclick={checkAgentSetup} disabled={checkingAgentReadiness}>
+					{checkingAgentReadiness ? $t('settings.agent.readiness.checking') : $t('settings.agent.readiness.check')}
+				</button>
+			</div>
+			{#if agentReadiness}
+				<ul class="agent-readiness-list">
+					<li class:ok={agentReadiness.agent.reachable}>{agentReadiness.agent.reachable ? '✓' : '○'} {$t('settings.agent.readiness.agent')}</li>
+					<li class:ok={agentReadiness.mcp.server_found}>{agentReadiness.mcp.server_found ? '✓' : '○'} {$t('settings.agent.readiness.server')}</li>
+					<li class:ok={agentReadiness.mcp.authenticated}>{agentReadiness.mcp.authenticated ? '✓' : '○'} {$t('settings.agent.readiness.auth')}</li>
+					<li class:ok={agentReadiness.mcp.assigned_to_agent}>{agentReadiness.mcp.assigned_to_agent ? '✓' : '○'} {$t('settings.agent.readiness.assignment')}</li>
+					<li class:ok={agentReadiness.mcp.authenticated && agentReadiness.mcp.missing_tools.length === 0}>{agentReadiness.mcp.authenticated && agentReadiness.mcp.missing_tools.length === 0 ? '✓' : '○'} {$t('settings.agent.readiness.tools', { count: agentReadiness.mcp.tools_found.length })}</li>
+				</ul>
+				{#if agentReadiness.issues.length}
+					<div class="agent-readiness-issues">
+						{#each agentReadiness.issues as issue}<p>{readinessIssueText(issue)}</p>{/each}
+					</div>
+				{/if}
+			{/if}
+		</div>
 
 		<div class="agent-usage">
 			<div class="agent-usage-head">
@@ -1435,4 +1490,12 @@
 	.mcp-token-prefix { font-family: monospace; color: var(--text); }
 	.mcp-token-label { color: var(--text-muted); }
 	.mcp-token-when { font-size: 0.75rem; color: var(--text-subtle); }
+	.agent-readiness { margin: 1rem 0; padding: 0.9rem; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-subtle); }
+	.agent-readiness--ready { border-color: color-mix(in srgb, #34c759 55%, var(--border)); }
+	.agent-readiness-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; }
+	.agent-readiness-head p { margin: 0.2rem 0 0; color: var(--text-muted); font-size: 0.82rem; }
+	.agent-readiness-list { list-style: none; padding: 0; margin: 0.75rem 0 0; display: grid; gap: 0.35rem; font-size: 0.82rem; color: var(--text-muted); }
+	.agent-readiness-list li.ok { color: #25a244; }
+	.agent-readiness-issues { margin-top: 0.75rem; padding: 0.65rem; border-radius: var(--r-sm); background: color-mix(in srgb, var(--warning) 10%, transparent); }
+	.agent-readiness-issues p { margin: 0.2rem 0; font-size: 0.8rem; color: var(--text); }
 </style>

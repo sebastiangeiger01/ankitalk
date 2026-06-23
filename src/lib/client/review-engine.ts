@@ -4,8 +4,6 @@ import { createElevenLabsClient } from './elevenlabs';
 import type { SpeechClient } from './speech';
 import { renderCard } from './card-renderer';
 import { matchCommand } from '../commands';
-import { get } from 'svelte/store';
-import { locale } from '../i18n';
 import type { VoiceProvider } from '../voice';
 import type { ReviewPhase, VoiceCommand, RatingName } from '../types';
 
@@ -50,8 +48,6 @@ export type ReviewEvent =
 	| { type: 'transcript'; text: string; isFinal: boolean }
 	| { type: 'session_end'; stats: SessionStats }
 	| { type: 'error'; message: string }
-	| { type: 'explaining' }
-	| { type: 'hinting' }
 	| { type: 'deck_info'; name: string }
 	| { type: 'undo_available'; available: boolean }
 	| { type: 'mic_change'; micOn: boolean }
@@ -358,7 +354,8 @@ export function createReviewEngine(): ReviewEngine {
 				break;
 
 			case 'hint':
-				handleHint();
+				// The review page opens the phase-aware ElevenLabs tutor from the
+				// command event. Keeping this in the engine switch preserves voice commands.
 				break;
 
 			case 'repeat': {
@@ -379,7 +376,7 @@ export function createReviewEngine(): ReviewEngine {
 			}
 
 			case 'explain':
-				handleExplain();
+				// Handled by the review page's ElevenLabs tutor UI.
 				break;
 
 			case 'suspend':
@@ -578,54 +575,6 @@ export function createReviewEngine(): ReviewEngine {
 
 		if (micOn) emit({ type: 'listening' });
 		else emit({ type: 'idle' });
-	}
-
-	async function handleExplain() {
-		interruptTTS();
-		emit({ type: 'explaining' });
-		if (!currentCard) return;
-
-		try {
-			const res = await fetch('/api/explain', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ front: currentCard.front, back: currentCard.back, locale: get(locale) })
-			});
-
-			if (!res.ok) throw new Error('Explain API failed');
-			const { explanation } = (await res.json()) as { explanation: string };
-
-			speakText(explanation);
-			playSound('/chime.mp3').catch(() => {});
-		} catch {
-			emit({ type: 'error', message: 'Failed to get explanation' });
-			if (micOn) emit({ type: 'listening' });
-			else emit({ type: 'idle' });
-		}
-	}
-
-	async function handleHint() {
-		interruptTTS();
-		emit({ type: 'hinting' });
-		if (!currentCard) return;
-
-		try {
-			const res = await fetch('/api/hint', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ front: currentCard.front, back: currentCard.back, locale: get(locale) })
-			});
-
-			if (!res.ok) throw new Error('Hint API failed');
-			const { hint } = (await res.json()) as { hint: string };
-
-			speakText(hint);
-			playSound('/chime.mp3').catch(() => {});
-		} catch {
-			emit({ type: 'error', message: 'Failed to get hint' });
-			if (micOn) emit({ type: 'listening' });
-			else emit({ type: 'idle' });
-		}
 	}
 
 	function endSession() {

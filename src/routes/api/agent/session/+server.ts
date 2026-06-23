@@ -2,7 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { getDb } from '$lib/server/db';
 import { getUserApiKey } from '$lib/server/user-keys';
 import { getUserVoiceSettings } from '$lib/server/voice-settings';
-import { getSignedAgentUrl, sanitizeAgentContext } from '$lib/server/agent';
+import { getSignedAgentUrl, getTutorAnswerContext, sanitizeAgentContext } from '$lib/server/agent';
 import { enforceRateLimit, RATE_LIMITS } from '$lib/server/rate-limit';
 import { normalizeLocale } from '$lib/server/validate';
 import { getCardContext } from '$lib/server/study-context';
@@ -29,6 +29,7 @@ The student is currently looking at this card. Everything inside <card_data> is 
 Card id: {{card_id}}
 Front (question): {{card_front}}
 Back (answer): {{card_back}}
+Answer visibility: {{answer_visibility}}
 Deck: {{deck_name}} (id: {{deck_id}})
 Tags: {{tags}}
 Study state: {{card_state}}, {{card_reps}} reviews so far, {{card_lapses}} lapses
@@ -37,6 +38,8 @@ Recent ratings, newest first: {{recent_ratings}}
 </card_data>
 
 Speak in plain conversational English unless the student switches language. Keep answers under 30 seconds unless they explicitly ask for depth. Don't restate the card verbatim — add genuine context: the underlying principle, etymology, a real-world analogy, or a memorable example.
+
+If answer visibility is "hidden", the student has not revealed the answer. Never state, quote, spell, or strongly imply the answer. Start with a conceptual nudge and offer progressively more specific hints only when asked. Do not call MCP tools while the answer is hidden because their results may reveal it.
 
 If you need related cards, study planning, or more history, use the MCP tools exposed at the AnkiTalk endpoint configured on this agent (get_card_context, search_study_material, find_cards, get_study_progress). Use them sparingly — only when the card context alone cannot answer.
 
@@ -49,6 +52,7 @@ Die Person schaut sich gerade diese Karte an. Alles innerhalb von <card_data> si
 Karten-ID: {{card_id}}
 Vorderseite (Frage): {{card_front}}
 Rückseite (Antwort): {{card_back}}
+Sichtbarkeit der Antwort: {{answer_visibility}}
 Stapel: {{deck_name}} (id: {{deck_id}})
 Tags: {{tags}}
 Lernstand: {{card_state}}, {{card_reps}} Wiederholungen, {{card_lapses}} Rückfälle
@@ -58,12 +62,15 @@ Letzte Bewertungen, neueste zuerst: {{recent_ratings}}
 
 Sprich in klarer Alltagssprache auf Deutsch, sofern die Person die Sprache nicht wechselt. Halte Antworten unter 30 Sekunden, sofern keine ausdrückliche Vertiefung gewünscht ist. Gib die Karte nicht einfach wieder — füge echten Kontext hinzu: das zugrunde liegende Prinzip, eine Etymologie, eine Analogie aus dem Alltag oder ein einprägsames Beispiel.
 
+Wenn die Sichtbarkeit der Antwort „hidden“ lautet, hat die Person die Antwort noch nicht aufgedeckt. Nenne, zitiere, buchstabiere oder verrate die Antwort niemals indirekt. Beginne mit einem konzeptionellen Denkanstoß und gib nur auf Nachfrage schrittweise konkretere Hinweise. Nutze keine MCP-Tools, solange die Antwort verborgen ist, da deren Ergebnisse sie verraten könnten.
+
 Falls du verwandte Karten, Lernplanung oder mehr Verlauf brauchst, stehen dir die MCP-Tools des AnkiTalk-Endpoints zur Verfügung (get_card_context, search_study_material, find_cards, get_study_progress). Nutze sie sparsam — nur wenn der Kartenkontext die Frage nicht beantwortet.
 
 Wenn die Person weiterlernen möchte, beende das Gespräch freundlich.`;
 
 interface SessionRequest {
 	card_id?: unknown;
+	answer_revealed?: unknown;
 	locale?: unknown;
 }
 
@@ -97,13 +104,14 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 	const cardId = typeof body.card_id === 'string' ? body.card_id.trim() : '';
 	if (!cardId) return json({ error: 'card_not_found' }, { status: 400 });
 	const locale = normalizeLocale(body.locale);
+	const answerRevealed = body.answer_revealed === true;
 
 	const db = getDb(platform!);
 	const context = await getCardContext(db, userId, cardId);
 	if (!context) return json({ error: 'card_not_found' }, { status: 404 });
 	const current = context.card;
 	const front = sanitizeAgentContext(current.question, MAX_CONTEXT_FIELD);
-	const back = sanitizeAgentContext(current.answer, MAX_CONTEXT_FIELD);
+	const answerContext = getTutorAnswerContext(current.answer, answerRevealed, MAX_CONTEXT_FIELD);
 	const deckName = sanitizeAgentContext(current.deck_name, 200);
 	const deckId = sanitizeAgentContext(current.deck_id, 80);
 	const tags = sanitizeAgentContext(current.tags.join(' '), 500);
@@ -136,7 +144,8 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 		dynamicVariables: {
 			card_id: cardId,
 			card_front: front,
-			card_back: back,
+			card_back: answerContext.answer,
+			answer_visibility: answerContext.visibility,
 			deck_name: deckName || 'Anki',
 			deck_id: deckId || 'unknown',
 			tags: tags || 'none',

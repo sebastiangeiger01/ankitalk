@@ -8,6 +8,7 @@
 	interface Props {
 		open: boolean;
 		cardId: string;
+		answerRevealed: boolean;
 		locale: 'en' | 'de';
 		onclose: () => void;
 	}
@@ -15,6 +16,7 @@
 	let {
 		open,
 		cardId,
+		answerRevealed,
 		locale,
 		onclose
 	}: Props = $props();
@@ -33,6 +35,13 @@
 	$effect(() => {
 		if (open && phase === 'idle') void start();
 	});
+	$effect(() => {
+		if (!open && phase !== 'idle') {
+			phase = 'idle';
+			errorMsg = '';
+			messages = [];
+		}
+	});
 
 	async function start() {
 		phase = 'connecting';
@@ -44,6 +53,7 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					card_id: cardId,
+					answer_revealed: answerRevealed,
 					locale
 				})
 			});
@@ -155,7 +165,7 @@
 	>
 		<div class="modal">
 			<div class="head">
-				<h2>{$t('agent.title')}</h2>
+				<h2>{answerRevealed ? $t('agent.title') : $t('agent.hintTitle')}</h2>
 				<button class="close-btn" onclick={close} aria-label={$t('common.close')}>×</button>
 			</div>
 
@@ -184,7 +194,7 @@
 					</div>
 				{/each}
 				{#if messages.length === 0 && phase !== 'connecting' && phase !== 'error'}
-					<p class="hint">{$t('agent.hint')}</p>
+					<p class="hint">{answerRevealed ? $t('agent.hint') : $t('agent.preRevealHint')}</p>
 				{/if}
 			</div>
 
