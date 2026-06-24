@@ -10,6 +10,20 @@
 		locale.set(l);
 	}
 
+	let loggingOut = $state(false);
+	async function logout() {
+		loggingOut = true;
+		try {
+			const { register } = await import('@teamhanko/hanko-elements');
+			const { env } = await import('$env/dynamic/public');
+			const { hanko } = await register(env.PUBLIC_HANKO_API_URL!);
+			await hanko.user.logout();
+			window.location.href = '/login';
+		} catch {
+			loggingOut = false;
+		}
+	}
+
 	let current = $state<Locale>('en');
 	let prepareAudioAhead = $state(true);
 	$effect(() => {
@@ -812,6 +826,21 @@
 				</a>
 			</p>
 		</div>
+
+		<div class="agent-tuning">
+			<strong>{$t('settings.agent.tuningTitle')}</strong>
+			<p>{$t('settings.agent.tuningDesc')}</p>
+			<p class="agent-help">
+				<a href="https://elevenlabs.io/app/agents" target="_blank" rel="noopener noreferrer">
+					{$t('settings.agent.tuningDashboardLink')} →
+				</a>
+			</p>
+			<p class="agent-help">
+				<a href="https://elevenlabs.io/docs/eleven-agents/customization/conversation-flow" target="_blank" rel="noopener noreferrer">
+					{$t('settings.agent.tuningDocsLink')} →
+				</a>
+			</p>
+		</div>
 	</section>
 
 	<section class="section" id="mcp-integration">
@@ -922,6 +951,14 @@
 			</div>
 			<p class="usage-note">{$t('settings.usage.note')}</p>
 		{/if}
+	</section>
+
+	<section class="section account-section">
+		<button class="logout-btn" type="button" onclick={logout} disabled={loggingOut}>
+			{#if loggingOut}<Spinner size={14} />{/if}
+			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+			{$t('nav.logout')}
+		</button>
 	</section>
 </div>
 {/key}
@@ -1516,6 +1553,14 @@
 		background: var(--surface); border: 1px solid var(--border-muted);
 		border-radius: 10px;
 	}
+	.agent-tuning {
+		margin-top: 1rem; padding: 0.7rem 0.85rem;
+		background: var(--surface); border: 1px solid var(--border-muted);
+		border-radius: 10px;
+		font-size: 0.9rem; color: var(--text);
+	}
+	.agent-tuning strong { display: block; margin-bottom: 0.35rem; }
+	.agent-tuning p { margin: 0.35rem 0 0; color: var(--text-muted); }
 	.agent-usage-head { margin-bottom: 0.35rem; font-size: 0.9rem; color: var(--text); }
 	.agent-usage-body {
 		display: flex; align-items: baseline; gap: 0.6rem;
@@ -1603,4 +1648,18 @@
 		.mcp-profile-select { width: 100%; }
 		.mcp-tokens-head { align-items: stretch; flex-direction: column; gap: 0.55rem; }
 	}
+
+	.account-section {
+		border-top: 1px solid var(--border-muted);
+		padding-top: 1.5rem;
+	}
+	.logout-btn {
+		display: inline-flex; align-items: center; gap: 0.5rem;
+		background: none; color: var(--danger-soft, var(--text-muted));
+		border: 1px solid var(--border-muted); border-radius: var(--r-pill);
+		padding: 0.6rem 1.1rem; font-size: 0.9rem; font-weight: 600;
+		cursor: pointer; min-height: 44px; touch-action: manipulation;
+	}
+	.logout-btn:hover:not(:disabled) { border-color: var(--danger-soft, var(--text-muted)); color: var(--text); }
+	.logout-btn:disabled { opacity: 0.6; cursor: default; }
 </style>

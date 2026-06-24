@@ -501,6 +501,10 @@ export const en: Record<string, string> = {
 	'settings.agent.usageCost': '~${cost}',
 	'settings.agent.usageNote': 'ElevenLabs doesn’t expose remaining agent minutes via API. Check your full quota on the ElevenLabs dashboard.',
 	'settings.agent.usageDashboardLink': 'Open ElevenLabs Usage dashboard',
+	'settings.agent.tuningTitle': 'Reduce echo & interruptions',
+	'settings.agent.tuningDesc': 'On a phone speaker the tutor can pick up its own voice and interrupt itself. AnkiTalk already mutes the mic while the tutor speaks (and you can switch on push-to-talk), but for the smoothest result open your agent and set Turn eagerness to “Patient” — and, if echo persists, remove the “interruption” client event to stop it reacting mid-answer.',
+	'settings.agent.tuningDashboardLink': 'Open agent settings',
+	'settings.agent.tuningDocsLink': 'Turn-taking & interruptions guide',
 
 	// MCP (Model Context Protocol) settings panel
 	'settings.mcp.title': 'MCP integration',

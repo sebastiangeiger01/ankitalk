@@ -501,6 +501,10 @@ export const de: Record<string, string> = {
 	'settings.agent.usageCost': '~${cost}',
 	'settings.agent.usageNote': 'ElevenLabs stellt das verbleibende Agent-Kontingent nicht per API bereit. Dein gesamtes Kontingent siehst du im ElevenLabs-Dashboard.',
 	'settings.agent.usageDashboardLink': 'ElevenLabs-Nutzungs-Dashboard öffnen',
+	'settings.agent.tuningTitle': 'Echo & Unterbrechungen reduzieren',
+	'settings.agent.tuningDesc': 'Über den Telefonlautsprecher hört der Tutor manchmal seine eigene Stimme und unterbricht sich selbst. AnkiTalk schaltet das Mikrofon stumm, während der Tutor spricht (und du kannst Push-to-Talk aktivieren). Für das beste Ergebnis öffne deinen Agenten und stelle die Turn-Bereitschaft auf „Patient“ – und entferne, falls das Echo bleibt, das Client-Event „interruption“, damit er nicht mitten in der Antwort reagiert.',
+	'settings.agent.tuningDashboardLink': 'Agent-Einstellungen öffnen',
+	'settings.agent.tuningDocsLink': 'Leitfaden zu Gesprächsfluss & Unterbrechungen',
 
 	// MCP-Einstellungen
 	'settings.mcp.title': 'MCP-Integration',
