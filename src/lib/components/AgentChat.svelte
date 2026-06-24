@@ -7,6 +7,7 @@
 	import type { Conversation as ConversationType, Mode, Role } from '@elevenlabs/client';
 	import { t } from '$lib/i18n';
 	import { focusTrap } from '$lib/actions/focusTrap';
+	import { getPushToTalk, setPushToTalk } from '$lib/client/preferences';
 
 	interface Props {
 		open: boolean;
@@ -43,6 +44,15 @@
 	let kickoffMessage = '';
 	let kickoffShown = false;
 
+	// Mic gating. `agentSpeaking` tracks whose turn it is (from onModeChange). In the default
+	// half-duplex mode the mic is muted whenever the agent talks, so it can't hear and react to
+	// its own voice echoing off the phone speaker. In push-to-talk mode the mic stays muted
+	// unless the student is actively holding the talk button (`talking`) — which also doubles as
+	// a deliberate barge-in.
+	let agentSpeaking = $state(false);
+	let pushToTalk = $state(false);
+	let talking = $state(false);
+
 	// Typed input lets users who can't (or don't want to) speak still converse with the tutor.
 	let draft = $state('');
 	// Sending is possible once the live session exists; not while connecting/ended/errored.
@@ -65,6 +75,39 @@
 		}
 	}
 
+	// Single source of truth for the mic: apply the desired mute state whenever the inputs
+	// change. Push-to-talk → open only while holding the button; otherwise half-duplex → open
+	// only when it's the student's turn. Fire-and-forget; a not-yet-live session ignores it and
+	// the effect re-runs once `conversation` is assigned.
+	$effect(() => {
+		const conv = conversation;
+		if (!conv) return;
+		const muted = pushToTalk ? !talking : agentSpeaking;
+		try {
+			void conv.setMicMuted(muted);
+		} catch {
+			/* session closing — nothing to do */
+		}
+	});
+
+	function togglePushToTalk() {
+		pushToTalk = !pushToTalk;
+		talking = false;
+		setPushToTalk(pushToTalk);
+	}
+
+	function startTalking(e: PointerEvent) {
+		if (!pushToTalk) return;
+		e.preventDefault();
+		// Capture the pointer so we reliably get pointerup even if the finger slides off the
+		// button — otherwise the mic could stay open after release.
+		(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+		talking = true;
+	}
+	function stopTalking() {
+		if (talking) talking = false;
+	}
+
 	function onInputKey(e: KeyboardEvent) {
 		if (e.key === 'Enter' && !e.shiftKey) {
 			e.preventDefault();
@@ -84,6 +127,8 @@
 			errorMsg = '';
 			messages = [];
 			streamingText = '';
+			talking = false;
+			agentSpeaking = false;
 		}
 	});
 
@@ -92,6 +137,12 @@
 		errorMsg = '';
 		messages = [];
 		streamingText = '';
+		talking = false;
+		pushToTalk = getPushToTalk();
+		// The agent opens with the kickoff turn, so treat the connect window as its turn: the mic
+		// stays muted until onModeChange flips to "listening". (In push-to-talk this is moot — the
+		// mic only opens while the button is held.)
+		agentSpeaking = true;
 		try {
 			const res = await fetch('/api/agent/session', {
 				method: 'POST',
@@ -128,6 +179,9 @@
 				conversationToken: data.conversationToken,
 				connectionType: 'webrtc',
 				dynamicVariables: data.dynamicVariables,
+				// Use the headset mic when one is plugged into an iPhone — it sidesteps speaker
+				// echo entirely. The half-duplex muting below covers the loudspeaker case.
+				preferHeadphonesForIosDevices: true,
 				overrides: {
 					agent: { prompt: { prompt: data.systemPrompt }, language: data.language, firstMessage: '' },
 					tts: { voiceId: data.voiceId }
@@ -170,7 +224,10 @@
 				},
 				onModeChange: ({ mode }: { mode: Mode }) => {
 					// `mode` is "speaking" while the agent is talking, "listening" while it
-					// waits for user input. Surface it so the user knows whose turn it is.
+					// waits for user input. This drives both the UI turn indicator and the mic
+					// gate (see the $effect): in half-duplex the mic is muted while the agent
+					// speaks so it can't react to its own echo off the phone speaker.
+					agentSpeaking = mode === 'speaking';
 					if (phase === 'connecting' || phase === 'ended' || phase === 'error') return;
 					if (mode === 'speaking') { phase = 'speaking'; return; }
 					// Stay in "thinking" until the kicked-off first turn actually starts, so the
@@ -275,8 +332,13 @@
 			     loading indicator. The status row covers the turn-taking states only. -->
 			<div class="status" role="status" aria-live="polite">
 				{#if phase === 'listening'}
-					<span class="dot dot--live"></span>
-					<span>{$t('agent.status.listening')}</span>
+					{#if pushToTalk && !talking}
+						<span class="dot"></span>
+						<span>{$t('agent.ptt.muted')}</span>
+					{:else}
+						<span class="dot dot--live"></span>
+						<span>{$t('agent.status.listening')}</span>
+					{/if}
 				{:else if phase === 'speaking'}
 					<span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
 					<span>{$t('agent.status.speaking')}</span>
@@ -317,6 +379,25 @@
 				{/if}
 			</div>
 
+			{#if pushToTalk}
+				<button
+					type="button"
+					class="ptt-btn"
+					class:talking
+					onpointerdown={startTalking}
+					onpointerup={stopTalking}
+					onpointercancel={stopTalking}
+					onlostpointercapture={stopTalking}
+					disabled={!canSend}
+					aria-pressed={talking}
+				>
+					<span class="ptt-icon" aria-hidden="true">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+					</span>
+					{talking ? $t('agent.ptt.talking') : $t('agent.ptt.hold')}
+				</button>
+			{/if}
+
 			<form
 				class="composer"
 				onsubmit={(e) => { e.preventDefault(); sendText(); }}
@@ -337,6 +418,15 @@
 			</form>
 
 			<div class="actions">
+				<button
+					type="button"
+					class="ptt-toggle"
+					class:on={pushToTalk}
+					onclick={togglePushToTalk}
+					aria-pressed={pushToTalk}
+				>
+					{$t('agent.ptt.label')}
+				</button>
 				<button class="end-btn" onclick={close}>
 					{phase === 'ended' || phase === 'error' ? $t('common.close') : $t('agent.endSession')}
 				</button>
@@ -490,7 +580,38 @@
 	.send-btn:not(:disabled):hover { border-color: var(--primary); }
 	.send-btn:disabled { opacity: 0.45; cursor: default; }
 
-	.actions { display: flex; justify-content: flex-end; }
+	/* Hold-to-talk: a big, obvious press target. `touch-action: none` keeps the press-and-hold
+	   from scrolling/selecting on iOS; `user-select: none` stops the label highlighting. */
+	.ptt-btn {
+		display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+		width: 100%; min-height: 52px;
+		background: var(--surface-2); color: var(--text);
+		border: 1px solid var(--border-muted); border-radius: var(--r-pill);
+		font-size: 0.95rem; font-weight: 600;
+		cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none;
+		transition: background 0.12s ease, border-color 0.12s ease, transform 0.08s ease;
+	}
+	.ptt-btn .ptt-icon { display: inline-flex; }
+	.ptt-btn.talking {
+		background: color-mix(in srgb, var(--primary) 22%, var(--surface-2));
+		border-color: var(--primary);
+		transform: scale(0.99);
+	}
+	.ptt-btn:disabled { opacity: 0.45; cursor: default; }
+
+	.actions { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+	.ptt-toggle {
+		background: none; color: var(--text-muted);
+		border: 1px solid var(--border-muted); border-radius: var(--r-pill);
+		padding: 0.45rem 0.85rem; font-size: 0.82rem; font-weight: 600;
+		cursor: pointer; min-height: 40px; touch-action: manipulation;
+	}
+	.ptt-toggle:hover { border-color: var(--primary); color: var(--text); }
+	.ptt-toggle.on {
+		color: var(--text);
+		border-color: var(--primary);
+		background: color-mix(in srgb, var(--primary) 16%, transparent);
+	}
 	.end-btn {
 		background: var(--primary); color: var(--text);
 		border: none; border-radius: var(--r-pill);

@@ -428,6 +428,10 @@ export const en: Record<string, string> = {
 	'agent.agent': 'Tutor',
 	'agent.inputPlaceholder': 'Type a message…',
 	'agent.send': 'Send',
+	'agent.ptt.label': 'Push-to-talk',
+	'agent.ptt.hold': 'Hold to talk',
+	'agent.ptt.talking': 'Listening… release to stop',
+	'agent.ptt.muted': 'Mic off — hold to talk',
 	'agent.hint': 'Talk to the tutor about this card. The agent knows the question, answer, and deck — ask for context, an analogy, or a follow-up.',
 	'agent.preRevealHint': 'The answer is hidden from the tutor. Ask for a gentle hint or a more specific clue.',
 	'agent.kickoffHint': 'Give me a gentle hint for this card to get started, without revealing the answer.',
@@ -497,6 +501,10 @@ export const en: Record<string, string> = {
 	'settings.agent.usageCost': '~${cost}',
 	'settings.agent.usageNote': 'ElevenLabs doesn’t expose remaining agent minutes via API. Check your full quota on the ElevenLabs dashboard.',
 	'settings.agent.usageDashboardLink': 'Open ElevenLabs Usage dashboard',
+	'settings.agent.tuningTitle': 'Reduce echo & interruptions',
+	'settings.agent.tuningDesc': 'On a phone speaker the tutor can pick up its own voice and interrupt itself. AnkiTalk already mutes the mic while the tutor speaks (and you can switch on push-to-talk), but for the smoothest result open your agent and set Turn eagerness to “Patient” — and, if echo persists, remove the “interruption” client event to stop it reacting mid-answer.',
+	'settings.agent.tuningDashboardLink': 'Open agent settings',
+	'settings.agent.tuningDocsLink': 'Turn-taking & interruptions guide',
 
 	// MCP (Model Context Protocol) settings panel
 	'settings.mcp.title': 'MCP integration',
