@@ -34,6 +34,7 @@ export const PUT: RequestHandler = async ({ request, platform, locals }) => {
 		elevenlabs_similarity?: unknown;
 		elevenlabs_style?: unknown;
 		elevenlabs_speaker_boost?: unknown;
+		elevenlabs_agent_id?: unknown;
 	};
 
 	if (!isVoiceProvider(body.voice_provider)) {
@@ -67,7 +68,8 @@ export const PUT: RequestHandler = async ({ request, platform, locals }) => {
 		elevenlabs_stability: body.elevenlabs_stability as number | undefined,
 		elevenlabs_similarity: body.elevenlabs_similarity as number | undefined,
 		elevenlabs_style: body.elevenlabs_style as number | undefined,
-		elevenlabs_speaker_boost: body.elevenlabs_speaker_boost as boolean | undefined
+		elevenlabs_speaker_boost: body.elevenlabs_speaker_boost as boolean | undefined,
+		elevenlabs_agent_id: typeof body.elevenlabs_agent_id === 'string' ? body.elevenlabs_agent_id : null
 	});
 
 	const db = getDb(platform!);

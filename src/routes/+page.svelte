@@ -1,12 +1,13 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-	import { parseApkg } from '$lib/client/anki-parser';
-	import { buildApkg, extractMediaFilenames } from '$lib/client/apkg-export';
+	// parseApkg / buildApkg pull in sql.js (~1 MB WASM-backed) — only needed for deck
+	// import/export, so they're dynamically imported inside those handlers to keep the
+	// home page's initial bundle small.
 	import OnboardingChecklist from '$lib/components/OnboardingChecklist.svelte';
 	import { t } from '$lib/i18n';
 	import { preloadTTS } from '$lib/client/audio';
 	import { getPrepareAudioAhead } from '$lib/client/preferences';
-	import { sanitizeCardHtml } from '$lib/sanitize';
+	import { clientCardSanitizer } from '$lib/client/card-sanitize';
 	import type { DeckWithDueCount } from '$lib/types';
 	import type { UserVoiceSettings } from '$lib/voice';
 
@@ -64,9 +65,7 @@
 					const rawHtml = isCloze
 						? firstValue.replace(/\{\{c\d+::(.*?)(?:::(.*?))?\}\}/g, (_m, _a, hint) => hint || 'blank')
 						: firstValue;
-					const div = document.createElement('div');
-					div.innerHTML = sanitizeCardHtml(rawHtml);
-					const plain = (div.textContent ?? '').trim();
+					const plain = clientCardSanitizer.toText(rawHtml);
 					if (plain) preloadTTS(plain);
 				})
 				.catch(() => {});
@@ -82,6 +81,7 @@
 		importStatus = $t('import.parsing');
 
 		try {
+			const { parseApkg } = await import('$lib/client/anki-parser');
 			const parsed = await parseApkg(file);
 			importStatus = $t('import.found', { cards: parsed.cards.length, decks: parsed.decks.length });
 
@@ -129,6 +129,8 @@
 			const res = await fetch(`/api/decks/${deckId}/export-data`);
 			if (!res.ok) throw new Error('Failed to fetch deck data');
 			const data = (await res.json()) as { deck: Record<string, unknown>; notes: Record<string, unknown>[]; cards: Record<string, unknown>[] };
+
+			const { buildApkg, extractMediaFilenames } = await import('$lib/client/apkg-export');
 
 			// Fetch media files referenced in note fields
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any

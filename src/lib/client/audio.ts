@@ -1,206 +1,266 @@
-let audioContext: AudioContext | null = null;
-let currentSource: AudioBufferSourceNode | null = null;
-let lastSpokenText: string = '';
+let audioElement: HTMLAudioElement | null = null;
+let lastSpokenText = '';
 let currentAbort: AbortController | null = null;
-
-/** In-memory TTS audio cache for preloading */
-const audioCache = new Map<string, AudioBuffer>();
+let currentPlayback: { stop: () => void } | null = null;
+let audioUnlocked = false;
 
 /**
- * Unlock AudioContext on iOS (must be called from a user gesture handler).
- * Creates a silent buffer and plays it to satisfy the autoplay policy.
+ * 50 ms of 8-bit silence. Played once, synchronously, inside the Start button's gesture to
+ * "bless" the shared media element on iOS Safari: after one gesture-initiated play() the
+ * element may be driven programmatically (from a promise/timer) for the rest of the session.
+ * This is what lets us stop gating Start on a finished TTS round trip — the first card can be
+ * fetched after the click and still play, because the element is already unlocked.
  */
-export async function unlockAudio(): Promise<void> {
-	if (!audioContext) {
-		audioContext = new AudioContext();
-	}
+const SILENT_CLIP =
+	'data:audio/wav;base64,UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
 
-	if (audioContext.state === 'suspended') {
-		await audioContext.resume();
+/**
+ * Unlock the shared media element for programmatic playback on iOS. MUST be called from a
+ * real user gesture (e.g. the Start button's click handler). Idempotent and a no-op after the
+ * first successful call.
+ */
+export function unlockAudioForGesture(): void {
+	if (audioUnlocked) return;
+	audioUnlocked = true;
+	const player = getAudioElement();
+	try {
+		player.src = SILENT_CLIP;
+		const played = player.play();
+		// Swallow the rejection a later real play() may cause by interrupting this silent clip.
+		if (played && typeof played.catch === 'function') played.catch(() => {});
+	} catch {
+		// If even this throws the element is unusable; real playback will surface a clear error.
 	}
-
-	// Play a silent buffer to fully unlock on iOS
-	const buffer = audioContext.createBuffer(1, 1, 22050);
-	const source = audioContext.createBufferSource();
-	source.buffer = buffer;
-	source.connect(audioContext.destination);
-	source.start(0);
 }
 
-/**
- * Build a cache key from TTS parameters.
- */
+/** MP3 responses cached without creating a playback object before the user's Start gesture. */
+const audioCache = new Map<string, Blob>();
+
+/** TTS requests that have started but have not populated the audio cache yet. */
+const audioPreloads = new Map<string, Promise<Blob>>();
+
+function getAudioElement(): HTMLAudioElement {
+	if (!audioElement) {
+		audioElement = new Audio();
+		audioElement.preload = 'auto';
+	}
+	return audioElement;
+}
+
 function cacheKey(text: string, voice?: string, speed?: number): string {
 	return `${text}|${voice ?? ''}|${speed ?? ''}`;
 }
 
-/**
- * Fetch and decode TTS audio, returning the AudioBuffer.
- */
-async function fetchTTSBuffer(text: string, voice?: string, speed?: number, signal?: AbortSignal): Promise<AudioBuffer> {
-	if (!audioContext) {
-		audioContext = new AudioContext();
+function errorDetail(error: unknown): string {
+	if (error && typeof error === 'object') {
+		const value = error as { name?: unknown; message?: unknown };
+		const name = typeof value.name === 'string' ? value.name : 'Error';
+		const message = typeof value.message === 'string' ? value.message : '';
+		return message ? `${name}: ${message}` : name;
 	}
+	return typeof error === 'string' ? error : 'unknown error';
+}
 
+async function fetchTTSAudio(text: string, voice?: string, speed?: number, signal?: AbortSignal): Promise<Blob> {
 	const params: Record<string, string> = { text };
 	if (voice) params.voice = voice;
 	if (speed) params.speed = String(speed);
 
-	const response = await fetch('/api/tts', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(params),
-		signal
-	});
-
-	if (!response.ok) {
-		throw new Error(`TTS failed: ${response.status}`);
+	let response: Response;
+	try {
+		response = await fetch('/api/tts', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(params),
+			signal
+		});
+	} catch (error) {
+		if (signal?.aborted) throw error;
+		throw new Error(`TTS request failed: ${errorDetail(error)}`);
 	}
 
-	const arrayBuffer = await response.arrayBuffer();
-	return await audioContext.decodeAudioData(arrayBuffer);
+	if (!response.ok) {
+		const detail = (await response.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 180);
+		throw new Error(`TTS HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
+	}
+
+	const audio = await response.blob();
+	if (audio.size === 0) throw new Error('TTS returned an empty audio response');
+	return audio.type ? audio : new Blob([audio], { type: 'audio/mpeg' });
 }
 
-/**
- * Preload TTS audio into the cache (fire-and-forget).
- */
-export function preloadTTS(text: string, voice?: string, speed?: number): void {
+/** Preload the ElevenLabs MP3 response and report whether it is ready for gesture playback. */
+export function preloadTTS(text: string, voice?: string, speed?: number): Promise<boolean> {
 	const key = cacheKey(text, voice, speed);
-	if (audioCache.has(key)) return;
+	if (audioCache.has(key)) return Promise.resolve(true);
+	const existing = audioPreloads.get(key);
+	if (existing) return existing.then(() => true, () => false);
 
-	fetchTTSBuffer(text, voice, speed).then((buffer) => {
-		audioCache.set(key, buffer);
-	}).catch(() => {
-		// Preload failures are silent
-	});
+	const preload = fetchTTSAudio(text, voice, speed)
+		.then((audio) => {
+			audioCache.set(key, audio);
+			return audio;
+		})
+		.finally(() => {
+			if (audioPreloads.get(key) === preload) audioPreloads.delete(key);
+		});
+	audioPreloads.set(key, preload);
+	return preload.then(() => true, () => false);
 }
 
-/**
- * Clear the TTS audio cache.
- */
 export function clearAudioCache(): void {
 	audioCache.clear();
 }
 
-/**
- * Fetch TTS audio from the server and play it.
- * Returns a promise that resolves when playback ends.
- * @param onPlaybackStart - called right before audio playback begins (after fetch+decode)
- */
-export async function speak(text: string, voice?: string, speed?: number, onPlaybackStart?: () => void): Promise<void> {
-	if (!audioContext) {
-		audioContext = new AudioContext();
+function stopCurrentPlayback(): void {
+	if (currentPlayback) {
+		currentPlayback.stop();
+		return;
 	}
+	audioElement?.pause();
+}
 
-	// Stop any currently playing audio and abort in-flight fetch BEFORE any await,
-	// so interruptTTS() called during async operations (e.g. audioContext.resume) can
-	// still cancel this invocation via the abort signal.
-	if (currentSource) {
-		try { currentSource.stop(audioContext ? audioContext.currentTime : 0); } catch { /* already stopped */ }
-		try { currentSource.disconnect(); } catch { /* already disconnected */ }
-		currentSource = null;
-	}
-	if (currentAbort) {
-		currentAbort.abort();
-	}
-	const abort = new AbortController();
-	currentAbort = abort;
+function mediaErrorName(code: number): string {
+	return ({ 1: 'aborted', 2: 'network', 3: 'decode', 4: 'source-not-supported' } as Record<number, string>)[code] ?? 'unknown';
+}
 
-	if (audioContext.state === 'suspended') {
-		await audioContext.resume();
-	}
+function mediaState(player: HTMLAudioElement): string {
+	return `readyState=${player.readyState}, networkState=${player.networkState}`;
+}
 
-	// If we were interrupted while waiting for resume, bail out.
-	if (abort !== currentAbort || abort.signal.aborted) return;
-
-	lastSpokenText = text;
-
-	const key = cacheKey(text, voice, speed);
-	let audioBuffer: AudioBuffer;
-
-	// Check cache first
-	const cached = audioCache.get(key);
-	if (cached) {
-		audioBuffer = cached;
-		audioCache.delete(key);
-	} else {
-		audioBuffer = await fetchTTSBuffer(text, voice, speed, abort.signal);
-	}
-
-	// Check if cancelled or superseded during fetch/decode
-	if (abort !== currentAbort || abort.signal.aborted) return;
+function playSource(src: string, onPlaybackStart?: () => void, objectUrl?: string, sourceInfo?: string): Promise<void> {
+	stopCurrentPlayback();
+	const player = getAudioElement();
+	player.src = src;
+	player.load();
 
 	return new Promise<void>((resolve, reject) => {
-		const source = audioContext!.createBufferSource();
-		source.buffer = audioBuffer;
-		source.connect(audioContext!.destination);
-		currentSource = source;
+		let settled = false;
+		let started = false;
 
-		source.onended = () => {
-			currentSource = null;
-			resolve();
+		// Two watchdogs, NOT an absolute cap on playback length. `startTimer` guards the time
+		// until audio actually begins (decode/autoplay problems). `stallTimer` is (re)armed on
+		// every progress tick once playing, so it only fires if a *playing* clip wedges. A flat
+		// timeout on the whole promise would cut off any card longer than the timeout.
+		const START_TIMEOUT_MS = 10000;
+		const STALL_TIMEOUT_MS = 10000;
+		let startTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+			settle(new Error(`TTS playback failed to start (${sourceInfo ?? 'unknown source'}; ${mediaState(player)})`));
+		}, START_TIMEOUT_MS);
+		let stallTimer: ReturnType<typeof setTimeout> | null = null;
+
+		const armStallTimer = () => {
+			if (stallTimer) clearTimeout(stallTimer);
+			stallTimer = setTimeout(() => {
+				settle(new Error(`TTS playback stalled (${sourceInfo ?? 'unknown source'}; ${mediaState(player)})`));
+			}, STALL_TIMEOUT_MS);
 		};
 
-		try {
+		const cleanup = () => {
+			if (startTimer) clearTimeout(startTimer);
+			if (stallTimer) clearTimeout(stallTimer);
+			player.removeEventListener('playing', handlePlaying);
+			player.removeEventListener('timeupdate', handleProgress);
+			player.removeEventListener('ended', handleEnded);
+			player.removeEventListener('error', handleError);
+			if (objectUrl) URL.revokeObjectURL(objectUrl);
+		};
+		const settle = (error?: Error) => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			// Never leave a failed clip audibly playing on the shared element.
+			if (error) player.pause();
+			if (currentPlayback?.stop === stop) currentPlayback = null;
+			if (error) reject(error);
+			else resolve();
+		};
+		const stop = () => {
+			player.pause();
+			settle();
+		};
+		const handlePlaying = () => {
+			if (startTimer) {
+				clearTimeout(startTimer);
+				startTimer = null;
+			}
+			armStallTimer();
+			if (started) return;
+			started = true;
 			onPlaybackStart?.();
-			source.start(0);
-		} catch (err) {
-			currentSource = null;
-			reject(err);
-		}
+		};
+		const handleProgress = () => {
+			if (started) armStallTimer();
+		};
+		const handleEnded = () => settle();
+		const handleError = () => settle(new Error(
+			`TTS media error: ${player.error ? `${mediaErrorName(player.error.code)} (${player.error.code})` : 'unknown'} (${sourceInfo ?? 'unknown source'}; ${mediaState(player)})`
+		));
+
+		currentPlayback = { stop };
+		player.addEventListener('playing', handlePlaying);
+		player.addEventListener('timeupdate', handleProgress);
+		player.addEventListener('ended', handleEnded);
+		player.addEventListener('error', handleError);
+		player.play().catch((error: unknown) => {
+			settle(new Error(`TTS play() rejected: ${errorDetail(error)} (${sourceInfo ?? 'unknown source'}; ${mediaState(player)})`));
+		});
 	});
 }
 
-/**
- * Stop the currently playing audio source.
- */
+/** Fetch ElevenLabs TTS and play it through the one iOS-authorized media element. */
+export async function speak(text: string, voice?: string, speed?: number, onPlaybackStart?: () => void): Promise<void> {
+	stopPlayback();
+	const abort = new AbortController();
+	currentAbort = abort;
+	lastSpokenText = text;
+
+	const key = cacheKey(text, voice, speed);
+	let audio = audioCache.get(key);
+	if (audio) {
+		audioCache.delete(key);
+	} else {
+		const preload = audioPreloads.get(key);
+		if (preload) {
+			try {
+				audio = await preload;
+				audioCache.delete(key);
+			} catch {
+				if (abort.signal.aborted) return;
+				audio = await fetchTTSAudio(text, voice, speed, abort.signal);
+			}
+		} else {
+			audio = await fetchTTSAudio(text, voice, speed, abort.signal);
+		}
+	}
+
+	if (abort !== currentAbort || abort.signal.aborted) return;
+
+	const mime = audio.type || 'audio/mpeg';
+	const support = getAudioElement().canPlayType(mime);
+	if (!support) throw new Error(`Safari reports unsupported TTS format: ${mime} (${audio.size} bytes)`);
+
+	const objectUrl = URL.createObjectURL(audio);
+	try {
+		await playSource(objectUrl, onPlaybackStart, objectUrl, `${mime}, ${audio.size} bytes, canPlayType=${support}`);
+	} finally {
+		if (currentAbort === abort) currentAbort = null;
+	}
+}
+
 export function stopPlayback(): void {
-	// Abort any in-flight TTS fetch
 	if (currentAbort) {
 		currentAbort.abort();
 		currentAbort = null;
 	}
-
-	if (currentSource) {
-		try {
-			// Pass explicit time so iOS Safari stops immediately rather than at next quantum
-			currentSource.stop(audioContext ? audioContext.currentTime : 0);
-		} catch {
-			// Already stopped
-		}
-		try {
-			currentSource.disconnect();
-		} catch {
-			// Already disconnected
-		}
-		currentSource = null;
-	}
+	stopCurrentPlayback();
 }
 
-/**
- * Get the last spoken text (for "repeat" command support).
- */
 export function getLastSpokenText(): string {
 	return lastSpokenText;
 }
 
-/**
- * Play an audio file from a URL (e.g., chime sound).
- */
-export async function playSound(url: string): Promise<void> {
-	if (!audioContext) {
-		audioContext = new AudioContext();
-	}
-
-	const response = await fetch(url);
-	const arrayBuffer = await response.arrayBuffer();
-	const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-
-	return new Promise<void>((resolve) => {
-		const source = audioContext!.createBufferSource();
-		source.buffer = audioBuffer;
-		source.connect(audioContext!.destination);
-		source.onended = () => resolve();
-		source.start(0);
-	});
+/** Play chimes through the same authorized media element. */
+export function playSound(url: string): Promise<void> {
+	return playSource(url);
 }

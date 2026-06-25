@@ -4,7 +4,7 @@
 	import CardEditModal from '$lib/components/CardEditModal.svelte';
 	import { t } from '$lib/i18n';
 	import Spinner from '$lib/components/Spinner.svelte';
-	import { sanitizeCardHtml } from '$lib/sanitize';
+	import { clientCardSanitizer } from '$lib/client/card-sanitize';
 	import type { BrowseCard, NoteField } from '$lib/types';
 
 	const deckId = $derived($page.params.id);
@@ -164,10 +164,7 @@
 		try {
 			const fields: NoteField[] = JSON.parse(fieldsJson);
 			const raw = fields[0]?.value ?? '';
-			// Strip HTML
-			const div = document.createElement('div');
-			div.innerHTML = sanitizeCardHtml(raw);
-			return div.textContent ?? '';
+			return clientCardSanitizer.toText(raw);
 		} catch {
 			return '';
 		}

@@ -10,6 +10,20 @@
 		locale.set(l);
 	}
 
+	let loggingOut = $state(false);
+	async function logout() {
+		loggingOut = true;
+		try {
+			const { register } = await import('@teamhanko/hanko-elements');
+			const { env } = await import('$env/dynamic/public');
+			const { hanko } = await register(env.PUBLIC_HANKO_API_URL!);
+			await hanko.user.logout();
+			window.location.href = '/login';
+		} catch {
+			loggingOut = false;
+		}
+	}
+
 	let current = $state<Locale>('en');
 	let prepareAudioAhead = $state(true);
 	$effect(() => {
@@ -61,13 +75,170 @@
 		elevenlabs_stability: 0.5,
 		elevenlabs_similarity: 0.75,
 		elevenlabs_style: 0.0,
-		elevenlabs_speaker_boost: true
+		elevenlabs_speaker_boost: true,
+		elevenlabs_agent_id: null
 	});
 	let savingVoiceSettings = $state(false);
 	let voiceSettingsMessage = $state<{ text: string; ok: boolean } | null>(null);
 
 	let usageData = $state<UsageData | null>(null);
 	let loadingUsage = $state(false);
+
+	/**
+	 * Agent conversation usage logged through AnkiTalk this month. ElevenLabs doesn't
+	 * expose CAI minutes via API, so this is a local-only tally — see the note rendered
+	 * below the figure.
+	 */
+	let agentUsage = $state<{ month_seconds: number; month_cost_usd: number } | null>(null);
+	type AgentReadinessIssue = 'agent_not_configured' | 'agent_not_found' | 'invalid_api_key' | 'insufficient_permissions' | 'agent_auth_disabled' | 'agent_overrides_missing' | 'agent_session_unavailable' | 'mcp_server_not_found' | 'mcp_auth_failed' | 'mcp_not_assigned' | 'mcp_tools_missing' | 'elevenlabs_unavailable';
+	interface AgentReadiness {
+		ready: boolean;
+		issues: AgentReadinessIssue[];
+		agent: { configured: boolean; reachable: boolean; authentication_enabled: boolean; session_available: boolean; missing_overrides: string[] };
+		mcp: { server_found: boolean; authenticated: boolean; assigned_to_agent: boolean; tools_found: string[]; missing_tools: string[] };
+	}
+	let agentReadiness = $state<AgentReadiness | null>(null);
+	let checkingAgentReadiness = $state(false);
+	let loadingAgentConfiguration = $state(true);
+
+	async function checkAgentSetup() {
+		if (checkingAgentReadiness) return;
+		checkingAgentReadiness = true;
+		try {
+			const res = await fetch('/api/settings/agent-readiness', { cache: 'no-store' });
+			agentReadiness = res.ok ? await res.json() as AgentReadiness : null;
+		} catch {
+			agentReadiness = null;
+		} finally {
+			checkingAgentReadiness = false;
+		}
+	}
+
+	function readinessIssueText(issue: AgentReadinessIssue): string {
+		if (issue === 'agent_overrides_missing') {
+			const labels: Record<string, string> = {
+				prompt: $t('settings.agent.readiness.override.prompt'),
+				first_message: $t('settings.agent.readiness.override.firstMessage'),
+				language: $t('settings.agent.readiness.override.language'),
+				voice_id: $t('settings.agent.readiness.override.voice')
+			};
+			const fields = agentReadiness?.agent.missing_overrides.map((field) => labels[field] ?? field).join(', ') ?? '';
+			return $t(`settings.agent.readiness.issues.${issue}`, { fields });
+		}
+		return $t(`settings.agent.readiness.issues.${issue}`);
+	}
+
+	type SetupAction = { issue: AgentReadinessIssue; href: string; external: boolean; labelKey: string };
+	function setupAction(readiness: AgentReadiness | null): SetupAction | null {
+		const issue = readiness?.issues[0];
+		if (!issue) return null;
+		if (issue === 'invalid_api_key' || issue === 'insufficient_permissions') {
+			return { issue, href: serviceHrefs.elevenlabs, external: true, labelKey: 'settings.agent.readiness.action.apiKey' };
+		}
+		if (issue === 'agent_not_configured') return null;
+		if (issue === 'mcp_server_not_found' || issue === 'mcp_auth_failed') {
+			return { issue, href: '#mcp-integration', external: false, labelKey: 'settings.agent.readiness.action.mcp' };
+		}
+		return { issue, href: 'https://elevenlabs.io/app/agents', external: true, labelKey: 'settings.agent.readiness.action.agent' };
+	}
+	const nextSetupAction = $derived(setupAction(agentReadiness));
+
+	type ElevenLabsCapability = 'speech_to_text' | 'text_to_speech' | 'voices_read' | 'user_read';
+	const elevenLabsCapabilityKeys: Record<ElevenLabsCapability, string> = {
+		speech_to_text: 'settings.apiKeys.elevenlabsPerms.stt',
+		text_to_speech: 'settings.apiKeys.elevenlabsPerms.tts',
+		voices_read: 'settings.apiKeys.elevenlabsPerms.voices',
+		user_read: 'settings.apiKeys.elevenlabsPerms.user'
+	};
+
+	function elevenLabsPermissionError(capability: unknown): string {
+		if (typeof capability !== 'string' || !(capability in elevenLabsCapabilityKeys)) {
+			return $t('settings.apiKeys.elevenlabsPermissions');
+		}
+		return $t('settings.apiKeys.elevenlabsPermissionMissing', {
+			permission: $t(elevenLabsCapabilityKeys[capability as ElevenLabsCapability])
+		});
+	}
+
+	// MCP token management. Plaintext tokens are only available at creation time; after
+	// that we only ever show the prefix and metadata. `mcpTokenJustCreated` holds the
+	// one-time-visible plaintext briefly while the user copies it.
+	interface McpTokenRow {
+		id: string;
+		prefix: string;
+		label: string | null;
+		created_at: string;
+		last_used_at: string | null;
+		scopes: string;
+		expires_at: string | null;
+	}
+	let mcpTokens = $state<McpTokenRow[]>([]);
+	let mcpTokenJustCreated = $state<string | null>(null);
+	let creatingMcpToken = $state(false);
+	let mcpTokenProfile = $state<'study' | 'author'>('study');
+	let mcpEndpointCopied = $state(false);
+	const mcpEndpointUrl = $derived(
+		typeof window === 'undefined' ? '/api/mcp' : `${window.location.origin}/api/mcp`
+	);
+
+	async function loadMcpTokens() {
+		try {
+			const res = await fetch('/api/mcp/tokens');
+			if (res.ok) {
+				const data = (await res.json()) as { tokens: McpTokenRow[] };
+				mcpTokens = data.tokens;
+			}
+		} catch {
+			// silent — settings page already handles its own loading state elsewhere
+		}
+	}
+
+	async function createMcpToken() {
+		if (creatingMcpToken) return;
+		creatingMcpToken = true;
+		try {
+			const res = await fetch('/api/mcp/tokens', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ label: '', profile: mcpTokenProfile, expires_in_days: 365 })
+			});
+			if (res.ok) {
+				const data = (await res.json()) as { plaintext: string };
+				mcpTokenJustCreated = data.plaintext;
+				await loadMcpTokens();
+			}
+		} finally {
+			creatingMcpToken = false;
+		}
+	}
+
+	async function revokeMcpToken(id: string) {
+		// In-place removal first so the UI feels instant; reload on success to pick up any
+		// concurrent changes from a second tab.
+		mcpTokens = mcpTokens.filter((t) => t.id !== id);
+		try {
+			await fetch(`/api/mcp/tokens/${id}`, { method: 'DELETE' });
+		} catch {
+			/* silent — UI already reflects the intent */
+		}
+		await loadMcpTokens();
+	}
+
+	async function copyToClipboard(text: string): Promise<boolean> {
+		try {
+			await navigator.clipboard.writeText(text);
+			return true;
+		} catch {
+			/* clipboard blocked in some browsers — user can still select and copy manually */
+			return false;
+		}
+	}
+
+	async function copyMcpEndpoint() {
+		if (!await copyToClipboard(mcpEndpointUrl)) return;
+		mcpEndpointCopied = true;
+		setTimeout(() => { mcpEndpointCopied = false; }, 2000);
+	}
 
 	const serviceLinks: Record<Service, string> = {
 		openai: 'platform.openai.com/api-keys',
@@ -105,13 +276,18 @@
 		} catch {
 			// defaults stay active
 		}
+		loadingAgentConfiguration = false;
+		if (keyStatus.elevenlabs && voiceSettings.elevenlabs_agent_id) void checkAgentSetup();
 
 		loadingUsage = true;
 		try {
-			const res = await fetch('/api/settings/usage');
-			if (res.ok) {
-				usageData = await res.json() as UsageData;
-			}
+			const [usageRes, agentRes] = await Promise.all([
+				fetch('/api/settings/usage'),
+				fetch('/api/agent/usage'),
+				loadMcpTokens()
+			]);
+			if (usageRes.ok) usageData = await usageRes.json() as UsageData;
+			if (agentRes.ok) agentUsage = await agentRes.json();
 		} catch {
 			// silently ignore
 		} finally {
@@ -148,6 +324,7 @@
 				voiceSettings = data.settings;
 				voiceSettingsMessage = { text: $t('settings.voice.saved'), ok: true };
 				setTimeout(() => { voiceSettingsMessage = null; }, 2000);
+				if (data.settings.elevenlabs_agent_id !== previousSettings.elevenlabs_agent_id && keyStatus.elevenlabs) void checkAgentSetup();
 			} else {
 				throw new Error('Failed to save voice settings');
 			}
@@ -198,14 +375,18 @@
 				keyInputs[service] = '';
 				expanded[service] = false;
 				messages[service] = { text: $t('settings.apiKeys.saved'), ok: true };
+				if (service === 'elevenlabs' && voiceSettings.elevenlabs_agent_id) void checkAgentSetup();
 			} else {
+				const errorBody = await res.json().catch(() => null) as { missing_permission?: unknown } | null;
+				if (res.status === 403 && service === 'elevenlabs') {
+					messages[service] = { text: elevenLabsPermissionError(errorBody?.missing_permission), ok: false };
+					return;
+				}
 				const errKey = res.status === 429
 					? 'settings.apiKeys.rateLimited'
 					: res.status === 403 && service === 'deepgram'
 						? 'settings.apiKeys.deepgramPermissions'
-						: res.status === 403 && service === 'elevenlabs'
-							? 'settings.apiKeys.elevenlabsPermissions'
-							: 'settings.apiKeys.invalid';
+						: 'settings.apiKeys.invalid';
 				messages[service] = { text: $t(errKey), ok: false };
 			}
 		} catch {
@@ -246,8 +427,8 @@
 	}
 
 	const primaryServices: Service[] = ['elevenlabs'];
-	const advancedServices: Service[] = ['openai', 'deepgram', 'anthropic'];
-	const usageServices: Service[] = ['elevenlabs', 'openai', 'deepgram', 'anthropic'];
+	const advancedServices: Service[] = ['openai', 'deepgram'];
+	const usageServices: Service[] = ['elevenlabs', 'openai', 'deepgram'];
 	const voiceCommandLanguages: VoiceCommandLanguage[] = ['auto', 'en', 'de'];
 
 	function serviceLabel(s: Service): string {
@@ -431,6 +612,7 @@
 								<ul class="perm-list">
 									<li>{$t('settings.apiKeys.elevenlabsPerms.tts')}</li>
 									<li>{$t('settings.apiKeys.elevenlabsPerms.stt')}</li>
+									<li>{$t('settings.apiKeys.elevenlabsPerms.agents')}</li>
 									<li>{$t('settings.apiKeys.elevenlabsPerms.voices')}</li>
 									<li>{$t('settings.apiKeys.elevenlabsPerms.user')}</li>
 								</ul>
@@ -542,6 +724,201 @@
 	</section>
 
 	<section class="section">
+		<h2>
+			{$t('settings.agent.title')}
+			{#if loadingAgentConfiguration || checkingAgentReadiness}
+				<span class="badge badge--checking">{$t('settings.agent.readiness.checking')}</span>
+			{:else if agentReadiness?.ready}
+				<span class="badge badge--configured">{$t('settings.apiKeys.configured')}</span>
+			{:else}
+				<span class="badge badge--not-configured">{$t('settings.apiKeys.notConfigured')}</span>
+			{/if}
+		</h2>
+		<p class="section-desc">{$t('settings.agent.desc')}</p>
+
+		<details class="agent-setup">
+			<summary>{$t('settings.agent.setupTitle')}</summary>
+			<ol class="agent-setup-steps">
+				<li>{$t('settings.agent.setupStep1')} <a href="https://elevenlabs.io/app/agents" target="_blank" rel="noopener noreferrer">{$t('settings.agent.dashboardLink')} →</a></li>
+				<li>{$t('settings.agent.setupStep2')}</li>
+				<li>{$t('settings.agent.setupStep3')}</li>
+				<li>{$t('settings.agent.setupStep4')}</li>
+				<li>{$t('settings.agent.setupStep5')}</li>
+			</ol>
+			<p class="agent-help agent-help--warn">{$t('settings.agent.setupScopeWarning')}</p>
+		</details>
+
+		<label class="agent-field">
+			<span class="agent-label">{$t('settings.agent.agentIdLabel')}</span>
+			<input
+				type="text"
+				class="agent-input"
+				placeholder={$t('settings.agent.agentIdPlaceholder')}
+				value={voiceSettings.elevenlabs_agent_id ?? ''}
+				onblur={(e) => {
+					const next = (e.currentTarget as HTMLInputElement).value.trim();
+					const previous = { ...voiceSettings };
+					void saveVoiceSettings({ ...voiceSettings, elevenlabs_agent_id: next || null }, previous);
+				}}
+			/>
+		</label>
+		<p class="agent-help">{$t('settings.agent.agentIdHelp')}</p>
+
+		<div class="agent-readiness" class:agent-readiness--ready={agentReadiness?.ready}>
+			<div class="agent-readiness-head">
+				<div>
+					<strong>{agentReadiness?.ready ? $t('settings.agent.readiness.ready') : $t('settings.agent.readiness.title')}</strong>
+					<p>{agentReadiness?.ready ? $t('settings.agent.readiness.readyDesc') : $t('settings.agent.readiness.desc')}</p>
+				</div>
+				<button class="action-btn" type="button" onclick={checkAgentSetup} disabled={checkingAgentReadiness}>
+					{checkingAgentReadiness ? $t('settings.agent.readiness.checking') : $t('settings.agent.readiness.check')}
+				</button>
+			</div>
+			{#if agentReadiness}
+				<ul class="agent-readiness-list">
+					<li class:ok={agentReadiness.agent.reachable}>{agentReadiness.agent.reachable ? '✓' : '○'} {$t('settings.agent.readiness.agent')}</li>
+					<li class:ok={agentReadiness.agent.authentication_enabled}>{agentReadiness.agent.authentication_enabled ? '✓' : '○'} {$t('settings.agent.readiness.security')}</li>
+					<li class:ok={agentReadiness.agent.missing_overrides.length === 0}>{agentReadiness.agent.missing_overrides.length === 0 ? '✓' : '○'} {$t('settings.agent.readiness.overrides')}</li>
+					<li class:ok={agentReadiness.agent.session_available}>{agentReadiness.agent.session_available ? '✓' : '○'} {$t('settings.agent.readiness.session')}</li>
+					<li class:ok={agentReadiness.mcp.server_found}>{agentReadiness.mcp.server_found ? '✓' : '○'} {$t('settings.agent.readiness.server')}</li>
+					<li class:ok={agentReadiness.mcp.authenticated}>{agentReadiness.mcp.authenticated ? '✓' : '○'} {$t('settings.agent.readiness.auth')}</li>
+					<li class:ok={agentReadiness.mcp.assigned_to_agent}>{agentReadiness.mcp.assigned_to_agent ? '✓' : '○'} {$t('settings.agent.readiness.assignment')}</li>
+					<li class:ok={agentReadiness.mcp.authenticated && agentReadiness.mcp.missing_tools.length === 0}>{agentReadiness.mcp.authenticated && agentReadiness.mcp.missing_tools.length === 0 ? '✓' : '○'} {$t('settings.agent.readiness.tools', { count: agentReadiness.mcp.tools_found.length })}</li>
+				</ul>
+				{#if agentReadiness.issues.length && !nextSetupAction}
+					<div class="agent-readiness-issues">
+						{#each agentReadiness.issues as issue}<p>{readinessIssueText(issue)}</p>{/each}
+					</div>
+				{:else if agentReadiness.issues.length > 1}
+					<div class="agent-readiness-issues">
+						{#each agentReadiness.issues.slice(1) as issue}<p>{readinessIssueText(issue)}</p>{/each}
+					</div>
+				{/if}
+				{#if nextSetupAction}
+					<div class="agent-readiness-next">
+						<strong>{$t('settings.agent.readiness.nextStep')}</strong>
+						<p>{readinessIssueText(nextSetupAction.issue)}</p>
+						<a
+							class="action-btn agent-readiness-action"
+							href={nextSetupAction.href}
+							target={nextSetupAction.external ? '_blank' : undefined}
+							rel={nextSetupAction.external ? 'noopener noreferrer' : undefined}
+						>
+							{$t(nextSetupAction.labelKey)} →
+						</a>
+					</div>
+				{/if}
+			{/if}
+		</div>
+
+		<div class="agent-usage">
+			<div class="agent-usage-head">
+				<strong>{$t('settings.agent.usageTitle')}</strong>
+			</div>
+			<div class="agent-usage-body">
+				<span>{$t('settings.agent.usageMinutes', { minutes: Math.round((agentUsage?.month_seconds ?? 0) / 60) })}</span>
+				<span class="agent-usage-cost">{$t('settings.agent.usageCost', { cost: (agentUsage?.month_cost_usd ?? 0).toFixed(2) })}</span>
+			</div>
+			<p class="agent-usage-note">{$t('settings.agent.usageNote')}</p>
+			<p class="agent-help">
+				<a href="https://elevenlabs.io/app/usage" target="_blank" rel="noopener noreferrer">
+					{$t('settings.agent.usageDashboardLink')} →
+				</a>
+			</p>
+		</div>
+
+		<div class="agent-tuning">
+			<strong>{$t('settings.agent.tuningTitle')}</strong>
+			<p>{$t('settings.agent.tuningDesc')}</p>
+			<p class="agent-help">
+				<a href="https://elevenlabs.io/app/agents" target="_blank" rel="noopener noreferrer">
+					{$t('settings.agent.tuningDashboardLink')} →
+				</a>
+			</p>
+			<p class="agent-help">
+				<a href="https://elevenlabs.io/docs/eleven-agents/customization/conversation-flow" target="_blank" rel="noopener noreferrer">
+					{$t('settings.agent.tuningDocsLink')} →
+				</a>
+			</p>
+		</div>
+	</section>
+
+	<section class="section" id="mcp-integration">
+		<h2>{$t('settings.mcp.title')}</h2>
+		<p class="section-desc">{$t('settings.mcp.desc')}</p>
+
+		<div class="mcp-endpoint">
+			<span class="agent-label">{$t('settings.mcp.endpointLabel')}</span>
+			<div class="mcp-endpoint-row">
+				<input type="text" class="agent-input mcp-endpoint-input" value={mcpEndpointUrl} readonly />
+				<button class="action-btn" type="button" onclick={copyMcpEndpoint}>
+					{mcpEndpointCopied ? $t('settings.mcp.copied') : $t('settings.mcp.copy')}
+				</button>
+			</div>
+		</div>
+		<p class="agent-help">{$t('settings.mcp.endpointHelp')}</p>
+
+		<details class="agent-setup">
+			<summary>{$t('settings.mcp.howToTitle')}</summary>
+			<ol class="agent-setup-steps">
+				<li>{$t('settings.mcp.howTo1')}</li>
+				<li>{$t('settings.mcp.howTo2')}</li>
+				<li>{$t('settings.mcp.howTo3')}</li>
+				<li>{$t('settings.mcp.howTo4')}</li>
+			</ol>
+		</details>
+
+		<div class="mcp-tokens-head">
+			<strong>{$t('settings.mcp.tokensTitle')}</strong>
+			<div class="mcp-token-create-controls">
+				<select class="agent-input mcp-profile-select" bind:value={mcpTokenProfile} aria-label={$t('settings.mcp.profileLabel')}>
+					<option value="study">{$t('settings.mcp.profileStudy')}</option>
+					<option value="author">{$t('settings.mcp.profileAuthor')}</option>
+				</select>
+				<button class="action-btn" type="button" onclick={createMcpToken} disabled={creatingMcpToken}>
+					{creatingMcpToken ? $t('common.saving') : $t('settings.mcp.createToken')}
+				</button>
+			</div>
+		</div>
+
+		{#if mcpTokenJustCreated}
+			<div class="mcp-fresh">
+				<p class="mcp-fresh-warn">{$t('settings.mcp.copyOnce')}</p>
+				<div class="mcp-fresh-row">
+					<code class="mcp-fresh-token">{mcpTokenJustCreated}</code>
+					<button class="action-btn" type="button" onclick={() => copyToClipboard(mcpTokenJustCreated ?? '')}>{$t('settings.mcp.copy')}</button>
+				</div>
+				<button class="action-btn" type="button" onclick={() => (mcpTokenJustCreated = null)}>{$t('common.dismiss')}</button>
+			</div>
+		{/if}
+
+		{#if mcpTokens.length === 0}
+			<p class="muted">{$t('settings.mcp.noTokens')}</p>
+		{:else}
+			<ul class="mcp-tokens">
+				<!-- `tok` rather than `t` so the local variable doesn't shadow the i18n store. -->
+				{#each mcpTokens as tok (tok.id)}
+					<li class="mcp-token">
+						<div class="mcp-token-meta">
+							<code class="mcp-token-prefix">{tok.prefix}…</code>
+							{#if tok.label}<span class="mcp-token-label">{tok.label}</span>{/if}
+							<span class="mcp-token-when">{tok.scopes.includes('cards:write') ? $t('settings.mcp.profileAuthor') : $t('settings.mcp.profileStudy')}</span>
+							<span class="mcp-token-when">{$t('settings.mcp.createdAt', { date: tok.created_at })}</span>
+							{#if tok.expires_at}<span class="mcp-token-when">{$t('settings.mcp.expiresAt', { date: tok.expires_at })}</span>{/if}
+							{#if tok.last_used_at}
+								<span class="mcp-token-when">{$t('settings.mcp.lastUsedAt', { date: tok.last_used_at })}</span>
+							{:else}
+								<span class="mcp-token-when muted">{$t('settings.mcp.neverUsed')}</span>
+							{/if}
+						</div>
+						<button class="action-btn" type="button" onclick={() => revokeMcpToken(tok.id)}>{$t('settings.mcp.revoke')}</button>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</section>
+
+	<section class="section">
 		<h2>{$t('settings.usage.title')}</h2>
 		{#if loadingUsage}
 			<div class="usage-loading"><Spinner size={22} /></div>
@@ -574,6 +951,14 @@
 			</div>
 			<p class="usage-note">{$t('settings.usage.note')}</p>
 		{/if}
+	</section>
+
+	<section class="section account-section">
+		<button class="logout-btn" type="button" onclick={logout} disabled={loggingOut}>
+			{#if loggingOut}<Spinner size={14} />{/if}
+			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+			{$t('nav.logout')}
+		</button>
 	</section>
 </div>
 {/key}
@@ -869,6 +1254,12 @@
 		border: 1px solid var(--border);
 	}
 
+	.badge--checking {
+		background: color-mix(in srgb, var(--primary) 14%, var(--surface));
+		color: var(--text-muted);
+		border: 1px solid color-mix(in srgb, var(--primary) 35%, var(--border));
+	}
+
 	.action-btn {
 		background: var(--surface);
 		border: 1px solid var(--border);
@@ -1144,4 +1535,131 @@
 		color: #5a5a7a;
 		font-size: 0.88rem;
 	}
+
+	/* Conversational tutor (Lernen agent) settings block. */
+	.agent-field { display: block; margin: 0.8rem 0 0.4rem; }
+	.agent-label { display: block; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.3rem; font-weight: 600; }
+	.agent-input {
+		width: 100%; box-sizing: border-box;
+		padding: 0.55rem 0.7rem; border-radius: 7px;
+		background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+		font-size: 0.95rem; font-family: monospace;
+	}
+	.agent-input:focus { outline: none; border-color: var(--border-strong); }
+	.agent-help { font-size: 0.78rem; color: var(--text-muted); margin: 0.3rem 0; line-height: 1.4; }
+	.agent-help a { color: var(--primary); text-decoration: underline; }
+	.agent-usage {
+		margin-top: 1rem; padding: 0.7rem 0.85rem;
+		background: var(--surface); border: 1px solid var(--border-muted);
+		border-radius: 10px;
+	}
+	.agent-tuning {
+		margin-top: 1rem; padding: 0.7rem 0.85rem;
+		background: var(--surface); border: 1px solid var(--border-muted);
+		border-radius: 10px;
+		font-size: 0.9rem; color: var(--text);
+	}
+	.agent-tuning strong { display: block; margin-bottom: 0.35rem; }
+	.agent-tuning p { margin: 0.35rem 0 0; color: var(--text-muted); }
+	.agent-usage-head { margin-bottom: 0.35rem; font-size: 0.9rem; color: var(--text); }
+	.agent-usage-body {
+		display: flex; align-items: baseline; gap: 0.6rem;
+		font-size: 1rem; color: var(--text);
+		font-variant-numeric: tabular-nums;
+	}
+	.agent-usage-cost { color: var(--text-muted); font-size: 0.85rem; }
+	.agent-usage-note { font-size: 0.78rem; color: var(--text-subtle); margin: 0.45rem 0 0.25rem; line-height: 1.4; }
+
+	/* Numbered setup checklist used by both the agent and MCP panels. */
+	.agent-setup {
+		margin: 0.6rem 0 0.8rem;
+		background: var(--surface);
+		border: 1px solid var(--border-muted);
+		border-radius: 8px;
+		padding: 0.55rem 0.8rem;
+	}
+	.agent-setup summary {
+		cursor: pointer; font-size: 0.85rem; color: var(--text); font-weight: 600;
+		list-style: none;
+	}
+	.agent-setup summary::-webkit-details-marker { display: none; }
+	.agent-setup summary::before { content: '▸ '; color: var(--text-muted); }
+	.agent-setup[open] summary::before { content: '▾ '; }
+	.agent-setup-steps {
+		margin: 0.6rem 0 0.3rem 1.1rem; padding: 0;
+		font-size: 0.84rem; color: var(--text-muted); line-height: 1.55;
+	}
+	.agent-setup-steps li { margin-bottom: 0.25rem; }
+	.agent-setup-steps a { color: var(--primary); text-decoration: underline; }
+	.agent-help--warn { color: var(--warning); }
+
+	/* MCP-specific styling: endpoint URL field, tokens list. */
+	.mcp-endpoint { display: block; margin: 0.4rem 0 0.3rem; }
+	.mcp-endpoint-row { display: flex; align-items: center; gap: 0.45rem; }
+	.mcp-endpoint-input { min-width: 0; font-size: 0.8rem; }
+	.mcp-tokens-head {
+		display: flex; align-items: center; justify-content: space-between;
+		margin: 0.9rem 0 0.5rem;
+	}
+	.mcp-token-create-controls { display: flex; align-items: center; gap: 0.45rem; }
+	.mcp-profile-select { width: auto; min-width: 150px; font-size: 0.78rem; padding: 0.42rem 0.55rem; }
+	.mcp-fresh {
+		background: var(--surface-2); border: 1px solid var(--warning);
+		border-radius: 8px; padding: 0.7rem; margin-bottom: 0.7rem;
+		display: flex; flex-direction: column; gap: 0.5rem;
+	}
+	.mcp-fresh-warn { font-size: 0.82rem; color: var(--warning); margin: 0; font-weight: 600; }
+	.mcp-fresh-row { display: flex; align-items: center; gap: 0.5rem; }
+	.mcp-fresh-token {
+		flex: 1; min-width: 0;
+		font-family: monospace; font-size: 0.78rem;
+		padding: 0.4rem 0.55rem;
+		background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+		overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+	}
+	.mcp-tokens { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.45rem; }
+	.mcp-token {
+		display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
+		padding: 0.55rem 0.7rem;
+		background: var(--surface); border: 1px solid var(--border-muted); border-radius: 8px;
+		font-size: 0.85rem;
+	}
+	.mcp-token-meta { display: flex; flex-wrap: wrap; gap: 0.4rem 0.7rem; align-items: baseline; min-width: 0; }
+	.mcp-token-prefix { font-family: monospace; color: var(--text); }
+	.mcp-token-label { color: var(--text-muted); }
+	.mcp-token-when { font-size: 0.75rem; color: var(--text-subtle); }
+	.agent-readiness { margin: 1rem 0; padding: 0.9rem; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-subtle); }
+	.agent-readiness--ready { border-color: color-mix(in srgb, #34c759 55%, var(--border)); }
+	.agent-readiness-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; }
+	.agent-readiness-head p { margin: 0.2rem 0 0; color: var(--text-muted); font-size: 0.82rem; }
+	.agent-readiness-list { list-style: none; padding: 0; margin: 0.75rem 0 0; display: grid; gap: 0.35rem; font-size: 0.82rem; color: var(--text-muted); }
+	.agent-readiness-list li.ok { color: #25a244; }
+	.agent-readiness-issues { margin-top: 0.75rem; padding: 0.65rem; border-radius: var(--r-sm); background: color-mix(in srgb, var(--warning) 10%, transparent); }
+	.agent-readiness-issues p { margin: 0.2rem 0; font-size: 0.8rem; color: var(--text); }
+	.agent-readiness-next { margin-top: 0.75rem; padding: 0.75rem; border-radius: var(--r-sm); background: color-mix(in srgb, var(--primary) 9%, var(--surface)); }
+	.agent-readiness-next p { margin: 0.25rem 0 0.65rem; font-size: 0.82rem; color: var(--text); line-height: 1.45; }
+	.agent-readiness-action { display: inline-flex; width: fit-content; text-decoration: none; }
+
+	@media (max-width: 520px) {
+		.agent-readiness-head { flex-direction: column; }
+		.agent-readiness-head .action-btn { width: 100%; justify-content: center; }
+		.agent-readiness-action { width: 100%; justify-content: center; }
+		.mcp-token-create-controls { width: 100%; flex-direction: column; align-items: stretch; }
+		.mcp-profile-select { width: 100%; }
+		.mcp-tokens-head { align-items: stretch; flex-direction: column; gap: 0.55rem; }
+	}
+
+	.account-section {
+		border-top: 1px solid var(--border-muted);
+		padding-top: 1.5rem;
+	}
+	.logout-btn {
+		display: inline-flex; align-items: center; gap: 0.5rem;
+		background: none; color: var(--danger-soft, var(--text-muted));
+		border: 1px solid var(--border-muted); border-radius: var(--r-pill);
+		padding: 0.6rem 1.1rem; font-size: 0.9rem; font-weight: 600;
+		cursor: pointer; min-height: 44px; touch-action: manipulation;
+	}
+	.logout-btn:hover:not(:disabled) { border-color: var(--danger-soft, var(--text-muted)); color: var(--text); }
+	.logout-btn:disabled { opacity: 0.6; cursor: default; }
 </style>

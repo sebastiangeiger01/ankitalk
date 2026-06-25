@@ -48,5 +48,19 @@ export const RATE_LIMITS = {
 	 * stop runaway connection churn — not bill flow. Set generously so normal pause/play/
 	 * seek/speed-change interaction never bumps it (each of those opens a new stream).
 	 */
-	listen_stream_per_minute: { limit: 60, windowSec: 60 }
+	listen_stream_per_minute: { limit: 60, windowSec: 60 },
+	/**
+	 * Agent session minting. Each session can run for minutes and bills both LLM + voice
+	 * minutes through the user's ElevenLabs Conversational AI quota. Bring-your-own-key
+	 * means the spend is the user's, but the rate limit protects them from a buggy client
+	 * (or a runaway `$effect`) opening hundreds of sessions per minute. 30/min is "you can't
+	 * possibly hit this in normal use" without being annoying.
+	 */
+	agent_session_per_minute: { limit: 30, windowSec: 60 },
+	/**
+	 * MCP tool calls. An LLM-driven agent can chain many tool calls in a single turn, so
+	 * the bucket is generous — but capped to stop a leaked token from running a
+	 * never-ending loop against D1.
+	 */
+	mcp_call_per_minute: { limit: 120, windowSec: 60 }
 } as const;

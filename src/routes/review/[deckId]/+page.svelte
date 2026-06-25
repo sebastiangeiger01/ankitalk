@@ -2,19 +2,38 @@
 	import { page } from '$app/stores';
 	import { onDestroy, onMount } from 'svelte';
 	import { createReviewEngine, type ReviewEvent, type SessionStats, type StartOptions, type IntervalLabels, type QueueCounts, type PrefetchedCards } from '$lib/client/review-engine';
-	import { preloadTTS } from '$lib/client/audio';
+	import { preloadTTS, unlockAudioForGesture } from '$lib/client/audio';
 	import { getPrepareAudioAhead } from '$lib/client/preferences';
 	import { locale, t } from '$lib/i18n';
 	import { focusTrap } from '$lib/actions/focusTrap';
-	import { sanitizeCardHtml } from '$lib/sanitize';
+	import { clientCardSanitizer } from '$lib/client/card-sanitize';
+	import { renderCard } from '$lib/client/card-renderer';
 	import type { ReviewPhase } from '$lib/types';
 	import { sttLanguageForVoiceCommandLanguage, type UserVoiceSettings } from '$lib/voice';
+	import AgentChat from '$lib/components/AgentChat.svelte';
+
+	let agentChatOpen = $state(false);
+	let agentEnabled = $state(false);
+	let tutorPausedReviewMic = false;
+	// Tutor context — populated from each card_change emit so the agent receives current
+	// card identifiers + scheduling state, not just front/back.
+	let agentCardId = $state('');
+
+	/**
+	 * Strip HTML so the agent receives clean text in its dynamic variables. The cards are
+	 * Anki-shaped — they can contain inline markup, cloze braces, audio refs — none of
+	 * which the tutor should see verbatim. We don't sanitize for safety here (the agent
+	 * isn't rendering HTML); we just want the spoken-aloud text.
+	 */
+	function plainText(html: string): string {
+		return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+	}
 
 	const deckId = $derived($page.params.deckId);
 
 	let started = $state(false);
 	let phase = $state<ReviewPhase>('question');
-	let status = $state<'idle' | 'loading' | 'speaking' | 'listening' | 'explaining' | 'hinting' | 'waiting'>('idle');
+	let status = $state<'idle' | 'loading' | 'speaking' | 'listening' | 'waiting'>('idle');
 	let cardsReviewed = $state(0);
 	let frontText = $state('');
 	let backText = $state('');
@@ -41,6 +60,7 @@
 	let helpOpen = $state(false);
 	let shortcutsOpen = $state(false);
 	let prefetchedCards = $state<PrefetchedCards | null>(null);
+	let reviewPrepared = $state(false);
 	let highlightRating = $state<string>('');
 	let highlightTimer: ReturnType<typeof setTimeout> | null = null;
 	type ApiKeyStatus = { openai: boolean; deepgram: boolean; anthropic: boolean; elevenlabs: boolean };
@@ -55,7 +75,8 @@
 		elevenlabs_stability: 0.5,
 		elevenlabs_similarity: 0.75,
 		elevenlabs_style: 0.0,
-		elevenlabs_speaker_boost: true
+		elevenlabs_speaker_boost: true,
+		elevenlabs_agent_id: null
 	});
 	let keyStatusLoading = $state(true);
 
@@ -67,6 +88,33 @@
 	);
 
 	const engine = createReviewEngine();
+	function showReviewError(message: string) {
+		errorMsg = message;
+		if (errorTimer) clearTimeout(errorTimer);
+		errorTimer = setTimeout(() => { errorMsg = ''; }, 15000);
+	}
+
+	function openTutor() {
+		if (!agentEnabled) {
+			showReviewError($t('agent.errors.noAgent'));
+			return;
+		}
+		if (micOn) {
+			tutorPausedReviewMic = true;
+			engine.toggleMic();
+		}
+		agentChatOpen = true;
+	}
+
+	function requestTutor() {
+		engine.executeCommand(phase === 'question' ? 'hint' : 'explain');
+	}
+
+	function closeTutor() {
+		agentChatOpen = false;
+		if (tutorPausedReviewMic && !micOn) engine.toggleMic();
+		tutorPausedReviewMic = false;
+	}
 
 	function clearCountdown() {
 		if (countdownInterval) {
@@ -90,6 +138,7 @@
 				backHtml = event.backHtml;
 				cardState = event.cardState;
 				intervals = event.intervals;
+				agentCardId = event.cardId ?? '';
 				status = 'idle';
 				break;
 			case 'tts_loading':
@@ -104,15 +153,10 @@
 			case 'idle':
 				status = 'idle';
 				break;
-			case 'explaining':
-				status = 'explaining';
-				break;
-			case 'hinting':
-				status = 'hinting';
-				break;
 			case 'transcript':
 				break;
 			case 'command':
+				if (event.command === 'hint' || event.command === 'explain') openTutor();
 				if (['again', 'hard', 'good', 'easy'].includes(event.command)) {
 					highlightRating = event.command;
 					if (highlightTimer) clearTimeout(highlightTimer);
@@ -127,9 +171,7 @@
 				document.body.classList.remove('review-active');
 				break;
 			case 'error':
-				errorMsg = event.message;
-				if (errorTimer) clearTimeout(errorTimer);
-				errorTimer = setTimeout(() => { errorMsg = ''; }, 4000);
+				showReviewError(event.message);
 				break;
 			case 'deck_info':
 				deckName = event.name;
@@ -168,9 +210,16 @@
 	});
 
 	async function startReview() {
+		// Bless the shared media element inside this gesture so the first card can be fetched
+		// after the click and still play on iOS — this is why Start no longer waits for a TTS
+		// round trip before it enables.
+		unlockAudioForGesture();
 		started = true;
 		errorMsg = '';
 		document.body.classList.add('review-active');
+		// Warm the tutor's WebRTC bundle now (after deck-open paint, during the session) so it's
+		// parsed by the time the user opens the tutor — without weighing down deck open itself.
+		if (agentEnabled) void import('@elevenlabs/client').catch(() => {});
 		const options: StartOptions = {};
 		if (tagFilter.trim()) options.tags = tagFilter.trim();
 		if (cramMode) {
@@ -237,10 +286,10 @@
 				if (phase === 'rating') engine.executeCommand('easy');
 				break;
 			case 'e':
-				if (phase === 'rating') engine.executeCommand('explain');
+				if (phase === 'rating') requestTutor();
 				break;
 			case 'h':
-				if (phase === 'question') engine.executeCommand('hint');
+				if (phase === 'question') requestTutor();
 				break;
 			case 'r':
 				engine.executeCommand('repeat');
@@ -266,7 +315,13 @@
 		])
 			.then(([keys, voice]) => {
 				if (keys) keyStatus = keys as ApiKeyStatus;
-				if (voice) voiceSettings = (voice as { settings: UserVoiceSettings }).settings;
+				if (voice) {
+					const settings = (voice as { settings: UserVoiceSettings }).settings;
+					voiceSettings = settings;
+					// The tutor button only appears when the user has configured an agent.
+					// Avoids surfacing a "Ask" button that always errors with "no_agent".
+					agentEnabled = !!settings.elevenlabs_agent_id;
+				}
 			})
 			.catch(() => {})
 			.finally(() => { keyStatusLoading = false; });
@@ -280,40 +335,31 @@
 		fetch(`/api/cards/next?${new URLSearchParams({ deckId: deckId!, limit: '50' })}`)
 			.then((r) => r.ok ? r.json() : null)
 			.then((data) => {
-				if (!data) return;
+				if (!data) { reviewPrepared = true; return; }
 				prefetchedCards = data as PrefetchedCards;
+				// Enable Start the moment the cards are here — no longer blocked on a TTS round
+				// trip. The first card's front is still preloaded in the background so playback is
+				// instant when it lands; if the user clicks Start before it does, the
+				// gesture-unlocked media element fetches and plays it on the spot (see
+				// unlockAudioForGesture).
+				reviewPrepared = true;
 				if (!getPrepareAudioAhead()) return;
-				const cards = (data as { cards: { fields: string; card_type: string }[] }).cards;
+				const cards = (data as PrefetchedCards).cards;
 				if (!cards?.length) return;
-				// Preload first 3 fronts + first 2 backs in parallel so early cards play instantly.
-				// The TTS endpoint serves from Cloudflare edge cache after the first synthesis.
-				const seen = new Set<string>();
-				const tryPreload = (rawHtml: string) => {
-					const div = document.createElement('div');
-					div.innerHTML = sanitizeCardHtml(rawHtml);
-					const plain = (div.textContent ?? '').trim();
-					if (plain && !seen.has(plain)) { seen.add(plain); preloadTTS(plain); }
-				};
-				const limit = Math.min(3, cards.length);
-				for (let i = 0; i < limit; i++) {
-					try {
-						const card = cards[i];
-						const fields = JSON.parse(card.fields) as { value: string }[];
-						if (!fields.length) continue;
-						const firstValue = fields[0]?.value ?? '';
-						const isCloze = card.card_type === 'cloze' || /\{\{c\d+::/.test(firstValue);
-						if (isCloze) {
-							// front: replace answers with hints/blank; back: reveal answers
-							tryPreload(firstValue.replace(/\{\{c\d+::(.*?)(?:::(.*?))?\}\}/g, (_m, _a, hint) => hint || 'blank'));
-							if (i < 2) tryPreload(firstValue.replace(/\{\{c\d+::(.*?)(?:::(.*?))?\}\}/g, (_m, a) => a));
-						} else {
-							tryPreload(firstValue);
-							if (i < 2 && fields[1]?.value) tryPreload(fields[1].value);
-						}
-					} catch { /* ignore parse errors */ }
-				}
+				try {
+					const card = cards[0];
+					const rendered = renderCard(
+						card.fields as string,
+						card.card_type as string,
+						(card.ordinal as number) ?? 0,
+						(card.front_template as string | null) ?? null,
+						(card.back_template as string | null) ?? null,
+						clientCardSanitizer
+					);
+					if (rendered.front) void preloadTTS(rendered.front);
+				} catch { /* ignore parse errors */ }
 			})
-			.catch(() => {});
+			.catch(() => { reviewPrepared = true; });
 	});
 
 	onDestroy(() => {
@@ -355,7 +401,7 @@
 				<p class="start-error">{errorMsg}</p>
 			{/if}
 
-			<button class="start-btn" onclick={startReview}>{cramMode ? $t('review.startCram') : $t('review.startReview')}</button>
+			<button class="start-btn" onclick={startReview} disabled={!reviewPrepared} aria-busy={!reviewPrepared}>{!reviewPrepared ? $t('common.loading') : cramMode ? $t('review.startCram') : $t('review.startReview')}</button>
 
 			<div class="review-options">
 				<label class="option-label">
@@ -453,12 +499,14 @@
 				{/if}
 			</button>
 			{#if phase === 'question'}
-				<button class="toolbar-btn" onclick={() => engine.executeCommand('hint')} title="{$t('review.hint')} (H)" aria-label={$t('review.hint')}>
+				<button class="toolbar-btn toolbar-btn--tutor" class:off={!agentEnabled} onclick={requestTutor} title="{$t('agent.askHint')} (H)" aria-label={$t('agent.askHint')}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/></svg>
+					<span>{$t('agent.askHint')}</span>
 				</button>
 			{:else}
-				<button class="toolbar-btn" onclick={() => engine.executeCommand('explain')} title="{$t('review.explain')} (E)" aria-label={$t('review.explain')}>
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor" stroke="none"/></svg>
+				<button class="toolbar-btn toolbar-btn--tutor" class:off={!agentEnabled} onclick={requestTutor} title="{$t('agent.openTutor')} (E)" aria-label={$t('agent.title')}>
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" y1="10" x2="15" y2="10"/></svg>
+					<span>{$t('agent.openTutor')}</span>
 				</button>
 			{/if}
 			<button class="toolbar-btn" onclick={() => shortcutsOpen = !shortcutsOpen} title="{$t('help.keyHelp')} (?)" aria-label={$t('help.keyboardTitle')} aria-pressed={shortcutsOpen}>
@@ -467,8 +515,8 @@
 			<button class="toolbar-btn stop" onclick={() => engine.executeCommand('stop')} title="{$t('review.stop')} (Esc)" aria-label={$t('review.stop')}>
 				{$t('review.stop')}
 			</button>
-			{#if status === 'loading' || status === 'speaking' || status === 'listening' || status === 'explaining' || status === 'hinting'}
-				<span class="voice-dot" class:loading={status === 'loading'} class:speaking={status === 'speaking'} class:listening={status === 'listening'} class:explaining={status === 'explaining'} class:hinting={status === 'hinting'}></span>
+			{#if status === 'loading' || status === 'speaking' || status === 'listening'}
+				<span class="voice-dot" class:loading={status === 'loading'} class:speaking={status === 'speaking'} class:listening={status === 'listening'}></span>
 			{/if}
 		</div>
 		<div class="top-right">
@@ -562,6 +610,14 @@
 		</div>
 	{/if}
 {/if}
+
+<AgentChat
+	open={agentChatOpen}
+	cardId={agentCardId}
+	answerRevealed={phase === 'rating'}
+	locale={$locale === 'de' ? 'de' : 'en'}
+	onclose={closeTutor}
+/>
 
 <style>
 	/* ========== Missing Keys Banner ========== */
@@ -703,6 +759,12 @@
 
 	.start-btn:active {
 		transform: scale(0.97);
+	}
+
+	.start-btn:disabled {
+		opacity: 0.55;
+		cursor: wait;
+		transform: none;
 	}
 
 	.review-options {
@@ -973,6 +1035,15 @@
 		letter-spacing: 0.01em;
 	}
 
+	.toolbar-btn--tutor {
+		width: auto;
+		padding: 0 0.65rem;
+		gap: 0.35rem;
+		font-size: 0.78rem;
+		font-weight: 600;
+		color: var(--accent);
+	}
+
 	.toolbar-btn.stop:hover {
 		color: #ff6666;
 	}
@@ -998,16 +1069,6 @@
 	.voice-dot.listening {
 		background: var(--success);
 		animation: pulse-dot 1.4s ease-in-out infinite;
-	}
-
-	.voice-dot.explaining {
-		background: #bbaaff;
-		animation: pulse-dot 0.8s ease-in-out infinite;
-	}
-
-	.voice-dot.hinting {
-		background: #ffdd88;
-		animation: pulse-dot 0.8s ease-in-out infinite;
 	}
 
 	@keyframes pulse-dot {

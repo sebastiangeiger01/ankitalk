@@ -1,5 +1,5 @@
-import { error, json } from '@sveltejs/kit';
-import { synthesizeElevenLabsSpeech, synthesizeOpenAISpeech } from '$lib/server/tts';
+import { error, json, isHttpError, isRedirect } from '@sveltejs/kit';
+import { synthesizeElevenLabsSpeech, synthesizeOpenAISpeech, TtsUpstreamError } from '$lib/server/tts';
 import { getUserApiKey } from '$lib/server/user-keys';
 import { logUsage, calculateElevenLabsTtsCost, calculateTtsCost } from '$lib/server/usage';
 import { getDb } from '$lib/server/db';
@@ -29,7 +29,33 @@ async function makeTtsCacheRequest(
 	return new Request(`https://tts-cache.internal/v1/${hash}`);
 }
 
-export const POST: RequestHandler = async ({ request, platform, locals }) => {
+export const POST: RequestHandler = async (event) => {
+	try {
+		return await handleTts(event);
+	} catch (err) {
+		// SvelteKit status throws (401/400/413/429) and redirects must propagate untouched.
+		if (isHttpError(err) || isRedirect(err)) throw err;
+		// Everything else — KV, D1, edge cache, crypto, or the speech provider — would
+		// otherwise collapse into an opaque 500 {"message":"Internal Error"}. Surface the real
+		// reason so the review UI can show it. The distinctive "TTS route failure" marker also
+		// proves this build is live (vs. the old opaque body) when verifying on staging.
+		console.error('TTS route failure:', err);
+		if (err instanceof TtsUpstreamError) {
+			return json(
+				{
+					error: `Speech provider failed (returned ${err.status})`,
+					providerStatus: err.status,
+					detail: err.detail.replace(/\s+/g, ' ').slice(0, 300)
+				},
+				{ status: 502 }
+			);
+		}
+		const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+		return json({ error: 'TTS route failure', detail: detail.replace(/\s+/g, ' ').slice(0, 300) }, { status: 502 });
+	}
+};
+
+const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 	if (!locals.userId) throw error(401, 'Unauthorized');
 
 	const userId = locals.userId;

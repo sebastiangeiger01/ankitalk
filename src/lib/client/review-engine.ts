@@ -1,11 +1,10 @@
-import { speak, stopPlayback, getLastSpokenText, unlockAudio, playSound, preloadTTS, clearAudioCache } from './audio';
+import { speak, stopPlayback, getLastSpokenText, playSound, preloadTTS, clearAudioCache } from './audio';
 import { createDeepgramClient } from './deepgram';
 import { createElevenLabsClient } from './elevenlabs';
 import type { SpeechClient } from './speech';
 import { renderCard } from './card-renderer';
+import { clientCardSanitizer } from './card-sanitize';
 import { matchCommand } from '../commands';
-import { get } from 'svelte/store';
-import { locale } from '../i18n';
 import type { VoiceProvider } from '../voice';
 import type { ReviewPhase, VoiceCommand, RatingName } from '../types';
 
@@ -34,6 +33,13 @@ export type ReviewEvent =
 			backHtml: string;
 			cardState: 'new' | 'learning' | 'review';
 			intervals: IntervalLabels;
+			/** Extra fields exposed for downstream features (agent tutor, etc.). Optional so
+			 * pre-existing consumers don't have to handle them. */
+			cardId?: string;
+			deckId?: string;
+			tags?: string;
+			reps?: number;
+			lapses?: number;
 	  }
 	| { type: 'tts_loading' }
 	| { type: 'speaking' }
@@ -43,8 +49,6 @@ export type ReviewEvent =
 	| { type: 'transcript'; text: string; isFinal: boolean }
 	| { type: 'session_end'; stats: SessionStats }
 	| { type: 'error'; message: string }
-	| { type: 'explaining' }
-	| { type: 'hinting' }
 	| { type: 'deck_info'; name: string }
 	| { type: 'undo_available'; available: boolean }
 	| { type: 'mic_change'; micOn: boolean }
@@ -61,10 +65,13 @@ export interface SessionStats {
 
 interface CardData {
 	id: string;
+	deck_id: string;
 	note_id: string;
 	card_type: string;
 	ordinal: number;
 	fsrs_state: number;
+	fsrs_reps: number;
+	fsrs_lapses: number;
 	model_name: string;
 	fields: string;
 	tags: string;
@@ -194,7 +201,14 @@ export function createReviewEngine(): ReviewEngine {
 			.then(() => {
 				if (gen === speakGen) playSound('/listen.mp3').catch(() => {});
 			})
-			.catch(() => {})
+			.catch((error: unknown) => {
+				if (gen === speakGen && !destroyed) {
+					emit({
+						type: 'error',
+						message: error instanceof Error ? error.message : 'TTS failed with an unknown error'
+					});
+				}
+			})
 			.finally(() => {
 				if (gen === speakGen) {
 					isSpeaking = false;
@@ -287,7 +301,12 @@ export function createReviewEngine(): ReviewEngine {
 			frontHtml: currentCard.frontHtml,
 			backHtml: currentCard.backHtml,
 			cardState,
-			intervals: currentCard.intervals
+			intervals: currentCard.intervals,
+			cardId: currentCard.id,
+			deckId: currentCard.deck_id,
+			tags: currentCard.tags,
+			reps: currentCard.fsrs_reps,
+			lapses: currentCard.fsrs_lapses
 		});
 		emit({ type: 'phase_change', phase: 'question' });
 
@@ -343,7 +362,8 @@ export function createReviewEngine(): ReviewEngine {
 				break;
 
 			case 'hint':
-				handleHint();
+				// The review page opens the phase-aware ElevenLabs tutor from the
+				// command event. Keeping this in the engine switch preserves voice commands.
 				break;
 
 			case 'repeat': {
@@ -364,7 +384,7 @@ export function createReviewEngine(): ReviewEngine {
 			}
 
 			case 'explain':
-				handleExplain();
+				// Handled by the review page's ElevenLabs tutor UI.
 				break;
 
 			case 'suspend':
@@ -552,60 +572,17 @@ export function createReviewEngine(): ReviewEngine {
 			frontHtml: card.frontHtml,
 			backHtml: card.backHtml,
 			cardState,
-			intervals: card.intervals
+			intervals: card.intervals,
+			cardId: card.id,
+			deckId: card.deck_id,
+			tags: card.tags,
+			reps: card.fsrs_reps,
+			lapses: card.fsrs_lapses
 		});
 		emit({ type: 'phase_change', phase: 'rating' });
 
 		if (micOn) emit({ type: 'listening' });
 		else emit({ type: 'idle' });
-	}
-
-	async function handleExplain() {
-		interruptTTS();
-		emit({ type: 'explaining' });
-		if (!currentCard) return;
-
-		try {
-			const res = await fetch('/api/explain', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ front: currentCard.front, back: currentCard.back, locale: get(locale) })
-			});
-
-			if (!res.ok) throw new Error('Explain API failed');
-			const { explanation } = (await res.json()) as { explanation: string };
-
-			speakText(explanation);
-			playSound('/chime.mp3').catch(() => {});
-		} catch {
-			emit({ type: 'error', message: 'Failed to get explanation' });
-			if (micOn) emit({ type: 'listening' });
-			else emit({ type: 'idle' });
-		}
-	}
-
-	async function handleHint() {
-		interruptTTS();
-		emit({ type: 'hinting' });
-		if (!currentCard) return;
-
-		try {
-			const res = await fetch('/api/hint', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ front: currentCard.front, back: currentCard.back, locale: get(locale) })
-			});
-
-			if (!res.ok) throw new Error('Hint API failed');
-			const { hint } = (await res.json()) as { hint: string };
-
-			speakText(hint);
-			playSound('/chime.mp3').catch(() => {});
-		} catch {
-			emit({ type: 'error', message: 'Failed to get hint' });
-			if (micOn) emit({ type: 'listening' });
-			else emit({ type: 'idle' });
-		}
 	}
 
 	function endSession() {
@@ -629,66 +606,64 @@ export function createReviewEngine(): ReviewEngine {
 		startTime = Date.now();
 		isCramMode = options?.mode === 'cram';
 
-		// 1. Unlock audio for iOS
-		await unlockAudio();
+		// Microphone setup is optional and must not block cards.
+		try {
+			const client = options?.voiceProvider === 'openai_deepgram'
+				? createDeepgramClient({ language: options?.sttLanguage })
+				: createElevenLabsClient({ language: options?.sttLanguage });
+			speechClient = client;
+			client.onTranscript((transcript, isFinal) => {
+				emit({ type: 'transcript', text: transcript, isFinal });
 
-		// 2. Fetch cards + start the selected speech client in parallel.
-		speechClient = options?.voiceProvider === 'openai_deepgram'
-			? createDeepgramClient({ language: options?.sttLanguage })
-			: createElevenLabsClient({ language: options?.sttLanguage });
-		speechClient.onTranscript((transcript, isFinal) => {
-			emit({ type: 'transcript', text: transcript, isFinal });
-
-			if (isFinal) {
-				const command = matchCommand(transcript, phase);
-				if (command) {
-					handleCommand(command);
+				if (isFinal) {
+					const command = matchCommand(transcript, phase);
+					if (command) handleCommand(command);
 				}
-			}
-		});
-		speechClient.onError((err) => {
-			emit({ type: 'error', message: err.message });
-		});
+			});
+			client.onError((err) => {
+				emit({ type: 'error', message: err.message });
+			});
+			void client.start().catch((err: unknown) => {
+				if (destroyed || sessionFinished || speechClient !== client) return;
+				client.stop();
+				micOn = false;
+				emit({ type: 'mic_change', micOn: false });
+				emit({
+					type: 'error',
+					message: `Microphone error: ${err instanceof Error ? err.message : 'Unknown'}`
+				});
+			});
+		} catch (err) {
+			speechClient = null;
+			micOn = false;
+			emit({ type: 'mic_change', micOn: false });
+			emit({
+				type: 'error',
+				message: `Microphone error: ${err instanceof Error ? err.message : 'Unknown'}`
+			});
+		}
 
-		// Use prefetched cards if available, otherwise fetch now
-		const cardsFetch = options?.prefetchedCards
-			? Promise.resolve(options.prefetchedCards)
-			: (async () => {
+		// Keep the prefetched path synchronous so the first card's preloaded MP3 starts
+		// inside the Start button's user-gesture call stack on iOS.
+		let data: PrefetchedCards;
+		if (options?.prefetchedCards) {
+			data = options.prefetchedCards;
+		} else {
+			try {
 				const params = new URLSearchParams({ deckId, limit: '50' });
 				if (options?.tags) params.set('tags', options.tags);
 				if (options?.mode) params.set('mode', options.mode);
 				if (options?.cramState) params.set('cramState', options.cramState);
 				const res = await fetch(`/api/cards/next?${params}`);
 				if (!res.ok) throw new Error('Failed to fetch cards');
-				return (await res.json()) as PrefetchedCards;
-			})();
-
-		const [cardsResult, speechResult] = await Promise.allSettled([
-			cardsFetch,
-			speechClient.start()
-		]);
-
-		// Handle speech client failure
-		if (speechResult.status === 'rejected') {
-			const err = speechResult.reason;
-			speechClient?.stop();
-			sessionFinished = true;
-			emit({
-				type: 'error',
-				message: `Microphone error: ${err instanceof Error ? err.message : 'Unknown'}`
-			});
-			throw err instanceof Error ? err : new Error('Microphone error');
-		}
-
-		// Handle cards failure
-		if (cardsResult.status === 'rejected') {
+				data = (await res.json()) as PrefetchedCards;
+			} catch {
 			speechClient?.stop();
 			sessionFinished = true;
 			emit({ type: 'error', message: 'Failed to fetch cards' });
 			throw new Error('Failed to fetch cards');
+			}
 		}
-
-		const data = cardsResult.value;
 		if (data.deckName) {
 			emit({ type: 'deck_info', name: data.deckName });
 		}
@@ -710,15 +685,19 @@ export function createReviewEngine(): ReviewEngine {
 				c.card_type as string,
 				(c.ordinal as number) ?? 0,
 				(c.front_template as string | null) ?? null,
-				(c.back_template as string | null) ?? null
+				(c.back_template as string | null) ?? null,
+				clientCardSanitizer
 			);
 			const intervals = (c.intervals as IntervalLabels) ?? defaultIntervals;
 			return {
 				id: c.id as string,
+				deck_id: (c.deck_id as string) ?? '',
 				note_id: c.note_id as string,
 				card_type: c.card_type as string,
 				ordinal: (c.ordinal as number) ?? 0,
 				fsrs_state: c.fsrs_state as number,
+				fsrs_reps: (c.fsrs_reps as number) ?? 0,
+				fsrs_lapses: (c.fsrs_lapses as number) ?? 0,
 				model_name: c.model_name as string,
 				fields: c.fields as string,
 				tags: c.tags as string,
