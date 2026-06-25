@@ -184,6 +184,8 @@ export const de: Record<string, string> = {
 	'settings.elevenlabs.creditsUsed': '{used} / {limit} Zeichen verbraucht',
 	'settings.elevenlabs.creditsReset': 'Zurücksetzung am {date}',
 	'settings.elevenlabs.spentTitle': 'Verbrauchte Credits (letzte {days} Tage)',
+	'settings.elevenlabs.spentByProduct': 'Nach Produkt',
+	'settings.elevenlabs.spentByModel': 'Nach Modell',
 	'settings.elevenlabs.product.speech_synthesis': 'Sprachausgabe (TTS)',
 	'settings.elevenlabs.product.conversational_ai': 'Conversational AI (Tutor)',
 	'settings.elevenlabs.product.speech_to_text': 'Spracherkennung (STT)',

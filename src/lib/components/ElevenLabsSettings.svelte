@@ -47,12 +47,19 @@
 	let loadingSubscription = $state(false);
 	let subscriptionError = $state(false);
 
-	interface UsageBreakdown {
-		periodDays: number;
+	interface BreakdownSection {
 		total: number;
 		items: { key: string; credits: number }[];
 	}
+	interface UsageBreakdown {
+		periodDays: number;
+		product: BreakdownSection | null;
+		model: BreakdownSection | null;
+	}
 	let breakdown = $state<UsageBreakdown | null>(null);
+	const hasBreakdown = $derived(
+		!!breakdown && (!!breakdown.product?.items.length || !!breakdown.model?.items.length)
+	);
 
 	let advancedOpen = $state(false);
 	let previewVoiceId = $state<string | null>(null);
@@ -115,23 +122,30 @@
 		try {
 			const res = await fetch('/api/elevenlabs/usage-breakdown');
 			if (!res.ok) return;
-			const data = (await res.json()) as UsageBreakdown;
-			if (data.items?.length) breakdown = data;
+			breakdown = (await res.json()) as UsageBreakdown;
 		} catch {
 			/* leave breakdown null — the credit balance above still renders */
 		}
 	}
 
-	// Map ElevenLabs product_type keys to friendly labels; fall back to a prettified key.
-	function productLabel(key: string): string {
-		const known = $t(`settings.elevenlabs.product.${key}`);
-		if (!known.startsWith('settings.elevenlabs.product.')) return known;
+	function prettifyKey(key: string): string {
 		return key.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 	}
 
-	function creditPct(credits: number): number {
-		if (!breakdown || breakdown.total <= 0) return 0;
-		return Math.round((credits / breakdown.total) * 100);
+	// Map ElevenLabs product_type keys to friendly labels; fall back to a prettified key.
+	function productLabel(key: string): string {
+		const known = $t(`settings.elevenlabs.product.${key}`);
+		return known.startsWith('settings.elevenlabs.product.') ? prettifyKey(key) : known;
+	}
+
+	// Reuse the model picker's labels (Flash v2.5, v3, …) for the by-model spend rows.
+	function modelBreakdownLabel(key: string): string {
+		const known = $t(`settings.elevenlabs.model.${key}`);
+		return known.startsWith('settings.elevenlabs.model.') ? prettifyKey(key) : known;
+	}
+
+	function creditPct(credits: number, total: number): number {
+		return total > 0 ? Math.round((credits / total) * 100) : 0;
 	}
 
 	// keyConfigured resolves asynchronously in the parent (and can flip to true when the
@@ -215,6 +229,21 @@
 	}
 </script>
 
+{#snippet breakdownRows(heading: string, section: BreakdownSection, label: (key: string) => string)}
+	<div class="el-breakdown-group">
+		<span class="el-breakdown-sub">{heading}</span>
+		{#each section.items as item (item.key)}
+			<div class="el-breakdown-row">
+				<span class="el-breakdown-label">{label(item.key)}</span>
+				<span class="el-breakdown-bar" aria-hidden="true">
+					<span class="el-breakdown-fill" style={`width:${creditPct(item.credits, section.total)}%`}></span>
+				</span>
+				<span class="el-breakdown-val">{item.credits.toLocaleString()}</span>
+			</div>
+		{/each}
+	</div>
+{/snippet}
+
 {#if !keyConfigured}
 	<p class="el-hint">{$t('settings.elevenlabs.needKey')}</p>
 {:else}
@@ -244,18 +273,15 @@
 			<p class="el-muted el-reset">{$t('settings.elevenlabs.creditsReset', { date: formatResetDate(subscription.nextResetUnix) })}</p>
 		{/if}
 
-		{#if breakdown && breakdown.items.length}
+		{#if hasBreakdown && breakdown}
 			<div class="el-breakdown">
 				<span class="el-breakdown-title">{$t('settings.elevenlabs.spentTitle', { days: breakdown.periodDays })}</span>
-				{#each breakdown.items as item (item.key)}
-					<div class="el-breakdown-row">
-						<span class="el-breakdown-label">{productLabel(item.key)}</span>
-						<span class="el-breakdown-bar" aria-hidden="true">
-							<span class="el-breakdown-fill" style={`width:${creditPct(item.credits)}%`}></span>
-						</span>
-						<span class="el-breakdown-val">{item.credits.toLocaleString()}</span>
-					</div>
-				{/each}
+				{#if breakdown.product?.items.length}
+					{@render breakdownRows($t('settings.elevenlabs.spentByProduct'), breakdown.product, productLabel)}
+				{/if}
+				{#if breakdown.model?.items.length}
+					{@render breakdownRows($t('settings.elevenlabs.spentByModel'), breakdown.model, modelBreakdownLabel)}
+				{/if}
 			</div>
 		{/if}
 	</div>
@@ -485,6 +511,20 @@
 		font-size: 0.78rem;
 		font-weight: 600;
 		color: #b8b8d8;
+	}
+
+	.el-breakdown-group {
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+	}
+
+	.el-breakdown-sub {
+		font-size: 0.72rem;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--text-subtle);
+		margin-top: 0.15rem;
 	}
 
 	.el-breakdown-row {

@@ -184,6 +184,8 @@ export const en: Record<string, string> = {
 	'settings.elevenlabs.creditsUsed': '{used} / {limit} characters used',
 	'settings.elevenlabs.creditsReset': 'Resets on {date}',
 	'settings.elevenlabs.spentTitle': 'Credits spent (last {days} days)',
+	'settings.elevenlabs.spentByProduct': 'By product',
+	'settings.elevenlabs.spentByModel': 'By model',
 	'settings.elevenlabs.product.speech_synthesis': 'Text to speech',
 	'settings.elevenlabs.product.conversational_ai': 'Conversational AI (tutor)',
 	'settings.elevenlabs.product.speech_to_text': 'Speech to text',
