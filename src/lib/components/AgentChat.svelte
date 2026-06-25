@@ -37,6 +37,11 @@
 	let streamingIndex = $state(-1);
 	let conversation = $state<ConversationType | null>(null);
 	let transcriptEl = $state<HTMLDivElement | null>(null);
+	// Screen-reader announcements. The transcript itself is NOT a live region — growing the
+	// agent bubble token-by-token would make a reader stutter the reply word-by-word. Instead we
+	// push only finished turns (and the connecting notice) into this dedicated polite region, so
+	// assistive tech hears each message once, in full.
+	let liveAnnouncement = $state('');
 	// Keep the transcript pinned to the newest message unless the student has scrolled up to read.
 	let stickToBottom = true;
 	let sessionStartMs = 0;
@@ -154,6 +159,7 @@
 			stickToBottom = true;
 			talking = false;
 			agentSpeaking = false;
+			liveAnnouncement = '';
 		}
 	});
 
@@ -164,6 +170,7 @@
 		streamingIndex = -1;
 		stickToBottom = true;
 		talking = false;
+		liveAnnouncement = $t('agent.status.connecting');
 		pushToTalk = getPushToTalk();
 		// The agent opens with the kickoff turn, so treat the connect window as its turn: the mic
 		// stays muted until onModeChange flips to "listening". (In push-to-talk this is moot — the
@@ -233,9 +240,12 @@
 						} else {
 							messages = [...messages, { role, text: message }];
 						}
+						// Announce the finished reply once, in full.
+						liveAnnouncement = message;
 						return;
 					}
 					messages = [...messages, { role, text: message }];
+					liveAnnouncement = message;
 				},
 				onAgentChatResponsePart: ({ text, type }) => {
 					if (phase === 'ended' || phase === 'error') return;
@@ -324,6 +334,15 @@
 		conversation = null;
 	}
 
+	// Re-attempt after a failed connect. End any half-open session first, then drop back to
+	// 'idle' so the auto-start effect kicks off a fresh start() (awaiting stop() before that
+	// avoids a new session being nulled by the old one's teardown).
+	async function retry() {
+		errorMsg = '';
+		await stop();
+		phase = 'idle';
+	}
+
 	async function close() {
 		await stop();
 		onclose();
@@ -384,7 +403,11 @@
 				{/if}
 			</div>
 
-			<div class="transcript" aria-live="polite" bind:this={transcriptEl} onscroll={onTranscriptScroll}>
+			<!-- Polite live region for assistive tech: announces finished turns once (see
+			     liveAnnouncement). The visible transcript is intentionally not a live region. -->
+			<p class="visually-hidden" aria-live="polite" role="status">{liveAnnouncement}</p>
+
+			<div class="transcript" bind:this={transcriptEl} onscroll={onTranscriptScroll}>
 				{#each messages as m, i (i)}
 					<div
 						class="bubble"
@@ -467,9 +490,16 @@
 					<span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
 					<span class="switch-label">{$t('agent.ptt.label')}</span>
 				</button>
-				<button class="end-btn" onclick={close}>
-					{phase === 'ended' || phase === 'error' ? $t('common.close') : $t('agent.endSession')}
-				</button>
+				<div class="actions-right">
+					{#if phase === 'error'}
+						<button class="retry-btn" type="button" onclick={retry}>
+							{$t('agent.retry')}
+						</button>
+					{/if}
+					<button class="end-btn" onclick={close}>
+						{phase === 'ended' || phase === 'error' ? $t('common.close') : $t('agent.endSession')}
+					</button>
+				</div>
 			</div>
 		</div>
 	</div>
@@ -671,6 +701,14 @@
 		border-color: var(--primary);
 	}
 	.ptt-switch.on .switch-thumb { transform: translateX(16px); background: #fff; }
+	.actions-right { display: flex; align-items: center; gap: 0.5rem; }
+	.retry-btn {
+		background: var(--surface-2); color: var(--text);
+		border: 1px solid var(--border-muted); border-radius: var(--r-pill);
+		padding: 0.55rem 1.1rem; font-size: 0.9rem; font-weight: 600;
+		cursor: pointer; min-height: 40px; touch-action: manipulation;
+	}
+	.retry-btn:hover { border-color: var(--primary); }
 	.end-btn {
 		background: var(--primary); color: var(--text);
 		border: none; border-radius: var(--r-pill);

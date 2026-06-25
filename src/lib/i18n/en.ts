@@ -424,6 +424,7 @@ export const en: Record<string, string> = {
 	'agent.openTutor': 'Tutor',
 	'agent.askHint': 'Ask for hint',
 	'agent.endSession': 'End conversation',
+	'agent.retry': 'Try again',
 	'agent.you': 'You',
 	'agent.agent': 'Tutor',
 	'agent.inputPlaceholder': 'Type a message…',

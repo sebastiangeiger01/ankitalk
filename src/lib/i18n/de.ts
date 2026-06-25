@@ -424,6 +424,7 @@ export const de: Record<string, string> = {
 	'agent.openTutor': 'Tutor',
 	'agent.askHint': 'Hinweis fragen',
 	'agent.endSession': 'Gespräch beenden',
+	'agent.retry': 'Erneut versuchen',
 	'agent.you': 'Du',
 	'agent.agent': 'Tutor',
 	'agent.inputPlaceholder': 'Nachricht eingeben…',
