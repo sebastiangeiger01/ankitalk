@@ -47,6 +47,20 @@
 	let loadingSubscription = $state(false);
 	let subscriptionError = $state(false);
 
+	interface BreakdownSection {
+		total: number;
+		items: { key: string; credits: number }[];
+	}
+	interface UsageBreakdown {
+		periodDays: number;
+		product: BreakdownSection | null;
+		model: BreakdownSection | null;
+	}
+	let breakdown = $state<UsageBreakdown | null>(null);
+	const hasBreakdown = $derived(
+		!!breakdown && (!!breakdown.product?.items.length || !!breakdown.model?.items.length)
+	);
+
 	let advancedOpen = $state(false);
 	let previewVoiceId = $state<string | null>(null);
 	let previewAudio: HTMLAudioElement | null = null;
@@ -103,6 +117,37 @@
 		}
 	}
 
+	// Best-effort: the spend breakdown is a nice-to-have, so on any error we simply don't show it.
+	async function loadBreakdown() {
+		try {
+			const res = await fetch('/api/elevenlabs/usage-breakdown');
+			if (!res.ok) return;
+			breakdown = (await res.json()) as UsageBreakdown;
+		} catch {
+			/* leave breakdown null — the credit balance above still renders */
+		}
+	}
+
+	function prettifyKey(key: string): string {
+		return key.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+	}
+
+	// Map ElevenLabs product_type keys to friendly labels; fall back to a prettified key.
+	function productLabel(key: string): string {
+		const known = $t(`settings.elevenlabs.product.${key}`);
+		return known.startsWith('settings.elevenlabs.product.') ? prettifyKey(key) : known;
+	}
+
+	// Reuse the model picker's labels (Flash v2.5, v3, …) for the by-model spend rows.
+	function modelBreakdownLabel(key: string): string {
+		const known = $t(`settings.elevenlabs.model.${key}`);
+		return known.startsWith('settings.elevenlabs.model.') ? prettifyKey(key) : known;
+	}
+
+	function creditPct(credits: number, total: number): number {
+		return total > 0 ? Math.round((credits / total) * 100) : 0;
+	}
+
 	// keyConfigured resolves asynchronously in the parent (and can flip to true when the
 	// user adds a key live), so load once it becomes available rather than only on mount.
 	let loadedForKey = $state(false);
@@ -111,6 +156,7 @@
 			loadedForKey = true;
 			loadVoices();
 			loadSubscription();
+			loadBreakdown();
 		}
 	});
 
@@ -183,6 +229,21 @@
 	}
 </script>
 
+{#snippet breakdownRows(heading: string, section: BreakdownSection, label: (key: string) => string)}
+	<div class="el-breakdown-group">
+		<span class="el-breakdown-sub">{heading}</span>
+		{#each section.items as item (item.key)}
+			<div class="el-breakdown-row">
+				<span class="el-breakdown-label">{label(item.key)}</span>
+				<span class="el-breakdown-bar" aria-hidden="true">
+					<span class="el-breakdown-fill" style={`width:${creditPct(item.credits, section.total)}%`}></span>
+				</span>
+				<span class="el-breakdown-val">{item.credits.toLocaleString()}</span>
+			</div>
+		{/each}
+	</div>
+{/snippet}
+
 {#if !keyConfigured}
 	<p class="el-hint">{$t('settings.elevenlabs.needKey')}</p>
 {:else}
@@ -210,6 +271,18 @@
 				<span>{creditUsedPct}%</span>
 			</div>
 			<p class="el-muted el-reset">{$t('settings.elevenlabs.creditsReset', { date: formatResetDate(subscription.nextResetUnix) })}</p>
+		{/if}
+
+		{#if hasBreakdown && breakdown}
+			<div class="el-breakdown">
+				<span class="el-breakdown-title">{$t('settings.elevenlabs.spentTitle', { days: breakdown.periodDays })}</span>
+				{#if breakdown.product?.items.length}
+					{@render breakdownRows($t('settings.elevenlabs.spentByProduct'), breakdown.product, productLabel)}
+				{/if}
+				{#if breakdown.model?.items.length}
+					{@render breakdownRows($t('settings.elevenlabs.spentByModel'), breakdown.model, modelBreakdownLabel)}
+				{/if}
+			</div>
 		{/if}
 	</div>
 
@@ -423,6 +496,69 @@
 
 	.el-reset {
 		margin: 0.35rem 0 0;
+	}
+
+	.el-breakdown {
+		margin-top: 0.85rem;
+		padding-top: 0.75rem;
+		border-top: 1px solid var(--surface-elevated);
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+	}
+
+	.el-breakdown-title {
+		font-size: 0.78rem;
+		font-weight: 600;
+		color: #b8b8d8;
+	}
+
+	.el-breakdown-group {
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+	}
+
+	.el-breakdown-sub {
+		font-size: 0.72rem;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--text-subtle);
+		margin-top: 0.15rem;
+	}
+
+	.el-breakdown-row {
+		display: grid;
+		grid-template-columns: minmax(7rem, auto) 1fr auto;
+		align-items: center;
+		gap: 0.55rem;
+		font-size: 0.8rem;
+		color: var(--text-muted);
+	}
+
+	.el-breakdown-label {
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.el-breakdown-bar {
+		height: 6px;
+		border-radius: 99px;
+		background: var(--border-muted);
+		overflow: hidden;
+	}
+
+	.el-breakdown-fill {
+		display: block;
+		height: 100%;
+		background: #6b6bc8;
+	}
+
+	.el-breakdown-val {
+		font-variant-numeric: tabular-nums;
+		color: #c0c0e0;
+		white-space: nowrap;
 	}
 
 	.el-group {
