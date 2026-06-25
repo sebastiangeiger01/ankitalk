@@ -62,6 +62,9 @@
 
 	// Typed input lets users who can't (or don't want to) speak still converse with the tutor.
 	let draft = $state('');
+	// Typed turns are shown optimistically (the SDK only echoes *voice* turns back through
+	// onMessage). If a typed turn does echo, we match it here and drop the duplicate.
+	let pendingUserEchoes: string[] = [];
 	// Sending is possible once the live session exists; not while connecting/ended/errored.
 	const canSend = $derived(
 		conversation !== null && (phase === 'thinking' || phase === 'listening' || phase === 'speaking')
@@ -97,7 +100,11 @@
 		if (!text || !canSend) return;
 		try {
 			conversation?.sendUserMessage(text);
-			// The typed turn echoes back through onMessage, so we don't add it optimistically.
+			// Show the typed turn right away — typed turns don't reliably echo back via onMessage.
+			// Record it so we can drop the echo on the off chance one does arrive.
+			messages = [...messages, { role: 'user', text }];
+			pendingUserEchoes = [...pendingUserEchoes, text];
+			liveAnnouncement = text;
 			draft = '';
 		} catch {
 			/* a closed session will surface via onDisconnect/onError */
@@ -160,6 +167,7 @@
 			talking = false;
 			agentSpeaking = false;
 			liveAnnouncement = '';
+			pendingUserEchoes = [];
 		}
 	});
 
@@ -170,6 +178,7 @@
 		streamingIndex = -1;
 		stickToBottom = true;
 		talking = false;
+		pendingUserEchoes = [];
 		liveAnnouncement = $t('agent.status.connecting');
 		pushToTalk = getPushToTalk();
 		// The agent opens with the kickoff turn, so treat the connect window as its turn: the mic
@@ -242,6 +251,12 @@
 						}
 						// Announce the finished reply once, in full.
 						liveAnnouncement = message;
+						return;
+					}
+					// User turn. Drop it if it's the echo of a typed turn we already showed.
+					const echoIdx = pendingUserEchoes.indexOf(message.trim());
+					if (echoIdx !== -1) {
+						pendingUserEchoes.splice(echoIdx, 1);
 						return;
 					}
 					messages = [...messages, { role, text: message }];
@@ -637,7 +652,8 @@
 		flex: 1; min-width: 0;
 		background: var(--surface); color: var(--text);
 		border: 1px solid var(--border-muted); border-radius: var(--r-pill);
-		padding: 0.55rem 0.85rem; font-size: 0.9rem; min-height: 40px;
+		/* 16px keeps iOS Safari from auto-zooming the page when the field gains focus. */
+		padding: 0.55rem 0.85rem; font-size: 16px; min-height: 40px;
 	}
 	.composer-input:focus { outline: none; border-color: var(--primary); }
 	.composer-input:disabled { opacity: 0.5; }
