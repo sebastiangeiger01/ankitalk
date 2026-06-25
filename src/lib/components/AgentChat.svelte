@@ -29,14 +29,21 @@
 
 	let phase = $state<Phase>('idle');
 	let errorMsg = $state('');
-	let messages = $state<{ role: 'user' | 'agent'; text: string }[]>([]);
-	// The agent's reply streams in as start/delta/stop parts (onAgentChatResponsePart), so its
-	// text appears word-by-word in step with the audio instead of dumping in all at once when the
-	// full agent_response (onMessage) finally lands. `streamingText` holds the in-progress turn;
-	// it's committed to `messages` when onMessage delivers the canonical text — or flushed if the
-	// next turn starts streaming first.
-	let streamingText = $state('');
+	// The agent's reply streams in as start/delta/stop parts (onAgentChatResponsePart). We grow
+	// the SAME bubble in place (tracked by `streamingIndex`) instead of swapping a temporary
+	// bubble for a committed one — swapping re-ran the entrance transition and made the message
+	// flicker. When the canonical onMessage lands we just replace the text in that same bubble.
+	let messages = $state<{ role: 'user' | 'agent'; text: string; streaming?: boolean }[]>([]);
+	let streamingIndex = $state(-1);
 	let conversation = $state<ConversationType | null>(null);
+	let transcriptEl = $state<HTMLDivElement | null>(null);
+	// Screen-reader announcements. The transcript itself is NOT a live region — growing the
+	// agent bubble token-by-token would make a reader stutter the reply word-by-word. Instead we
+	// push only finished turns (and the connecting notice) into this dedicated polite region, so
+	// assistive tech hears each message once, in full.
+	let liveAnnouncement = $state('');
+	// Keep the transcript pinned to the newest message unless the student has scrolled up to read.
+	let stickToBottom = true;
 	let sessionStartMs = 0;
 	// The agent opens the conversation itself: we suppress the dashboard greeting (firstMessage
 	// override) and inject a hidden intent message so its first spoken turn is a real,
@@ -59,9 +66,31 @@
 	const canSend = $derived(
 		conversation !== null && (phase === 'thinking' || phase === 'listening' || phase === 'speaking')
 	);
-	// The chat "typing" bubble is the single loading indicator: shown while we connect and wait
-	// for the tutor's first/next turn. This fills the silent gap that otherwise feels slow.
-	const showTyping = $derived(phase === 'connecting' || phase === 'thinking');
+	// The chat "typing" bubble is the loading indicator while we connect / wait for the first
+	// turn. Once the agent's reply starts streaming, the growing bubble takes over.
+	const showTyping = $derived((phase === 'connecting' || phase === 'thinking') && streamingIndex < 0);
+
+	// Auto-scroll: whenever the transcript content changes, stick to the bottom (unless the
+	// student scrolled up). Reading `messages` here makes the effect re-run on every new
+	// message and every streamed delta.
+	$effect(() => {
+		// Track both new messages (length) and streamed deltas (the last bubble's text) so this
+		// re-runs on every content change, then pin to the bottom.
+		const n = messages.length;
+		const lastText = n > 0 ? messages[n - 1].text : '';
+		void lastText;
+		const el = transcriptEl;
+		if (!el || !stickToBottom) return;
+		requestAnimationFrame(() => {
+			el.scrollTop = el.scrollHeight;
+		});
+	});
+
+	function onTranscriptScroll() {
+		const el = transcriptEl;
+		if (!el) return;
+		stickToBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+	}
 
 	function sendText() {
 		const text = draft.trim();
@@ -126,9 +155,11 @@
 			phase = 'idle';
 			errorMsg = '';
 			messages = [];
-			streamingText = '';
+			streamingIndex = -1;
+			stickToBottom = true;
 			talking = false;
 			agentSpeaking = false;
+			liveAnnouncement = '';
 		}
 	});
 
@@ -136,8 +167,10 @@
 		phase = 'connecting';
 		errorMsg = '';
 		messages = [];
-		streamingText = '';
+		streamingIndex = -1;
+		stickToBottom = true;
 		talking = false;
+		liveAnnouncement = $t('agent.status.connecting');
 		pushToTalk = getPushToTalk();
 		// The agent opens with the kickoff turn, so treat the connect window as its turn: the mic
 		// stays muted until onModeChange flips to "listening". (In push-to-talk this is moot — the
@@ -196,31 +229,43 @@
 					// Hide the kickoff turn we inject below so it doesn't read as if the student typed it.
 					if (role === 'user' && !kickoffShown && message.trim() === kickoffMessage.trim()) {
 						kickoffShown = true;
-						streamingText = '';
 						return;
 					}
 					if (role === 'agent') {
-						// Canonical full text for the turn — commit it and drop the live stream so the
-						// bubble isn't rendered twice.
-						messages = [...messages, { role, text: message }];
-						streamingText = '';
+						// Canonical full text for the turn. If it streamed, replace the text of that
+						// same bubble in place (no new node → no flicker); otherwise append it.
+						if (streamingIndex >= 0) {
+							messages[streamingIndex] = { role: 'agent', text: message };
+							streamingIndex = -1;
+						} else {
+							messages = [...messages, { role, text: message }];
+						}
+						// Announce the finished reply once, in full.
+						liveAnnouncement = message;
 						return;
 					}
 					messages = [...messages, { role, text: message }];
+					liveAnnouncement = message;
 				},
 				onAgentChatResponsePart: ({ text, type }) => {
 					if (phase === 'ended' || phase === 'error') return;
 					if (type === 'start') {
-						// A new turn started before the previous one's canonical onMessage landed —
-						// commit whatever we streamed so it isn't lost.
-						if (streamingText.trim()) {
-							messages = [...messages, { role: 'agent', text: streamingText }];
+						// Begin a new agent bubble we grow in place. If a previous stream never got
+						// its canonical onMessage, it just stays as a normal bubble.
+						if (streamingIndex >= 0 && messages[streamingIndex]) {
+							messages[streamingIndex] = { ...messages[streamingIndex], streaming: false };
 						}
-						streamingText = '';
+						messages = [...messages, { role: 'agent', text: '', streaming: true }];
+						streamingIndex = messages.length - 1;
 					} else if (type === 'delta') {
-						streamingText += text;
+						if (streamingIndex < 0) {
+							messages = [...messages, { role: 'agent', text: '', streaming: true }];
+							streamingIndex = messages.length - 1;
+						}
+						const current = messages[streamingIndex];
+						messages[streamingIndex] = { ...current, text: current.text + text };
 					}
-					// 'stop' leaves the streamed text visible until onMessage commits it.
+					// 'stop' leaves the bubble in place; onMessage finalises the canonical text.
 				},
 				onModeChange: ({ mode }: { mode: Mode }) => {
 					// `mode` is "speaking" while the agent is talking, "listening" while it
@@ -289,6 +334,15 @@
 		conversation = null;
 	}
 
+	// Re-attempt after a failed connect. End any half-open session first, then drop back to
+	// 'idle' so the auto-start effect kicks off a fresh start() (awaiting stop() before that
+	// avoids a new session being nulled by the old one's teardown).
+	async function retry() {
+		errorMsg = '';
+		await stop();
+		phase = 'idle';
+	}
+
 	async function close() {
 		await stop();
 		onclose();
@@ -349,7 +403,11 @@
 				{/if}
 			</div>
 
-			<div class="transcript" aria-live="polite">
+			<!-- Polite live region for assistive tech: announces finished turns once (see
+			     liveAnnouncement). The visible transcript is intentionally not a live region. -->
+			<p class="visually-hidden" aria-live="polite" role="status">{liveAnnouncement}</p>
+
+			<div class="transcript" bind:this={transcriptEl} onscroll={onTranscriptScroll}>
 				{#each messages as m, i (i)}
 					<div
 						class="bubble"
@@ -357,22 +415,21 @@
 						in:fly={{ y: 6, duration: 180 }}
 					>
 						<span class="who">{m.role === 'user' ? $t('agent.you') : $t('agent.agent')}</span>
-						<span class="text">{m.text}</span>
+						{#if m.streaming && !m.text}
+							{@render dots()}
+							<span class="visually-hidden">{$t('agent.status.thinking')}</span>
+						{:else}
+							<span class="text">{m.text}</span>
+						{/if}
 					</div>
 				{/each}
-				{#if streamingText}
-					<div class="bubble" in:fly={{ y: 6, duration: 180 }}>
-						<span class="who">{$t('agent.agent')}</span>
-						<span class="text">{streamingText}</span>
-					</div>
-				{/if}
-				{#if showTyping && !streamingText}
+				{#if showTyping}
 					<div class="bubble typing-bubble" in:fade={{ duration: 150 }} out:fade={{ duration: 120 }}>
 						<span class="who">{$t('agent.agent')}</span>
 						{@render dots()}
 						<span class="visually-hidden">{$t('agent.status.thinking')}</span>
 					</div>
-				{:else if messages.length === 0 && !streamingText && phase !== 'speaking' && phase !== 'error'}
+				{:else if messages.length === 0 && phase !== 'speaking' && phase !== 'error'}
 					<p class="hint" in:fade={{ duration: 150 }}>
 						{answerRevealed ? $t('agent.hint') : $t('agent.preRevealHint')}
 					</p>
@@ -380,22 +437,25 @@
 			</div>
 
 			{#if pushToTalk}
-				<button
-					type="button"
-					class="ptt-btn"
-					class:talking
-					onpointerdown={startTalking}
-					onpointerup={stopTalking}
-					onpointercancel={stopTalking}
-					onlostpointercapture={stopTalking}
-					disabled={!canSend}
-					aria-pressed={talking}
-				>
-					<span class="ptt-icon" aria-hidden="true">
-						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
-					</span>
-					{talking ? $t('agent.ptt.talking') : $t('agent.ptt.hold')}
-				</button>
+				<div class="ptt-zone">
+					<button
+						type="button"
+						class="ptt-btn"
+						class:talking
+						onpointerdown={startTalking}
+						onpointerup={stopTalking}
+						onpointercancel={stopTalking}
+						onlostpointercapture={stopTalking}
+						disabled={!canSend}
+						aria-pressed={talking}
+					>
+						<span class="ptt-icon" aria-hidden="true">
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+						</span>
+						{talking ? $t('agent.ptt.talking') : $t('agent.ptt.hold')}
+					</button>
+					<p class="ptt-caption">{$t('agent.ptt.caption')}</p>
+				</div>
 			{/if}
 
 			<form
@@ -420,16 +480,26 @@
 			<div class="actions">
 				<button
 					type="button"
-					class="ptt-toggle"
+					class="ptt-switch"
 					class:on={pushToTalk}
+					role="switch"
+					aria-checked={pushToTalk}
 					onclick={togglePushToTalk}
-					aria-pressed={pushToTalk}
+					title={$t('agent.ptt.switchHint')}
 				>
-					{$t('agent.ptt.label')}
+					<span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+					<span class="switch-label">{$t('agent.ptt.label')}</span>
 				</button>
-				<button class="end-btn" onclick={close}>
-					{phase === 'ended' || phase === 'error' ? $t('common.close') : $t('agent.endSession')}
-				</button>
+				<div class="actions-right">
+					{#if phase === 'error'}
+						<button class="retry-btn" type="button" onclick={retry}>
+							{$t('agent.retry')}
+						</button>
+					{/if}
+					<button class="end-btn" onclick={close}>
+						{phase === 'ended' || phase === 'error' ? $t('common.close') : $t('agent.endSession')}
+					</button>
+				</div>
 			</div>
 		</div>
 	</div>
@@ -591,27 +661,54 @@
 		cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none;
 		transition: background 0.12s ease, border-color 0.12s ease, transform 0.08s ease;
 	}
+	.ptt-zone { display: flex; flex-direction: column; gap: 0.3rem; }
 	.ptt-btn .ptt-icon { display: inline-flex; }
 	.ptt-btn.talking {
-		background: color-mix(in srgb, var(--primary) 22%, var(--surface-2));
+		background: color-mix(in srgb, var(--primary) 26%, var(--surface-2));
 		border-color: var(--primary);
 		transform: scale(0.99);
 	}
 	.ptt-btn:disabled { opacity: 0.45; cursor: default; }
+	.ptt-caption {
+		margin: 0; text-align: center;
+		font-size: 0.78rem; color: var(--text-subtle);
+	}
 
 	.actions { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
-	.ptt-toggle {
-		background: none; color: var(--text-muted);
-		border: 1px solid var(--border-muted); border-radius: var(--r-pill);
-		padding: 0.45rem 0.85rem; font-size: 0.82rem; font-weight: 600;
+	/* The push-to-talk control is a SWITCH (mode on/off), deliberately styled unlike the big
+	   hold-to-talk button so it doesn't read as the talk action itself. */
+	.ptt-switch {
+		display: inline-flex; align-items: center; gap: 0.5rem;
+		background: none; border: none; padding: 0.3rem 0.1rem;
+		color: var(--text-muted); font-size: 0.82rem; font-weight: 600;
 		cursor: pointer; min-height: 40px; touch-action: manipulation;
 	}
-	.ptt-toggle:hover { border-color: var(--primary); color: var(--text); }
-	.ptt-toggle.on {
-		color: var(--text);
-		border-color: var(--primary);
-		background: color-mix(in srgb, var(--primary) 16%, transparent);
+	.switch-track {
+		position: relative; flex-shrink: 0;
+		width: 36px; height: 20px; border-radius: 999px;
+		background: var(--surface-2); border: 1px solid var(--border-muted);
+		transition: background 0.15s ease, border-color 0.15s ease;
 	}
+	.switch-thumb {
+		position: absolute; top: 1px; left: 1px;
+		width: 16px; height: 16px; border-radius: 50%;
+		background: var(--text-subtle);
+		transition: transform 0.15s ease, background 0.15s ease;
+	}
+	.ptt-switch.on { color: var(--text); }
+	.ptt-switch.on .switch-track {
+		background: color-mix(in srgb, var(--primary) 55%, transparent);
+		border-color: var(--primary);
+	}
+	.ptt-switch.on .switch-thumb { transform: translateX(16px); background: #fff; }
+	.actions-right { display: flex; align-items: center; gap: 0.5rem; }
+	.retry-btn {
+		background: var(--surface-2); color: var(--text);
+		border: 1px solid var(--border-muted); border-radius: var(--r-pill);
+		padding: 0.55rem 1.1rem; font-size: 0.9rem; font-weight: 600;
+		cursor: pointer; min-height: 40px; touch-action: manipulation;
+	}
+	.retry-btn:hover { border-color: var(--primary); }
 	.end-btn {
 		background: var(--primary); color: var(--text);
 		border: none; border-radius: var(--r-pill);

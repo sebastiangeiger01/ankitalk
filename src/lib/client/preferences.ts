@@ -20,11 +20,12 @@ export function setPrepareAudioAhead(enabled: boolean): void {
 
 /**
  * Push-to-talk for the tutor: when on, the mic stays muted unless the student holds the
- * talk button. Defaults off (half-duplex auto-muting handles echo for most users).
+ * talk button. Defaults on — it's the most reliable defence against the tutor hearing its
+ * own voice on a phone speaker, and gives the student explicit control of the mic.
  */
 export function getPushToTalk(): boolean {
-	if (!browser) return false;
-	return localStorage.getItem(PUSH_TO_TALK_KEY) === '1';
+	if (!browser) return true;
+	return localStorage.getItem(PUSH_TO_TALK_KEY) !== '0';
 }
 
 export function setPushToTalk(enabled: boolean): void {
