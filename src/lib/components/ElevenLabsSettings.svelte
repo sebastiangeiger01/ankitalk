@@ -47,6 +47,13 @@
 	let loadingSubscription = $state(false);
 	let subscriptionError = $state(false);
 
+	interface UsageBreakdown {
+		periodDays: number;
+		total: number;
+		items: { key: string; credits: number }[];
+	}
+	let breakdown = $state<UsageBreakdown | null>(null);
+
 	let advancedOpen = $state(false);
 	let previewVoiceId = $state<string | null>(null);
 	let previewAudio: HTMLAudioElement | null = null;
@@ -103,6 +110,30 @@
 		}
 	}
 
+	// Best-effort: the spend breakdown is a nice-to-have, so on any error we simply don't show it.
+	async function loadBreakdown() {
+		try {
+			const res = await fetch('/api/elevenlabs/usage-breakdown');
+			if (!res.ok) return;
+			const data = (await res.json()) as UsageBreakdown;
+			if (data.items?.length) breakdown = data;
+		} catch {
+			/* leave breakdown null — the credit balance above still renders */
+		}
+	}
+
+	// Map ElevenLabs product_type keys to friendly labels; fall back to a prettified key.
+	function productLabel(key: string): string {
+		const known = $t(`settings.elevenlabs.product.${key}`);
+		if (!known.startsWith('settings.elevenlabs.product.')) return known;
+		return key.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+	}
+
+	function creditPct(credits: number): number {
+		if (!breakdown || breakdown.total <= 0) return 0;
+		return Math.round((credits / breakdown.total) * 100);
+	}
+
 	// keyConfigured resolves asynchronously in the parent (and can flip to true when the
 	// user adds a key live), so load once it becomes available rather than only on mount.
 	let loadedForKey = $state(false);
@@ -111,6 +142,7 @@
 			loadedForKey = true;
 			loadVoices();
 			loadSubscription();
+			loadBreakdown();
 		}
 	});
 
@@ -210,6 +242,21 @@
 				<span>{creditUsedPct}%</span>
 			</div>
 			<p class="el-muted el-reset">{$t('settings.elevenlabs.creditsReset', { date: formatResetDate(subscription.nextResetUnix) })}</p>
+		{/if}
+
+		{#if breakdown && breakdown.items.length}
+			<div class="el-breakdown">
+				<span class="el-breakdown-title">{$t('settings.elevenlabs.spentTitle', { days: breakdown.periodDays })}</span>
+				{#each breakdown.items as item (item.key)}
+					<div class="el-breakdown-row">
+						<span class="el-breakdown-label">{productLabel(item.key)}</span>
+						<span class="el-breakdown-bar" aria-hidden="true">
+							<span class="el-breakdown-fill" style={`width:${creditPct(item.credits)}%`}></span>
+						</span>
+						<span class="el-breakdown-val">{item.credits.toLocaleString()}</span>
+					</div>
+				{/each}
+			</div>
 		{/if}
 	</div>
 
@@ -423,6 +470,55 @@
 
 	.el-reset {
 		margin: 0.35rem 0 0;
+	}
+
+	.el-breakdown {
+		margin-top: 0.85rem;
+		padding-top: 0.75rem;
+		border-top: 1px solid var(--surface-elevated);
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+	}
+
+	.el-breakdown-title {
+		font-size: 0.78rem;
+		font-weight: 600;
+		color: #b8b8d8;
+	}
+
+	.el-breakdown-row {
+		display: grid;
+		grid-template-columns: minmax(7rem, auto) 1fr auto;
+		align-items: center;
+		gap: 0.55rem;
+		font-size: 0.8rem;
+		color: var(--text-muted);
+	}
+
+	.el-breakdown-label {
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.el-breakdown-bar {
+		height: 6px;
+		border-radius: 99px;
+		background: var(--border-muted);
+		overflow: hidden;
+	}
+
+	.el-breakdown-fill {
+		display: block;
+		height: 100%;
+		background: #6b6bc8;
+	}
+
+	.el-breakdown-val {
+		font-variant-numeric: tabular-nums;
+		color: #c0c0e0;
+		white-space: nowrap;
 	}
 
 	.el-group {
