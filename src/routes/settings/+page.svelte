@@ -858,6 +858,16 @@
 		</div>
 		<p class="agent-help">{$t('settings.mcp.endpointHelp')}</p>
 
+		<div class="mcp-oauth">
+			<strong>{$t('settings.mcp.oauthTitle')}</strong>
+			<p class="agent-help">{$t('settings.mcp.oauthDesc')}</p>
+			<ol class="agent-setup-steps">
+				<li>{$t('settings.mcp.oauth1')}</li>
+				<li>{$t('settings.mcp.oauth2')}</li>
+				<li>{$t('settings.mcp.oauth3')}</li>
+			</ol>
+		</div>
+
 		<details class="agent-setup">
 			<summary>{$t('settings.mcp.howToTitle')}</summary>
 			<ol class="agent-setup-steps">
@@ -1594,6 +1604,15 @@
 	.agent-help--warn { color: var(--warning); }
 
 	/* MCP-specific styling: endpoint URL field, tokens list. */
+	.mcp-oauth {
+		margin: 0.6rem 0 0.8rem;
+		background: var(--surface);
+		border: 1px solid var(--border-muted);
+		border-radius: 8px;
+		padding: 0.7rem 0.85rem;
+	}
+	.mcp-oauth strong { font-size: 0.85rem; color: var(--text); }
+	.mcp-oauth .agent-help { margin: 0.3rem 0 0.5rem; }
 	.mcp-endpoint { display: block; margin: 0.4rem 0 0.3rem; }
 	.mcp-endpoint-row { display: flex; align-items: center; gap: 0.45rem; }
 	.mcp-endpoint-input { min-width: 0; font-size: 0.8rem; }
