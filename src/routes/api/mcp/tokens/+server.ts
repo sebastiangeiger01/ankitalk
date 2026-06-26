@@ -31,7 +31,7 @@ export const GET: RequestHandler = async ({ platform, locals }) => {
 	const res = await db
 		.prepare(
 			`SELECT id, prefix, label, last_used_at, created_at, scopes, expires_at
-			 FROM mcp_tokens WHERE user_id = ? ORDER BY created_at DESC`
+			 FROM mcp_tokens WHERE user_id = ? AND kind = 'static' ORDER BY created_at DESC`
 		)
 		.bind(locals.userId)
 		.all<TokenRow>();
@@ -48,7 +48,7 @@ export const POST: RequestHandler = async ({ platform, request, locals }) => {
 	// Cap tokens per user. Anyone needing more than ten distinct MCP integrations should
 	// be revoking the unused ones first, not stacking forever.
 	const countRow = await db
-		.prepare('SELECT COUNT(*) AS n FROM mcp_tokens WHERE user_id = ?')
+		.prepare("SELECT COUNT(*) AS n FROM mcp_tokens WHERE user_id = ? AND kind = 'static'")
 		.bind(locals.userId)
 		.first<{ n: number }>();
 	if ((countRow?.n ?? 0) >= MAX_TOKENS_PER_USER) {

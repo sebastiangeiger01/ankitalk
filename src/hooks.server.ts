@@ -6,6 +6,24 @@ const PUBLIC_PATHS = ['/login'];
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 /**
+ * Endpoints that remote OAuth/MCP clients call WITHOUT a browser session — discovery metadata,
+ * dynamic client registration, the token exchange, and the MCP JSON-RPC endpoint itself. These
+ * bypass both the login redirect (they authenticate via bearer token / PKCE, not the Hanko
+ * cookie) and the same-origin guard (registration and token are legitimately cross-origin POSTs
+ * from the client's servers). The /oauth/authorize consent page is deliberately NOT here: it
+ * runs in the user's browser and must stay behind the Hanko session.
+ */
+function isPublicMcpEndpoint(pathname: string): boolean {
+	return (
+		pathname === '/api/mcp' ||
+		pathname === '/api/mcp/oauth/register' ||
+		pathname === '/api/mcp/oauth/token' ||
+		pathname.startsWith('/.well-known/oauth-protected-resource') ||
+		pathname.startsWith('/.well-known/oauth-authorization-server')
+	);
+}
+
+/**
  * Defense-in-depth CSRF: refuse mutating `/api/*` calls whose Origin doesn't match the
  * request host. SvelteKit's built-in `csrf.checkOrigin` already rejects cross-site posts
  * with form-encoded content types; this extends the check to JSON requests (which a
@@ -73,10 +91,10 @@ export const handleError: HandleServerError = ({ error, event }) => {
 
 export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.userId = null;
-	// Remote MCP clients authenticate at the MCP route with their own scoped bearer
-	// credential. They do not have (and must never need) the browser's Hanko cookie.
-	// Keep this exact so token-management routes remain protected browser APIs.
-	const isRemoteMcpEndpoint = event.url.pathname === '/api/mcp';
+	// Remote MCP/OAuth clients authenticate at these routes with their own scoped bearer
+	// credential (or PKCE), not the browser's Hanko cookie. Token-management routes and the
+	// consent page are intentionally excluded so they stay protected browser surfaces.
+	const isRemoteMcpEndpoint = isPublicMcpEndpoint(event.url.pathname);
 
 	const hankoApiUrl = event.platform?.env.HANKO_API_URL;
 	if (!hankoApiUrl) {
@@ -127,7 +145,11 @@ export const handle: Handle = async ({ event, resolve }) => {
 	// Protect non-public paths
 	const isPublic = PUBLIC_PATHS.some((p) => event.url.pathname.startsWith(p));
 	if (!hankoId && !isPublic && !isRemoteMcpEndpoint) {
-		throw redirect(303, '/login');
+		// Preserve where the user was headed (e.g. the OAuth consent page) so login can return
+		// them there. Only same-origin relative paths are ever round-tripped (see login page).
+		const target = event.url.pathname + event.url.search;
+		const dest = target && target !== '/' ? `/login?redirect=${encodeURIComponent(target)}` : '/login';
+		throw redirect(303, dest);
 	}
 
 	if (!isRemoteMcpEndpoint) enforceSameOrigin(event);
