@@ -230,10 +230,16 @@ export async function speak(text: string, voice?: string, speed?: number, onPlay
 				audioCache.delete(key);
 			} catch {
 				if (abort.signal.aborted) return;
-				audio = await fetchTTSAudio(text, voice, speed, abort.signal, deckId);
+				// Deliberately NOT passing abort.signal — see the note in the `else` branch below.
+				audio = await fetchTTSAudio(text, voice, speed, undefined, deckId);
 			}
 		} else {
-			audio = await fetchTTSAudio(text, voice, speed, abort.signal, deckId);
+			// Deliberately NOT passing abort.signal: aborting the *fetch* when the learner advances
+			// or rates cancels the server handler mid-flight — AFTER ElevenLabs has been billed but
+			// BEFORE the clip is written to R2 or logged — so we pay, never cache, and re-pay on the
+			// next play. We still abort *playback* (the guard below skips a superseded clip), but we
+			// let the request itself run to completion so every paid clip always gets cached.
+			audio = await fetchTTSAudio(text, voice, speed, undefined, deckId);
 		}
 	}
 

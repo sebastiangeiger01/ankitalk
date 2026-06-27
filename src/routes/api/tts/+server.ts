@@ -196,40 +196,50 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 			cost = calculateTtsCost(text.length);
 		}
 
-		// Buffer once so we can persist to R2 + edge AND still return the audio to the caller.
+		// The provider has now been billed. Buffer the bytes once so we can persist to R2 + edge AND
+		// still return the audio to the caller.
 		const bytes = await providerResponse.arrayBuffer();
-		const response = audioResponse(bytes, bucket ? 'miss' : 'no-bucket', hash);
 
-		// Persist to R2 BEFORE returning. Doing this in waitUntil() let a quick replay — or a client
-		// abort when the learner rates/advances, which can cut the background task short — race ahead
-		// of the write and re-hit the (paid) provider. We already paid the slow ElevenLabs round-trip,
-		// so the extra await is negligible. A put failure is logged AND surfaced as `X-TTS-Store` so
-		// we can tell from the browser whether durable caching is actually working — but never fails
-		// the request. The cache-event status also encodes the store outcome (`miss` vs
-		// `miss-store-failed`) so the settings monitor reveals R2 write failures without DevTools.
-		let eventStatus = bucket ? 'miss' : 'no-bucket';
-		if (bucket) {
-			try {
-				await putStoredAudio(bucket, hash, bytes, deckPinned);
-				response.headers.set('X-TTS-Store', 'ok');
-			} catch (err) {
-				console.error('[tts] R2 put failed:', err);
-				const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-				response.headers.set('X-TTS-Store', `failed: ${detail.replace(/\s+/g, ' ').slice(0, 120)}`);
-				eventStatus = 'miss-store-failed';
+		// Everything from here is post-billing bookkeeping for a clip we have ALREADY paid for:
+		// write it to R2, log usage, update the cache index + cache-event monitor, and warm the edge
+		// cache. We bundle it into one promise and register it with waitUntil() so that even if the
+		// client disconnects right now (the learner advances/rates, or closes the tab) the Workers
+		// runtime keeps this alive to completion. Otherwise the paid clip would be neither stored nor
+		// logged and would be re-billed on the next play — the exact leak the cache exists to prevent.
+		// We also await the same promise on the happy path so the R2 write lands before we return (no
+		// replay race) and we can surface the store outcome via `X-TTS-Store`. A store failure is
+		// logged and encoded into the cache-event status (`miss` vs `miss-store-failed`) so the
+		// settings monitor reveals R2 write failures without DevTools, but never fails the request.
+		const persist = (async (): Promise<{ storeHeader: string }> => {
+			let eventStatus = bucket ? 'miss' : 'no-bucket';
+			let storeHeader = 'ok';
+			if (bucket) {
+				try {
+					await putStoredAudio(bucket, hash, bytes, deckPinned);
+				} catch (err) {
+					console.error('[tts] R2 put failed:', err);
+					const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+					storeHeader = `failed: ${detail.replace(/\s+/g, ' ').slice(0, 120)}`;
+					eventStatus = 'miss-store-failed';
+				}
 			}
-		}
-		logEvent(eventStatus);
+			const edgeWrite =
+				cache && cacheKey
+					? cache.put(cacheKey, audioResponse(bytes, eventStatus, hash))
+					: undefined;
+			await Promise.all([
+				recordCacheEvent(db, userId, eventStatus, text.length).catch(() => undefined),
+				logUsage(db, userId, provider === 'elevenlabs' ? 'elevenlabs' : 'openai', 'tts', text.length, cost).catch(() => undefined),
+				bucket ? recordCachedAudio(db, userId, hash, bytes.byteLength, deckPinned).catch(() => undefined) : undefined,
+				edgeWrite?.catch(() => undefined)
+			]);
+			return { storeHeader };
+		})();
+		platform?.context?.waitUntil(persist.catch(() => undefined));
 
-		// The usage log, the per-user cache index, and the edge-cache write don't affect whether the
-		// next request finds the clip, so they can stay in the background.
-		const bg: Promise<unknown>[] = [
-			logUsage(db, userId, provider === 'elevenlabs' ? 'elevenlabs' : 'openai', 'tts', text.length, cost)
-		];
-		if (bucket) bg.push(recordCachedAudio(db, userId, hash, bytes.byteLength, deckPinned));
-		if (cache && cacheKey) bg.push(cache.put(cacheKey, response.clone()));
-		platform?.context?.waitUntil(Promise.all(bg).catch(() => undefined));
-
+		const { storeHeader } = await persist;
+		const response = audioResponse(bytes, bucket ? 'miss' : 'no-bucket', hash);
+		if (bucket) response.headers.set('X-TTS-Store', storeHeader);
 		return response;
 	} finally {
 		// Release on every exit (success, missing-key early return, or throw). Delete is idempotent.
