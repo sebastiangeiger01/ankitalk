@@ -61,10 +61,13 @@ function errorDetail(error: unknown): string {
 	return typeof error === 'string' ? error : 'unknown error';
 }
 
-async function fetchTTSAudio(text: string, voice?: string, speed?: number, signal?: AbortSignal): Promise<Blob> {
+async function fetchTTSAudio(text: string, voice?: string, speed?: number, signal?: AbortSignal, deckId?: string): Promise<Blob> {
 	const params: Record<string, string> = { text };
 	if (voice) params.voice = voice;
 	if (speed) params.speed = String(speed);
+	// deckId doesn't change the audio (so it's intentionally absent from the client cache key);
+	// it only tells the server which deck's exam-pin retention this clip belongs to.
+	if (deckId) params.deckId = deckId;
 
 	let response: Response;
 	try {
@@ -90,13 +93,13 @@ async function fetchTTSAudio(text: string, voice?: string, speed?: number, signa
 }
 
 /** Preload the ElevenLabs MP3 response and report whether it is ready for gesture playback. */
-export function preloadTTS(text: string, voice?: string, speed?: number): Promise<boolean> {
+export function preloadTTS(text: string, voice?: string, speed?: number, deckId?: string): Promise<boolean> {
 	const key = cacheKey(text, voice, speed);
 	if (audioCache.has(key)) return Promise.resolve(true);
 	const existing = audioPreloads.get(key);
 	if (existing) return existing.then(() => true, () => false);
 
-	const preload = fetchTTSAudio(text, voice, speed)
+	const preload = fetchTTSAudio(text, voice, speed, undefined, deckId)
 		.then((audio) => {
 			audioCache.set(key, audio);
 			return audio;
@@ -209,7 +212,7 @@ function playSource(src: string, onPlaybackStart?: () => void, objectUrl?: strin
 }
 
 /** Fetch ElevenLabs TTS and play it through the one iOS-authorized media element. */
-export async function speak(text: string, voice?: string, speed?: number, onPlaybackStart?: () => void): Promise<void> {
+export async function speak(text: string, voice?: string, speed?: number, onPlaybackStart?: () => void, deckId?: string): Promise<void> {
 	stopPlayback();
 	const abort = new AbortController();
 	currentAbort = abort;
@@ -227,10 +230,10 @@ export async function speak(text: string, voice?: string, speed?: number, onPlay
 				audioCache.delete(key);
 			} catch {
 				if (abort.signal.aborted) return;
-				audio = await fetchTTSAudio(text, voice, speed, abort.signal);
+				audio = await fetchTTSAudio(text, voice, speed, abort.signal, deckId);
 			}
 		} else {
-			audio = await fetchTTSAudio(text, voice, speed, abort.signal);
+			audio = await fetchTTSAudio(text, voice, speed, abort.signal, deckId);
 		}
 	}
 

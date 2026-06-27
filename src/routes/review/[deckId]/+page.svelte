@@ -356,7 +356,7 @@
 						(card.back_template as string | null) ?? null,
 						clientCardSanitizer
 					);
-					if (rendered.front) void preloadTTS(rendered.front);
+					if (rendered.front) void preloadTTS(rendered.front, undefined, undefined, deckId);
 				} catch { /* ignore parse errors */ }
 			})
 			.catch(() => { reviewPrepared = true; });
