@@ -1,5 +1,6 @@
 import { renderCard } from '$lib/client/card-renderer';
 import { serverCardSanitizer } from './card-sanitize';
+import { sanitizePlainText } from '$lib/sanitize';
 import { newId } from '$lib/server/db';
 
 export interface CardDraft {
@@ -18,6 +19,9 @@ interface ValidatedDraft {
 
 const MAX_CLOZE_CARDS_PER_NOTE = 20;
 const MAX_CARDS_PER_REQUEST = 50;
+const MAX_DECKS_PER_USER = 1_000;
+const MAX_DECK_NAME_BYTES = 200;
+const MAX_DECK_DESCRIPTION_BYTES = 2_000;
 
 function clozeOrdinals(fields: CardDraft['fields']): number[] {
 	const values = fields.map((field) => field.value).join('\n');
@@ -185,6 +189,103 @@ export async function createNotes(
 			.bind(userId, input.idempotencyKey)
 			.first<{ result_json: string }>();
 		if (raced) return JSON.parse(raced.result_json) as unknown;
+		throw error;
+	}
+}
+
+export interface CreateDeckResult {
+	created: boolean;
+	/** True when an existing same-named deck was returned instead of creating a duplicate. */
+	existing: boolean;
+	deck: { deck_id: string; name: string; description: string; card_count: number };
+}
+
+/**
+ * Create a deck for the user, or return the existing one if a deck with the same name already
+ * exists (case-insensitive). Mirrors createNotes: an idempotency key replays the exact prior
+ * result, name/description are sanitized as plain text, a per-user cap bounds runaway agents,
+ * and a lost insert race falls back to the committed result.
+ *
+ * Name dedup is best-effort via a lookup (there is no unique constraint — historical imports
+ * permit duplicate deck names), so a rare concurrent double-create with the same name can still
+ * produce two decks. NOCASE folds only ASCII case, which is sufficient for typical deck names.
+ */
+export async function createDeck(
+	db: D1Database,
+	userId: string,
+	input: { name: string; description?: string; idempotencyKey: string }
+): Promise<CreateDeckResult> {
+	const previous = await db
+		.prepare(
+			`SELECT result_json
+			 FROM mcp_idempotency_keys
+			 WHERE user_id = ? AND tool_name = 'create_deck' AND idempotency_key = ?`
+		)
+		.bind(userId, input.idempotencyKey)
+		.first<{ result_json: string }>();
+	if (previous) return JSON.parse(previous.result_json) as CreateDeckResult;
+
+	const name = sanitizePlainText(input.name, MAX_DECK_NAME_BYTES).trim();
+	if (!name) throw new Error('INVALID_DECK_NAME');
+	const description = sanitizePlainText(input.description ?? '', MAX_DECK_DESCRIPTION_BYTES);
+
+	const existing = await db
+		.prepare(
+			`SELECT id AS deck_id, name, description, card_count
+			 FROM decks
+			 WHERE user_id = ? AND name = ? COLLATE NOCASE
+			 ORDER BY created_at, id
+			 LIMIT 1`
+		)
+		.bind(userId, name)
+		.first<{ deck_id: string; name: string; description: string; card_count: number }>();
+	if (existing) {
+		return { created: false, existing: true, deck: existing };
+	}
+
+	const count = await db
+		.prepare('SELECT COUNT(*) AS n FROM decks WHERE user_id = ?')
+		.bind(userId)
+		.first<{ n: number }>();
+	if ((count?.n ?? 0) >= MAX_DECKS_PER_USER) throw new Error('DECK_LIMIT_REACHED');
+
+	const id = newId();
+	const result: CreateDeckResult = {
+		created: true,
+		existing: false,
+		deck: { deck_id: id, name, description, card_count: 0 }
+	};
+	const statements: D1PreparedStatement[] = [
+		db
+			.prepare(
+				`INSERT INTO decks (id, user_id, anki_id, name, description, card_count)
+				 VALUES (?, ?, NULL, ?, ?, 0)`
+			)
+			.bind(id, userId, name, description),
+		db
+			.prepare(
+				`INSERT INTO mcp_idempotency_keys
+				 (user_id, tool_name, idempotency_key, result_json)
+				 VALUES (?, 'create_deck', ?, ?)`
+			)
+			.bind(userId, input.idempotencyKey, JSON.stringify(result))
+	];
+
+	try {
+		await db.batch(statements);
+		return result;
+	} catch (error) {
+		// A concurrent retry can win the unique idempotency-key insert. Return the committed
+		// result instead of duplicating the deck.
+		const raced = await db
+			.prepare(
+				`SELECT result_json
+				 FROM mcp_idempotency_keys
+				 WHERE user_id = ? AND tool_name = 'create_deck' AND idempotency_key = ?`
+			)
+			.bind(userId, input.idempotencyKey)
+			.first<{ result_json: string }>();
+		if (raced) return JSON.parse(raced.result_json) as CreateDeckResult;
 		throw error;
 	}
 }

@@ -254,6 +254,42 @@ export async function searchStudyMaterial(
 	};
 }
 
+export interface DeckSummary {
+	deck_id: string;
+	name: string;
+	description: string;
+	card_count: number;
+}
+
+/**
+ * List the user's decks (name, description, card count) so an agent can pick an existing
+ * target before authoring — or confirm one doesn't exist yet before creating it. Paginated
+ * with the same opaque cursor as the card readers. Ordered case-insensitively by name so the
+ * listing is stable and human-readable.
+ */
+export async function listDecks(
+	db: D1Database,
+	userId: string,
+	input: { limit: number; cursor?: string }
+) {
+	const offset = decodeCursor(input.cursor);
+	const result = await db
+		.prepare(
+			`SELECT id AS deck_id, name, description, card_count
+			 FROM decks
+			 WHERE user_id = ?
+			 ORDER BY name COLLATE NOCASE, id
+			 LIMIT ? OFFSET ?`
+		)
+		.bind(userId, input.limit + 1, offset)
+		.all<DeckSummary>();
+	const hasMore = result.results.length > input.limit;
+	return {
+		decks: result.results.slice(0, input.limit),
+		next_cursor: hasMore ? encodeCursor(offset + input.limit) : null
+	};
+}
+
 export type CardFinderStatus = 'due' | 'struggling' | 'leech' | 'new' | 'suspended';
 
 export async function findCards(
