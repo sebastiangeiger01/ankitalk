@@ -17,6 +17,9 @@ Guidance for AI agents working in this repository.
 - Because a tested PR is already merged, **follow-up changes need a NEW PR** —
   you cannot keep pushing to the old one and expect it to redeploy. Open a fresh
   PR to `staging` for each new batch of changes.
+- **After finishing any feature or bugfix, always open a new PR to `staging`**
+  (unless there's already an open PR covering that work) so it can be deployed
+  and tested — don't leave completed changes sitting only on the branch.
 
 ## Branches & PRs
 
