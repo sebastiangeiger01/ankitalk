@@ -1017,6 +1017,11 @@
 							<span>{$t('settings.ttsCache.hitRate', { pct: cacheHitRate(ttsCache.events) })}</span>
 							<span>{$t('settings.ttsCache.saved', { chars: ttsCache.events.saved_chars })}</span>
 						</div>
+						<div class="cache-monitor-breakdown">
+							{#each ttsCache.events.by_status as s}
+								<span class="cache-tag cache-tag--{s.status}">{s.status}: {s.count}</span>
+							{/each}
+						</div>
 						<table class="cache-monitor-table">
 							<thead>
 								<tr>
@@ -1663,6 +1668,13 @@
 		margin-bottom: 0.6rem;
 	}
 
+	.cache-monitor-breakdown {
+		display: flex;
+		gap: 0.4rem;
+		flex-wrap: wrap;
+		margin-bottom: 0.7rem;
+	}
+
 	.cache-monitor-table {
 		width: 100%;
 		border-collapse: collapse;
@@ -1702,7 +1714,8 @@
 	}
 
 	.cache-tag--miss,
-	.cache-tag--no-bucket {
+	.cache-tag--no-bucket,
+	.cache-tag--miss-store-failed {
 		background: rgba(255, 102, 102, 0.15);
 		color: #ff8080;
 	}

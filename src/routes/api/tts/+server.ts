@@ -199,14 +199,15 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 		// Buffer once so we can persist to R2 + edge AND still return the audio to the caller.
 		const bytes = await providerResponse.arrayBuffer();
 		const response = audioResponse(bytes, bucket ? 'miss' : 'no-bucket', hash);
-		logEvent(bucket ? 'miss' : 'no-bucket');
 
 		// Persist to R2 BEFORE returning. Doing this in waitUntil() let a quick replay — or a client
 		// abort when the learner rates/advances, which can cut the background task short — race ahead
 		// of the write and re-hit the (paid) provider. We already paid the slow ElevenLabs round-trip,
 		// so the extra await is negligible. A put failure is logged AND surfaced as `X-TTS-Store` so
 		// we can tell from the browser whether durable caching is actually working — but never fails
-		// the request.
+		// the request. The cache-event status also encodes the store outcome (`miss` vs
+		// `miss-store-failed`) so the settings monitor reveals R2 write failures without DevTools.
+		let eventStatus = bucket ? 'miss' : 'no-bucket';
 		if (bucket) {
 			try {
 				await putStoredAudio(bucket, hash, bytes, deckPinned);
@@ -215,8 +216,10 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 				console.error('[tts] R2 put failed:', err);
 				const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
 				response.headers.set('X-TTS-Store', `failed: ${detail.replace(/\s+/g, ' ').slice(0, 120)}`);
+				eventStatus = 'miss-store-failed';
 			}
 		}
+		logEvent(eventStatus);
 
 		// The usage log, the per-user cache index, and the edge-cache write don't affect whether the
 		// next request finds the clip, so they can stay in the background.
