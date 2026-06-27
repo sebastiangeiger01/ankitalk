@@ -96,10 +96,12 @@
 			misses: number;
 			saved_chars: number;
 			spent_chars: number;
-			recent: Array<{ status: string; chars: number; hash: string | null; created_at: string }>;
+			recent: Array<{ status: string; chars: number; created_at: string }>;
 		};
 	}
 	let ttsCache = $state<TtsCacheInfo | null>(null);
+	let ttsCacheDetailsOpen = $state(false);
+	let loadingTtsCacheDetails = $state(false);
 
 	/**
 	 * Agent conversation usage logged through AnkiTalk this month. ElevenLabs doesn't
@@ -458,12 +460,23 @@
 		return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
 	}
 
-	function formatHash(hash: string | null): string {
-		return hash ? hash.slice(0, 12) : '-';
-	}
-
 	function allZero(usage: UsageData): boolean {
 		return usage.today.total === 0 && usage.week.total === 0 && usage.month.total === 0;
+	}
+
+	async function toggleTtsCacheDetails() {
+		const nextOpen = !ttsCacheDetailsOpen;
+		ttsCacheDetailsOpen = nextOpen;
+		if (!nextOpen || !ttsCache || ttsCache.events.recent.length > 0 || loadingTtsCacheDetails) return;
+		loadingTtsCacheDetails = true;
+		try {
+			const res = await fetch('/api/settings/tts-cache?includeRecent=1');
+			if (res.ok) ttsCache = await res.json() as TtsCacheInfo;
+		} catch {
+			// Keep the summary visible if the optional detail fetch fails.
+		} finally {
+			loadingTtsCacheDetails = false;
+		}
 	}
 
 	const primaryServices: Service[] = ['elevenlabs'];
@@ -1026,26 +1039,33 @@
 								<span class="cache-tag cache-tag--{s.status}">{s.status}: {s.count}</span>
 							{/each}
 						</div>
-						<table class="cache-monitor-table">
-							<thead>
-								<tr>
-									<th>{$t('settings.ttsCache.colWhen')}</th>
-									<th>{$t('settings.ttsCache.colStatus')}</th>
-									<th>{$t('settings.ttsCache.colHash')}</th>
-									<th class="num">{$t('settings.ttsCache.colChars')}</th>
-								</tr>
-							</thead>
-							<tbody>
-								{#each ttsCache.events.recent as ev}
-									<tr>
-										<td>{formatEventTime(ev.created_at)}</td>
-										<td><span class="cache-tag cache-tag--{ev.status}">{ev.status}</span></td>
-										<td class="hash">{formatHash(ev.hash)}</td>
-										<td class="num">{ev.chars}</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
+						<button type="button" class="cache-monitor-toggle" onclick={toggleTtsCacheDetails}>
+							{ttsCacheDetailsOpen ? $t('settings.ttsCache.hideRecent') : $t('settings.ttsCache.showRecent')}
+						</button>
+						{#if ttsCacheDetailsOpen}
+							{#if loadingTtsCacheDetails}
+								<div class="cache-monitor-loading">{$t('settings.ttsCache.loadingRecent')}</div>
+							{:else if ttsCache.events.recent.length > 0}
+								<table class="cache-monitor-table">
+									<thead>
+										<tr>
+											<th>{$t('settings.ttsCache.colWhen')}</th>
+											<th>{$t('settings.ttsCache.colStatus')}</th>
+											<th class="num">{$t('settings.ttsCache.colChars')}</th>
+										</tr>
+									</thead>
+									<tbody>
+										{#each ttsCache.events.recent as ev}
+											<tr>
+												<td>{formatEventTime(ev.created_at)}</td>
+												<td><span class="cache-tag cache-tag--{ev.status}">{ev.status}</span></td>
+												<td class="num">{ev.chars}</td>
+											</tr>
+										{/each}
+									</tbody>
+								</table>
+							{/if}
+						{/if}
 						<p class="cache-monitor-note">{$t('settings.ttsCache.monitorNote')}</p>
 					</div>
 				{/if}
@@ -1681,6 +1701,29 @@
 		margin-bottom: 0.7rem;
 	}
 
+	.cache-monitor-toggle {
+		border: 1px solid var(--border);
+		background: transparent;
+		color: var(--text);
+		border-radius: 4px;
+		padding: 0.3rem 0.55rem;
+		font-size: 0.75rem;
+		font-weight: 600;
+		cursor: pointer;
+		margin-bottom: 0.6rem;
+	}
+
+	.cache-monitor-toggle:hover {
+		border-color: var(--primary);
+		color: var(--primary);
+	}
+
+	.cache-monitor-loading {
+		font-size: 0.75rem;
+		color: var(--text-muted);
+		margin-bottom: 0.5rem;
+	}
+
 	.cache-monitor-table {
 		width: 100%;
 		border-collapse: collapse;
@@ -1703,11 +1746,6 @@
 
 	.cache-monitor-table .num {
 		text-align: right;
-	}
-
-	.cache-monitor-table .hash {
-		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-		font-size: 0.68rem;
 	}
 
 	.cache-tag {
