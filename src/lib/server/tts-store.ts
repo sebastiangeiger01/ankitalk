@@ -199,6 +199,74 @@ export async function recordCachedAudio(
 	]);
 }
 
+/** How long the cache-event monitor retains rows; pruned on read so it never grows unbounded. */
+const CACHE_EVENT_RETENTION = '-14 days';
+
+/** Record one /api/tts request's cache outcome for the settings monitor (no card text stored). */
+export async function recordCacheEvent(
+	db: D1Database,
+	userId: string,
+	status: string,
+	chars: number
+): Promise<void> {
+	await db
+		.prepare(`INSERT INTO tts_cache_events (user_id, status, chars) VALUES (?, ?, ?)`)
+		.bind(userId, status, chars)
+		.run();
+}
+
+export interface TtsCacheEventStats {
+	/** Per-status totals over the retained window. */
+	by_status: Array<{ status: string; count: number; chars: number }>;
+	hits: number;
+	misses: number;
+	/** Characters served from cache (edge-hit + r2-hit) — i.e. not re-billed by the provider. */
+	saved_chars: number;
+	/** Characters freshly synthesized (miss / no-bucket). */
+	spent_chars: number;
+	/** Most recent events for the debug table. */
+	recent: Array<{ status: string; chars: number; created_at: string }>;
+}
+
+/** Aggregate the cache-event log for the settings monitor; prunes old rows first. */
+export async function getCacheEventStats(db: D1Database, userId: string): Promise<TtsCacheEventStats> {
+	await db
+		.prepare(`DELETE FROM tts_cache_events WHERE user_id = ? AND created_at < datetime('now', ?)`)
+		.bind(userId, CACHE_EVENT_RETENTION)
+		.run();
+
+	const [totals, recent] = await Promise.all([
+		db
+			.prepare(
+				`SELECT status, COUNT(*) AS count, COALESCE(SUM(chars), 0) AS chars
+				 FROM tts_cache_events WHERE user_id = ? GROUP BY status`
+			)
+			.bind(userId)
+			.all<{ status: string; count: number; chars: number }>(),
+		db
+			.prepare(
+				`SELECT status, chars, created_at FROM tts_cache_events
+				 WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 25`
+			)
+			.bind(userId)
+			.all<{ status: string; chars: number; created_at: string }>()
+	]);
+
+	const by_status = totals.results;
+	const isHit = (status: string) => status === 'edge-hit' || status === 'r2-hit';
+	let hits = 0, misses = 0, saved_chars = 0, spent_chars = 0;
+	for (const row of by_status) {
+		if (isHit(row.status)) {
+			hits += row.count;
+			saved_chars += row.chars;
+		} else {
+			misses += row.count;
+			spent_chars += row.chars;
+		}
+	}
+	return { by_status, hits, misses, saved_chars, spent_chars, recent: recent.results };
+}
+
 export interface TtsCacheStats {
 	clips: number;
 	bytes: number;

@@ -277,6 +277,12 @@ export const de: Record<string, string> = {
 	'settings.ttsCache.summary': '{clips} Clips · {size}',
 	'settings.ttsCache.note': 'Gesprochene Kartenaudio wird zwischengespeichert, damit sie beim Lernen nicht jedes Mal neu erzeugt (und erneut berechnet) wird. Ungenutzte Audio wird nach einer Zeit der Inaktivität automatisch gelöscht.',
 	'settings.ttsCache.pinned': '{count} bis zu einem Prüfungsdatum aufbewahrt.',
+	'settings.ttsCache.hitRate': 'Cache-Trefferquote: {pct}%',
+	'settings.ttsCache.saved': '~{chars} Zeichen aus dem Cache bedient',
+	'settings.ttsCache.colWhen': 'Wann',
+	'settings.ttsCache.colStatus': 'Ergebnis',
+	'settings.ttsCache.colChars': 'Zeichen',
+	'settings.ttsCache.monitorNote': 'Letzte Sprachanfragen (14 Tage). edge-hit / r2-hit kamen aus dem Cache; miss wurde beim Anbieter erzeugt.',
 	'settings.usage.noUsage': 'Noch keine Nutzung aufgezeichnet',
 
 	// Card Browser

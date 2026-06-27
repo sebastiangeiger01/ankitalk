@@ -12,6 +12,7 @@ import {
 	isDeckAudioPinned,
 	isGenerationLocked,
 	putStoredAudio,
+	recordCacheEvent,
 	recordCachedAudio,
 	refreshStoredAudio,
 	releaseGenerationLock,
@@ -126,6 +127,11 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 	// An active exam pin routes this clip to the long-retention R2 prefix and keeps it refreshed.
 	const deckPinned = deckId ? await isDeckAudioPinned(db, userId, deckId) : false;
 
+	// Record this request's cache outcome (status + character count, never the card text) so the
+	// settings monitor can show hit rate and how many characters caching saved from the provider.
+	const logEvent = (status: string) =>
+		platform?.context?.waitUntil(recordCacheEvent(db, userId, status, text.length).catch(() => undefined));
+
 	// 1) Cloudflare edge cache — the hot path, before any DB/provider work.
 	const cache = getEdgeCache();
 	const cacheKey = cache ? edgeCacheKey(hash) : null;
@@ -135,6 +141,7 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 			const tagged = new Response(cached.body, cached);
 			tagged.headers.set('X-TTS-Cache', 'edge-hit');
 			tagged.headers.set('X-TTS-Hash', hash.slice(0, 12));
+			logEvent('edge-hit');
 			return tagged;
 		}
 	}
@@ -153,6 +160,7 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 			const bg: Promise<unknown>[] = [refreshAndIndex];
 			if (cache && cacheKey) bg.push(cache.put(cacheKey, response.clone()));
 			platform?.context?.waitUntil(Promise.all(bg).catch(() => undefined));
+			logEvent('r2-hit');
 			return response;
 		}
 
@@ -166,6 +174,7 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 				if (cache && cacheKey) {
 					platform?.context?.waitUntil(cache.put(cacheKey, response.clone()).catch(() => undefined));
 				}
+				logEvent('r2-hit');
 				return response;
 			}
 		}
@@ -190,6 +199,7 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 		// Buffer once so we can persist to R2 + edge AND still return the audio to the caller.
 		const bytes = await providerResponse.arrayBuffer();
 		const response = audioResponse(bytes, bucket ? 'miss' : 'no-bucket', hash);
+		logEvent(bucket ? 'miss' : 'no-bucket');
 
 		// Persist to R2 BEFORE returning. Doing this in waitUntil() let a quick replay — or a client
 		// abort when the learner rates/advances, which can cut the background task short — race ahead
