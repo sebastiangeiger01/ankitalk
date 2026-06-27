@@ -281,8 +281,9 @@ export const de: Record<string, string> = {
 	'settings.ttsCache.saved': '~{chars} Zeichen aus dem Cache bedient',
 	'settings.ttsCache.colWhen': 'Wann',
 	'settings.ttsCache.colStatus': 'Ergebnis',
+	'settings.ttsCache.colHash': 'Hash',
 	'settings.ttsCache.colChars': 'Zeichen',
-	'settings.ttsCache.monitorNote': 'Letzte Sprachanfragen (14 Tage). edge-hit / r2-hit kamen aus dem Cache; miss wurde beim Anbieter erzeugt.',
+	'settings.ttsCache.monitorNote': 'Letzte Sprachanfragen (14 Tage). edge-hit / r2-hit / inflight-hit wurden ohne Anbieteraufruf bedient; cache-only-miss wurde nicht berechnet.',
 	'settings.usage.noUsage': 'Noch keine Nutzung aufgezeichnet',
 
 	// Card Browser

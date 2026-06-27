@@ -207,8 +207,21 @@ export async function recordCacheEvent(
 	db: D1Database,
 	userId: string,
 	status: string,
-	chars: number
+	chars: number,
+	hash?: string
 ): Promise<void> {
+	if (hash) {
+		try {
+			await db
+				.prepare(`INSERT INTO tts_cache_events (user_id, status, chars, hash) VALUES (?, ?, ?, ?)`)
+				.bind(userId, status, chars, hash)
+				.run();
+			return;
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			if (!message.includes('no column named hash')) throw err;
+		}
+	}
 	await db
 		.prepare(`INSERT INTO tts_cache_events (user_id, status, chars) VALUES (?, ?, ?)`)
 		.bind(userId, status, chars)
@@ -225,7 +238,7 @@ export interface TtsCacheEventStats {
 	/** Characters freshly synthesized (miss / no-bucket). */
 	spent_chars: number;
 	/** Most recent events for the debug table. */
-	recent: Array<{ status: string; chars: number; created_at: string }>;
+	recent: Array<{ status: string; chars: number; hash: string | null; created_at: string }>;
 }
 
 /** Aggregate the cache-event log for the settings monitor; prunes old rows first. */
@@ -235,31 +248,53 @@ export async function getCacheEventStats(db: D1Database, userId: string): Promis
 		.bind(userId, CACHE_EVENT_RETENTION)
 		.run();
 
+	const totalsPromise = db
+		.prepare(
+			`SELECT status, COUNT(*) AS count, COALESCE(SUM(chars), 0) AS chars
+			 FROM tts_cache_events WHERE user_id = ? GROUP BY status`
+		)
+		.bind(userId)
+		.all<{ status: string; count: number; chars: number }>();
+	const recentPromise = db
+		.prepare(
+			`SELECT status, chars, hash, created_at FROM tts_cache_events
+			 WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 25`
+		)
+		.bind(userId)
+		.all<{ status: string; chars: number; hash: string | null; created_at: string }>()
+		.catch(async (err) => {
+			const message = err instanceof Error ? err.message : String(err);
+			if (!message.includes('no such column: hash')) throw err;
+			const legacy = await db
+				.prepare(
+					`SELECT status, chars, created_at FROM tts_cache_events
+					 WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 25`
+				)
+				.bind(userId)
+				.all<{ status: string; chars: number; created_at: string }>();
+			return {
+				results: legacy.results.map((row) => ({ ...row, hash: null })),
+				success: legacy.success,
+				meta: legacy.meta
+			};
+		});
+
 	const [totals, recent] = await Promise.all([
-		db
-			.prepare(
-				`SELECT status, COUNT(*) AS count, COALESCE(SUM(chars), 0) AS chars
-				 FROM tts_cache_events WHERE user_id = ? GROUP BY status`
-			)
-			.bind(userId)
-			.all<{ status: string; count: number; chars: number }>(),
-		db
-			.prepare(
-				`SELECT status, chars, created_at FROM tts_cache_events
-				 WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 25`
-			)
-			.bind(userId)
-			.all<{ status: string; chars: number; created_at: string }>()
+		totalsPromise,
+		recentPromise
 	]);
 
 	const by_status = totals.results;
-	const isHit = (status: string) => status === 'edge-hit' || status === 'r2-hit';
+	const isHit = (status: string) =>
+		status === 'edge-hit' || status === 'r2-hit' || status === 'inflight-hit';
+	const isBilled = (status: string) =>
+		status === 'miss' || status === 'no-bucket' || status === 'miss-store-failed';
 	let hits = 0, misses = 0, saved_chars = 0, spent_chars = 0;
 	for (const row of by_status) {
 		if (isHit(row.status)) {
 			hits += row.count;
 			saved_chars += row.chars;
-		} else {
+		} else if (isBilled(row.status)) {
 			misses += row.count;
 			spent_chars += row.chars;
 		}

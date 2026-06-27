@@ -281,8 +281,9 @@ export const en: Record<string, string> = {
 	'settings.ttsCache.saved': '~{chars} characters served from cache',
 	'settings.ttsCache.colWhen': 'When',
 	'settings.ttsCache.colStatus': 'Result',
+	'settings.ttsCache.colHash': 'Hash',
 	'settings.ttsCache.colChars': 'Chars',
-	'settings.ttsCache.monitorNote': 'Recent voice requests (last 14 days). edge-hit / r2-hit were served from cache; miss was synthesized at the provider.',
+	'settings.ttsCache.monitorNote': 'Recent voice requests (last 14 days). edge-hit / r2-hit / inflight-hit were served without a provider call; cache-only-miss was not billed.',
 	'settings.usage.noUsage': 'No usage recorded yet',
 
 	// Card Browser

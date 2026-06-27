@@ -96,7 +96,7 @@
 			misses: number;
 			saved_chars: number;
 			spent_chars: number;
-			recent: Array<{ status: string; chars: number; created_at: string }>;
+			recent: Array<{ status: string; chars: number; hash: string | null; created_at: string }>;
 		};
 	}
 	let ttsCache = $state<TtsCacheInfo | null>(null);
@@ -456,6 +456,10 @@
 		// D1 stores "YYYY-MM-DD HH:MM:SS" in UTC; render a short local time for the debug list.
 		const date = new Date(iso.replace(' ', 'T') + 'Z');
 		return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
+	}
+
+	function formatHash(hash: string | null): string {
+		return hash ? hash.slice(0, 12) : '-';
 	}
 
 	function allZero(usage: UsageData): boolean {
@@ -1027,6 +1031,7 @@
 								<tr>
 									<th>{$t('settings.ttsCache.colWhen')}</th>
 									<th>{$t('settings.ttsCache.colStatus')}</th>
+									<th>{$t('settings.ttsCache.colHash')}</th>
 									<th class="num">{$t('settings.ttsCache.colChars')}</th>
 								</tr>
 							</thead>
@@ -1035,6 +1040,7 @@
 									<tr>
 										<td>{formatEventTime(ev.created_at)}</td>
 										<td><span class="cache-tag cache-tag--{ev.status}">{ev.status}</span></td>
+										<td class="hash">{formatHash(ev.hash)}</td>
 										<td class="num">{ev.chars}</td>
 									</tr>
 								{/each}
@@ -1699,6 +1705,11 @@
 		text-align: right;
 	}
 
+	.cache-monitor-table .hash {
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 0.68rem;
+	}
+
 	.cache-tag {
 		display: inline-block;
 		padding: 0.05rem 0.4rem;
@@ -1708,9 +1719,15 @@
 	}
 
 	.cache-tag--edge-hit,
-	.cache-tag--r2-hit {
+	.cache-tag--r2-hit,
+	.cache-tag--inflight-hit {
 		background: rgba(67, 214, 146, 0.15);
 		color: var(--success);
+	}
+
+	.cache-tag--cache-only-miss {
+		background: rgba(255, 191, 102, 0.15);
+		color: #ffbf66;
 	}
 
 	.cache-tag--miss,

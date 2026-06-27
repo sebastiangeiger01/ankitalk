@@ -61,8 +61,15 @@ function errorDetail(error: unknown): string {
 	return typeof error === 'string' ? error : 'unknown error';
 }
 
-async function fetchTTSAudio(text: string, voice?: string, speed?: number, signal?: AbortSignal, deckId?: string): Promise<Blob> {
-	const params: Record<string, string> = { text };
+async function fetchTTSAudio(
+	text: string,
+	voice?: string,
+	speed?: number,
+	signal?: AbortSignal,
+	deckId?: string,
+	generate = true
+): Promise<Blob | null> {
+	const params: Record<string, string | boolean> = { text, generate };
 	if (voice) params.voice = voice;
 	if (speed) params.speed = String(speed);
 	// deckId doesn't change the audio (so it's intentionally absent from the client cache key);
@@ -82,6 +89,7 @@ async function fetchTTSAudio(text: string, voice?: string, speed?: number, signa
 		throw new Error(`TTS request failed: ${errorDetail(error)}`);
 	}
 
+	if (response.status === 204) return null;
 	if (!response.ok) {
 		const detail = (await response.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 180);
 		throw new Error(`TTS HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
@@ -99,8 +107,9 @@ export function preloadTTS(text: string, voice?: string, speed?: number, deckId?
 	const existing = audioPreloads.get(key);
 	if (existing) return existing.then(() => true, () => false);
 
-	const preload = fetchTTSAudio(text, voice, speed, undefined, deckId)
+	const preload = fetchTTSAudio(text, voice, speed, undefined, deckId, false)
 		.then((audio) => {
+			if (!audio) throw new Error('TTS cache miss');
 			audioCache.set(key, audio);
 			return audio;
 		})
@@ -219,7 +228,7 @@ export async function speak(text: string, voice?: string, speed?: number, onPlay
 	lastSpokenText = text;
 
 	const key = cacheKey(text, voice, speed);
-	let audio = audioCache.get(key);
+	let audio: Blob | null | undefined = audioCache.get(key);
 	if (audio) {
 		audioCache.delete(key);
 	} else {
@@ -244,6 +253,7 @@ export async function speak(text: string, voice?: string, speed?: number, onPlay
 	}
 
 	if (abort !== currentAbort || abort.signal.aborted) return;
+	if (!audio) throw new Error('TTS audio was not generated');
 
 	const mime = audio.type || 'audio/mpeg';
 	const support = getAudioElement().canPlayType(mime);

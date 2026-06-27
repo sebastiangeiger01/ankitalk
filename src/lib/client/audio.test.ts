@@ -168,6 +168,26 @@ describe('review audio', () => {
 		expect(audioContextConstructions).toBe(0);
 	});
 
+	it('uses cache-only preloads and generates only when playback needs audio', async () => {
+		const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+			const body = JSON.parse(String(init?.body ?? '{}')) as { generate?: boolean };
+			if (body.generate === false) return new Response(null, { status: 204 });
+			return new Response(new Uint8Array([1]), {
+				status: 200,
+				headers: { 'Content-Type': 'audio/mpeg' }
+			});
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		const { preloadTTS, speak } = await import('./audio');
+
+		await expect(preloadTTS('new card')).resolves.toBe(false);
+		await speak('new card');
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ text: 'new card', generate: false });
+		expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({ text: 'new card', generate: true });
+	});
+
 	it('does not cut off a clip that plays longer than the start watchdog window', async () => {
 		vi.useFakeTimers();
 		vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1]), {
