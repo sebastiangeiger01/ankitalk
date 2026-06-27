@@ -39,8 +39,21 @@ export interface IssuedTokens {
 	scope: string;
 }
 
+// Not a tool scope — a signal to OAuth clients that we issue refresh tokens. Claude appends
+// this to its authorization request when the server advertises it, and uses the token
+// response's scope to confirm refresh support. We always issue a refresh token, so we always
+// advertise and echo it.
+const OFFLINE_ACCESS = 'offline_access';
+
 function iso(secondsFromNow: number): string {
 	return new Date(Date.now() + secondsFromNow * 1000).toISOString();
+}
+
+/** Space-delimited OAuth scope string for a token response, always including offline_access. */
+function tokenScopeString(serialized: string): string {
+	const parts = serialized.split(',').filter(Boolean);
+	parts.push(OFFLINE_ACCESS);
+	return parts.join(' ');
 }
 
 /** A random opaque secret with a recognizable prefix; 24 bytes = 192 bits of entropy. */
@@ -303,7 +316,7 @@ export async function issueTokensForGrant(
 		access_token: access,
 		refresh_token: refresh,
 		expires_in: ACCESS_TTL_SECONDS,
-		scope: scopeSerialized.split(',').join(' ')
+		scope: tokenScopeString(scopeSerialized)
 	};
 }
 
@@ -347,7 +360,7 @@ export async function refreshTokens(
 		access_token: access,
 		refresh_token: refresh,
 		expires_in: ACCESS_TTL_SECONDS,
-		scope: scopeSerialized.split(',').join(' ')
+		scope: tokenScopeString(scopeSerialized)
 	};
 }
 
@@ -359,7 +372,7 @@ export function protectedResourceMetadata(origin: string) {
 	return {
 		resource: `${origin}/api/mcp`,
 		authorization_servers: [origin],
-		scopes_supported: [...MCP_SCOPES],
+		scopes_supported: [...MCP_SCOPES, OFFLINE_ACCESS],
 		bearer_methods_supported: ['header'],
 		resource_documentation: `${origin}/settings`
 	};
@@ -371,7 +384,7 @@ export function authorizationServerMetadata(origin: string) {
 		authorization_endpoint: `${origin}/oauth/authorize`,
 		token_endpoint: `${origin}/api/mcp/oauth/token`,
 		registration_endpoint: `${origin}/api/mcp/oauth/register`,
-		scopes_supported: [...MCP_SCOPES],
+		scopes_supported: [...MCP_SCOPES, OFFLINE_ACCESS],
 		response_types_supported: ['code'],
 		response_modes_supported: ['query'],
 		grant_types_supported: ['authorization_code', 'refresh_token'],
