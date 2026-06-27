@@ -245,6 +245,8 @@ export const de: Record<string, string> = {
 	'settings.apiKeys.anthropicCost': '~$0,02 pro Erklärung',
 	'settings.apiKeys.configured': 'Konfiguriert',
 	'settings.apiKeys.notConfigured': 'Nicht konfiguriert',
+	'settings.apiKeys.add': 'Schlüssel hinzufügen',
+	'settings.apiKeys.edit': 'Schlüssel bearbeiten',
 	'settings.apiKeys.save': 'Speichern',
 	'settings.apiKeys.remove': 'Entfernen',
 	'settings.apiKeys.removing': 'Wird entfernt…',
