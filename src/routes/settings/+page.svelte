@@ -84,8 +84,22 @@
 	let usageData = $state<UsageData | null>(null);
 	let loadingUsage = $state(false);
 
-	// How much spoken-card audio is cached durably (R2), so it isn't re-synthesized (re-charged).
-	let ttsCache = $state<{ clips: number; bytes: number; pinned_clips: number } | null>(null);
+	// How much spoken-card audio is cached durably (R2), so it isn't re-synthesized (re-charged),
+	// plus a monitor of recent cache hit/miss outcomes.
+	interface TtsCacheInfo {
+		clips: number;
+		bytes: number;
+		pinned_clips: number;
+		events: {
+			by_status: Array<{ status: string; count: number; chars: number }>;
+			hits: number;
+			misses: number;
+			saved_chars: number;
+			spent_chars: number;
+			recent: Array<{ status: string; chars: number; created_at: string }>;
+		};
+	}
+	let ttsCache = $state<TtsCacheInfo | null>(null);
 
 	/**
 	 * Agent conversation usage logged through AnkiTalk this month. ElevenLabs doesn't
@@ -292,7 +306,7 @@
 			]);
 			if (usageRes.ok) usageData = await usageRes.json() as UsageData;
 			if (agentRes.ok) agentUsage = await agentRes.json();
-			if (cacheRes.ok) ttsCache = await cacheRes.json() as { clips: number; bytes: number; pinned_clips: number };
+			if (cacheRes.ok) ttsCache = await cacheRes.json() as TtsCacheInfo;
 		} catch {
 			// silently ignore
 		} finally {
@@ -431,6 +445,17 @@
 		if (n < 1024) return `${n} B`;
 		if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
 		return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+	}
+
+	function cacheHitRate(events: TtsCacheInfo['events']): number {
+		const total = events.hits + events.misses;
+		return total === 0 ? 0 : Math.round((events.hits / total) * 100);
+	}
+
+	function formatEventTime(iso: string): string {
+		// D1 stores "YYYY-MM-DD HH:MM:SS" in UTC; render a short local time for the debug list.
+		const date = new Date(iso.replace(' ', 'T') + 'Z');
+		return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
 	}
 
 	function allZero(usage: UsageData): boolean {
@@ -973,7 +998,7 @@
 			<p class="usage-note">{$t('settings.usage.note')}</p>
 		{/if}
 
-		{#if ttsCache && ttsCache.clips > 0}
+		{#if ttsCache && (ttsCache.clips > 0 || ttsCache.events.hits + ttsCache.events.misses > 0)}
 			<div class="tts-cache">
 				<div class="tts-cache-head">
 					<strong>{$t('settings.ttsCache.title')}</strong>
@@ -985,6 +1010,34 @@
 						{' '}{$t('settings.ttsCache.pinned', { count: ttsCache.pinned_clips })}
 					{/if}
 				</p>
+
+				{#if ttsCache.events.hits + ttsCache.events.misses > 0}
+					<div class="cache-monitor">
+						<div class="cache-monitor-summary">
+							<span>{$t('settings.ttsCache.hitRate', { pct: cacheHitRate(ttsCache.events) })}</span>
+							<span>{$t('settings.ttsCache.saved', { chars: ttsCache.events.saved_chars })}</span>
+						</div>
+						<table class="cache-monitor-table">
+							<thead>
+								<tr>
+									<th>{$t('settings.ttsCache.colWhen')}</th>
+									<th>{$t('settings.ttsCache.colStatus')}</th>
+									<th class="num">{$t('settings.ttsCache.colChars')}</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each ttsCache.events.recent as ev}
+									<tr>
+										<td>{formatEventTime(ev.created_at)}</td>
+										<td><span class="cache-tag cache-tag--{ev.status}">{ev.status}</span></td>
+										<td class="num">{ev.chars}</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+						<p class="cache-monitor-note">{$t('settings.ttsCache.monitorNote')}</p>
+					</div>
+				{/if}
 			</div>
 		{/if}
 	</section>
@@ -1591,6 +1644,73 @@
 		font-size: 0.78rem;
 		color: #5a5a7a;
 		margin: 0.4rem 0 0;
+		line-height: 1.5;
+	}
+
+	.cache-monitor {
+		margin-top: 0.85rem;
+		padding-top: 0.85rem;
+		border-top: 1px solid var(--border);
+	}
+
+	.cache-monitor-summary {
+		display: flex;
+		gap: 1rem;
+		flex-wrap: wrap;
+		font-size: 0.82rem;
+		font-weight: 600;
+		color: var(--text);
+		margin-bottom: 0.6rem;
+	}
+
+	.cache-monitor-table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.75rem;
+	}
+
+	.cache-monitor-table th,
+	.cache-monitor-table td {
+		text-align: left;
+		padding: 0.25rem 0.4rem;
+		border-bottom: 1px solid var(--border);
+		color: var(--text-muted);
+		white-space: nowrap;
+	}
+
+	.cache-monitor-table th {
+		color: #8080a0;
+		font-weight: 600;
+	}
+
+	.cache-monitor-table .num {
+		text-align: right;
+	}
+
+	.cache-tag {
+		display: inline-block;
+		padding: 0.05rem 0.4rem;
+		border-radius: 4px;
+		font-size: 0.7rem;
+		font-weight: 600;
+	}
+
+	.cache-tag--edge-hit,
+	.cache-tag--r2-hit {
+		background: rgba(67, 214, 146, 0.15);
+		color: var(--success);
+	}
+
+	.cache-tag--miss,
+	.cache-tag--no-bucket {
+		background: rgba(255, 102, 102, 0.15);
+		color: #ff8080;
+	}
+
+	.cache-monitor-note {
+		font-size: 0.72rem;
+		color: #5a5a7a;
+		margin: 0.5rem 0 0;
 		line-height: 1.5;
 	}
 

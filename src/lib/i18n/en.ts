@@ -277,6 +277,12 @@ export const en: Record<string, string> = {
 	'settings.ttsCache.summary': '{clips} clips · {size}',
 	'settings.ttsCache.note': 'Spoken-card audio is cached so it isn\'t re-generated (and re-charged) each time you study. Unused audio is cleared automatically after a period of inactivity.',
 	'settings.ttsCache.pinned': '{count} kept until an exam date.',
+	'settings.ttsCache.hitRate': 'Cache hit rate: {pct}%',
+	'settings.ttsCache.saved': '~{chars} characters served from cache',
+	'settings.ttsCache.colWhen': 'When',
+	'settings.ttsCache.colStatus': 'Result',
+	'settings.ttsCache.colChars': 'Chars',
+	'settings.ttsCache.monitorNote': 'Recent voice requests (last 14 days). edge-hit / r2-hit were served from cache; miss was synthesized at the provider.',
 	'settings.usage.noUsage': 'No usage recorded yet',
 
 	// Card Browser
