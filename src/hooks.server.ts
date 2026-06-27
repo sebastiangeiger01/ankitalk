@@ -24,15 +24,15 @@ function isPublicMcpEndpoint(pathname: string): boolean {
 }
 
 /**
- * Defense-in-depth CSRF: refuse mutating `/api/*` calls whose Origin doesn't match the
- * request host. SvelteKit's built-in `csrf.checkOrigin` already rejects cross-site posts
- * with form-encoded content types; this extends the check to JSON requests (which a
- * cross-site `fetch()` cannot send without a CORS preflight, but a misconfigured proxy
- * could). `Sec-Fetch-Site` is the modern signal; `Origin` is the fallback.
+ * Same-origin CSRF guard. We disable SvelteKit's built-in `csrf.checkOrigin` (it has no
+ * per-route opt-out and would block the legitimate cross-origin form POST to our OAuth token
+ * endpoint), so this hook IS our CSRF protection. It covers every mutating request — both
+ * `/api/*` calls and page form actions (e.g. the OAuth consent approve/deny) — and the caller
+ * exempts only the public MCP/OAuth endpoints, which authenticate by bearer token / PKCE
+ * instead. `Sec-Fetch-Site` is the modern signal; `Origin` is the fallback.
  */
 function enforceSameOrigin(event: Parameters<Handle>[0]['event']) {
 	if (!UNSAFE_METHODS.has(event.request.method)) return;
-	if (!event.url.pathname.startsWith('/api/')) return;
 
 	const fetchSite = event.request.headers.get('sec-fetch-site');
 	if (fetchSite) {
