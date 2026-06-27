@@ -7,9 +7,25 @@ import { enforceRateLimit, RATE_LIMITS } from '$lib/server/rate-limit';
 
 const JSON_HEADERS = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
 
-function rpcError(status: number, code: number, message: string, authenticate = false) {
+function rpcError(
+	status: number,
+	code: number,
+	message: string,
+	authenticate = false,
+	resourceMetadataUrl?: string,
+	tokenError?: string
+) {
 	const headers = new Headers(JSON_HEADERS);
-	if (authenticate) headers.set('WWW-Authenticate', 'Bearer realm="AnkiTalk MCP"');
+	if (authenticate) {
+		// Point OAuth-capable clients (e.g. Claude) at our Protected Resource Metadata so they
+		// can discover the authorization server and start the PKCE flow. RFC 9728 §5.1. The
+		// `error="invalid_token"` part is only included when a token was presented but rejected
+		// (RFC 6750 §3.1) — a bare missing-credentials 401 omits it.
+		const parts = ['Bearer realm="AnkiTalk MCP"'];
+		if (resourceMetadataUrl) parts.push(`resource_metadata="${resourceMetadataUrl}"`);
+		if (tokenError) parts.push(`error="${tokenError}"`);
+		headers.set('WWW-Authenticate', parts.join(', '));
+	}
 	return new Response(
 		JSON.stringify({ jsonrpc: '2.0', id: null, error: { code, message } }),
 		{ status, headers }
@@ -28,12 +44,15 @@ const handleMcp: RequestHandler = async ({ request, url, platform }) => {
 		return rpcError(403, -32600, 'Invalid Origin');
 	}
 
+	// Claude probes the resource-path-suffixed metadata document first, so advertise that exact
+	// URL (we serve both the suffixed and bare forms).
+	const resourceMetadataUrl = `${url.origin}/.well-known/oauth-protected-resource/api/mcp`;
 	const plaintext = extractBearer(request.headers.get('Authorization'));
-	if (!plaintext) return rpcError(401, -32001, 'Missing bearer token', true);
+	if (!plaintext) return rpcError(401, -32001, 'Missing bearer token', true, resourceMetadataUrl);
 
 	const db = getDb(platform!);
 	const owner = await resolveTokenOwner(db, plaintext);
-	if (!owner) return rpcError(401, -32001, 'Invalid or expired bearer token', true);
+	if (!owner) return rpcError(401, -32001, 'Invalid or expired bearer token', true, resourceMetadataUrl, 'invalid_token');
 
 	try {
 		await enforceRateLimit(

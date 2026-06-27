@@ -6,9 +6,10 @@ import {
 	findCards,
 	getCardContext,
 	getStudyProgress,
+	listDecks,
 	searchStudyMaterial
 } from '$lib/server/study-context';
-import { createNotes, validateCardDrafts, type CardDraft } from '$lib/server/card-authoring';
+import { createDeck, createNotes, validateCardDrafts, type CardDraft } from '$lib/server/card-authoring';
 
 export interface McpToolContext {
 	db: D1Database;
@@ -222,6 +223,33 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 					jsonResult(await findCards(ctx.db, ctx.userId, { status, deckId: deck_id, limit, cursor }))
 				)
 		);
+
+		server.registerTool(
+			'list_decks',
+			{
+				title: 'List decks',
+				description:
+					'List the learner’s decks with their names, descriptions, and card counts. Use this to discover an existing deck_id before authoring, or to confirm a deck does not exist yet before creating one.',
+				inputSchema: {
+					limit: z.number().int().min(1).max(50).default(20).describe('Decks per page; defaults to 20.'),
+					cursor
+				},
+				outputSchema: {
+					decks: z.array(
+						z.object({
+							deck_id: z.string(),
+							name: z.string(),
+							description: z.string(),
+							card_count: z.number().int()
+						})
+					),
+					next_cursor: z.string().nullable()
+				},
+				annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+			},
+			async ({ limit, cursor }) =>
+				audited(ctx, 'list_decks', async () => jsonResult(await listDecks(ctx.db, ctx.userId, { limit, cursor })))
+		);
 	}
 
 	if (ctx.scopes.has('study:read')) {
@@ -281,6 +309,43 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 			card_type: z.enum(['basic', 'cloze']).default('basic'),
 			model_name: z.string().trim().min(1).max(200).optional()
 		});
+
+		const deckResultSchema = z.object({
+			deck_id: z.string(),
+			name: z.string(),
+			description: z.string(),
+			card_count: z.number().int()
+		});
+
+		server.registerTool(
+			'create_deck',
+			{
+				title: 'Create a deck',
+				description:
+					'Create a new deck to hold flashcards. If a deck with the same name already exists it is returned unchanged (existing=true) rather than duplicated, so this is safe to call before authoring. Reuse the same idempotency key when retrying.',
+				inputSchema: {
+					name: z.string().trim().min(1).max(200).describe('Deck name shown to the learner.'),
+					description: z.string().max(2_000).optional().describe('Optional deck description.'),
+					idempotency_key: z.string().min(8).max(200).describe('Stable unique key for this exact creation request.')
+				},
+				outputSchema: {
+					created: z.boolean(),
+					existing: z.boolean(),
+					deck: deckResultSchema
+				},
+				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+			},
+			async ({ name, description, idempotency_key }) =>
+				audited(ctx, 'create_deck', async () =>
+					jsonResult(
+						(await createDeck(ctx.db, ctx.userId, {
+							name,
+							description,
+							idempotencyKey: idempotency_key
+						})) as unknown as Record<string, unknown>
+					)
+				)
+		);
 
 		server.registerTool(
 			'validate_card_drafts',
