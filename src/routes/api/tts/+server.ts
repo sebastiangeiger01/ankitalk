@@ -30,8 +30,13 @@ function edgeCacheKey(hash: string): Request {
 	return new Request(`https://tts-cache.internal/v1/${hash}`);
 }
 
-function audioResponse(bytes: ArrayBuffer): Response {
-	return new Response(bytes, { headers: { ...AUDIO_RESPONSE_HEADERS } });
+/**
+ * `status` is a diagnostic surfaced as `X-TTS-Cache` so cache behaviour is visible in the browser
+ * Network tab without server logs: `r2-hit` (served from R2), `miss` (freshly synthesized + stored),
+ * `edge-hit` (served from the Cloudflare edge cache), `no-bucket` (R2 binding missing).
+ */
+function audioResponse(bytes: ArrayBuffer, status: string): Response {
+	return new Response(bytes, { headers: { ...AUDIO_RESPONSE_HEADERS, 'X-TTS-Cache': status } });
 }
 
 function getEdgeCache(): Cache | null {
@@ -123,7 +128,11 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 	const cacheKey = cache ? edgeCacheKey(hash) : null;
 	if (cache && cacheKey) {
 		const cached = await cache.match(cacheKey);
-		if (cached) return cached;
+		if (cached) {
+			const tagged = new Response(cached.body, cached);
+			tagged.headers.set('X-TTS-Cache', 'edge-hit');
+			return tagged;
+		}
 	}
 
 	// 2) Durable R2 layer — survives edge eviction, so we never re-pay the provider for a clip we
@@ -131,7 +140,7 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 	if (bucket) {
 		const stored = await getStoredAudio(bucket, hash, deckPinned);
 		if (stored) {
-			const response = audioResponse(stored.bytes);
+			const response = audioResponse(stored.bytes, 'r2-hit');
 			// Refresh the R2 object if it's near expiry / changed pin status, and keep the cache
 			// index's expiry in lock-step whenever we actually re-wrote.
 			const refreshAndIndex = refreshStoredAudio(bucket, hash, stored, deckPinned).then((rewrote) =>
@@ -149,7 +158,7 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 			await new Promise((resolve) => setTimeout(resolve, LOCK_WAIT_MS));
 			const retry = await getStoredAudio(bucket, hash, deckPinned);
 			if (retry) {
-				const response = audioResponse(retry.bytes);
+				const response = audioResponse(retry.bytes, 'r2-hit');
 				if (cache && cacheKey) {
 					platform?.context?.waitUntil(cache.put(cacheKey, response.clone()).catch(() => undefined));
 				}
@@ -176,7 +185,7 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 
 		// Buffer once so we can persist to R2 + edge AND still return the audio to the caller.
 		const bytes = await providerResponse.arrayBuffer();
-		const response = audioResponse(bytes);
+		const response = audioResponse(bytes, bucket ? 'miss' : 'no-bucket');
 
 		const bg: Promise<unknown>[] = [
 			logUsage(db, userId, provider === 'elevenlabs' ? 'elevenlabs' : 'openai', 'tts', text.length, cost)
