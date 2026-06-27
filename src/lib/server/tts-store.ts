@@ -104,21 +104,26 @@ export async function putStoredAudio(
  * Keep a cache hit alive correctly. If the object is in the wrong prefix for the deck's current
  * pin status, migrate it (write the correct prefix, delete the old). Otherwise reset its
  * lifecycle clock only once it's old enough to be nearing expiry. Never calls the speech provider.
+ *
+ * Returns `true` when it actually re-wrote the object, so the caller can bump the matching
+ * `tts_audio` index row's expiry in lock-step with the R2 lifecycle clock.
  */
 export async function refreshStoredAudio(
 	bucket: R2Bucket,
 	hash: string,
 	stored: StoredAudio,
 	shouldBePinned: boolean
-): Promise<void> {
+): Promise<boolean> {
 	if (stored.pinned !== shouldBePinned) {
 		await putStoredAudio(bucket, hash, stored.bytes, shouldBePinned, stored.contentType);
 		await bucket.delete(keyFor(hash, stored.pinned));
-		return;
+		return true;
 	}
 	if (Date.now() - stored.uploadedMs > REFRESH_AFTER_MS) {
 		await putStoredAudio(bucket, hash, stored.bytes, shouldBePinned, stored.contentType);
+		return true;
 	}
+	return false;
 }
 
 /**
@@ -157,4 +162,64 @@ export async function isDeckAudioPinned(
 		.bind(deckId, userId)
 		.first<{ pinned: number }>();
 	return row !== null;
+}
+
+/** SQLite datetime modifier for this object's lifecycle deletion, mirroring the bucket rules. */
+function retentionModifier(pinned: boolean): string {
+	return `+${pinned ? PIN_RETENTION_DAYS : STD_RETENTION_DAYS} days`;
+}
+
+/**
+ * Record (or refresh) the per-user cache index for one clip, in lock-step with R2: called on
+ * generation and on every refresh re-write, setting `expires_at` to the same point R2 will delete
+ * the object. Also opportunistically sweeps this user's already-expired rows so stats stay honest.
+ */
+export async function recordCachedAudio(
+	db: D1Database,
+	userId: string,
+	hash: string,
+	bytes: number,
+	pinned: boolean
+): Promise<void> {
+	await db.batch([
+		db
+			.prepare(
+				`INSERT INTO tts_audio (user_id, hash, bytes, pinned, expires_at, updated_at)
+				 VALUES (?, ?, ?, ?, datetime('now', ?), datetime('now'))
+				 ON CONFLICT(user_id, hash) DO UPDATE SET
+				   bytes = excluded.bytes,
+				   pinned = excluded.pinned,
+				   expires_at = excluded.expires_at,
+				   updated_at = excluded.updated_at`
+			)
+			.bind(userId, hash, bytes, pinned ? 1 : 0, retentionModifier(pinned)),
+		db
+			.prepare(`DELETE FROM tts_audio WHERE user_id = ? AND expires_at <= datetime('now')`)
+			.bind(userId)
+	]);
+}
+
+export interface TtsCacheStats {
+	clips: number;
+	bytes: number;
+	pinned_clips: number;
+}
+
+/** Summarize a user's live cached audio (rows whose R2 object hasn't aged out yet). */
+export async function getTtsCacheStats(db: D1Database, userId: string): Promise<TtsCacheStats> {
+	const row = await db
+		.prepare(
+			`SELECT COUNT(*) AS clips,
+			        COALESCE(SUM(bytes), 0) AS bytes,
+			        COALESCE(SUM(CASE WHEN pinned = 1 THEN 1 ELSE 0 END), 0) AS pinned_clips
+			 FROM tts_audio
+			 WHERE user_id = ? AND expires_at > datetime('now')`
+		)
+		.bind(userId)
+		.first<TtsCacheStats>();
+	return {
+		clips: row?.clips ?? 0,
+		bytes: row?.bytes ?? 0,
+		pinned_clips: row?.pinned_clips ?? 0
+	};
 }

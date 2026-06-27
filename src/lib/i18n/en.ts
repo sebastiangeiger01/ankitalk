@@ -273,6 +273,10 @@ export const en: Record<string, string> = {
 	'settings.usage.month': 'This month',
 	'settings.usage.total': 'Total',
 	'settings.usage.note': 'Costs are estimated and may differ slightly from your provider\'s invoice.',
+	'settings.ttsCache.title': 'Voice audio cache',
+	'settings.ttsCache.summary': '{clips} clips · {size}',
+	'settings.ttsCache.note': 'Spoken-card audio is cached so it isn\'t re-generated (and re-charged) each time you study. Unused audio is cleared automatically after a period of inactivity.',
+	'settings.ttsCache.pinned': '{count} kept until an exam date.',
 	'settings.usage.noUsage': 'No usage recorded yet',
 
 	// Card Browser

@@ -12,6 +12,7 @@ import {
 	isDeckAudioPinned,
 	isGenerationLocked,
 	putStoredAudio,
+	recordCachedAudio,
 	refreshStoredAudio,
 	releaseGenerationLock,
 	ttsHash
@@ -131,7 +132,12 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 		const stored = await getStoredAudio(bucket, hash, deckPinned);
 		if (stored) {
 			const response = audioResponse(stored.bytes);
-			const bg: Promise<unknown>[] = [refreshStoredAudio(bucket, hash, stored, deckPinned)];
+			// Refresh the R2 object if it's near expiry / changed pin status, and keep the cache
+			// index's expiry in lock-step whenever we actually re-wrote.
+			const refreshAndIndex = refreshStoredAudio(bucket, hash, stored, deckPinned).then((rewrote) =>
+				rewrote ? recordCachedAudio(db, userId, hash, stored.bytes.byteLength, deckPinned) : undefined
+			);
+			const bg: Promise<unknown>[] = [refreshAndIndex];
 			if (cache && cacheKey) bg.push(cache.put(cacheKey, response.clone()));
 			platform?.context?.waitUntil(Promise.all(bg).catch(() => undefined));
 			return response;
@@ -175,7 +181,10 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 		const bg: Promise<unknown>[] = [
 			logUsage(db, userId, provider === 'elevenlabs' ? 'elevenlabs' : 'openai', 'tts', text.length, cost)
 		];
-		if (bucket) bg.push(putStoredAudio(bucket, hash, bytes, deckPinned));
+		if (bucket) {
+			bg.push(putStoredAudio(bucket, hash, bytes, deckPinned));
+			bg.push(recordCachedAudio(db, userId, hash, bytes.byteLength, deckPinned));
+		}
 		if (cache && cacheKey) bg.push(cache.put(cacheKey, response.clone()));
 		platform?.context?.waitUntil(Promise.all(bg).catch(() => undefined));
 

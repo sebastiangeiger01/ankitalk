@@ -84,6 +84,9 @@
 	let usageData = $state<UsageData | null>(null);
 	let loadingUsage = $state(false);
 
+	// How much spoken-card audio is cached durably (R2), so it isn't re-synthesized (re-charged).
+	let ttsCache = $state<{ clips: number; bytes: number; pinned_clips: number } | null>(null);
+
 	/**
 	 * Agent conversation usage logged through AnkiTalk this month. ElevenLabs doesn't
 	 * expose CAI minutes via API, so this is a local-only tally — see the note rendered
@@ -281,13 +284,15 @@
 
 		loadingUsage = true;
 		try {
-			const [usageRes, agentRes] = await Promise.all([
+			const [usageRes, agentRes, cacheRes] = await Promise.all([
 				fetch('/api/settings/usage'),
 				fetch('/api/agent/usage'),
+				fetch('/api/settings/tts-cache'),
 				loadMcpTokens()
 			]);
 			if (usageRes.ok) usageData = await usageRes.json() as UsageData;
 			if (agentRes.ok) agentUsage = await agentRes.json();
+			if (cacheRes.ok) ttsCache = await cacheRes.json() as { clips: number; bytes: number; pinned_clips: number };
 		} catch {
 			// silently ignore
 		} finally {
@@ -420,6 +425,12 @@
 		if (n === 0) return '$0.00';
 		if (n < 0.01) return '<$0.01';
 		return '$' + n.toFixed(2);
+	}
+
+	function formatBytes(n: number): string {
+		if (n < 1024) return `${n} B`;
+		if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+		return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 	}
 
 	function allZero(usage: UsageData): boolean {
@@ -960,6 +971,21 @@
 				</div>
 			</div>
 			<p class="usage-note">{$t('settings.usage.note')}</p>
+		{/if}
+
+		{#if ttsCache && ttsCache.clips > 0}
+			<div class="tts-cache">
+				<div class="tts-cache-head">
+					<strong>{$t('settings.ttsCache.title')}</strong>
+					<span class="tts-cache-size">{$t('settings.ttsCache.summary', { clips: ttsCache.clips, size: formatBytes(ttsCache.bytes) })}</span>
+				</div>
+				<p class="tts-cache-note">
+					{$t('settings.ttsCache.note')}
+					{#if ttsCache.pinned_clips > 0}
+						{' '}{$t('settings.ttsCache.pinned', { count: ttsCache.pinned_clips })}
+					{/if}
+				</p>
+			</div>
 		{/if}
 	</section>
 
@@ -1538,6 +1564,33 @@
 		font-size: 0.78rem;
 		color: #5a5a7a;
 		margin: 0;
+		line-height: 1.5;
+	}
+
+	.tts-cache {
+		margin-top: 1rem;
+		padding: 0.75rem 1rem;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+	}
+
+	.tts-cache-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 0.75rem;
+	}
+
+	.tts-cache-size {
+		font-size: 0.85rem;
+		color: var(--text-muted);
+	}
+
+	.tts-cache-note {
+		font-size: 0.78rem;
+		color: #5a5a7a;
+		margin: 0.4rem 0 0;
 		line-height: 1.5;
 	}
 

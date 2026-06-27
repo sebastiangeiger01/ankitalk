@@ -161,6 +161,8 @@ export function createReviewEngine(): ReviewEngine {
 	let prepareAudioAhead = true;
 	// The deck under review. Passed to TTS so the server can honour this deck's exam-pin retention.
 	let activeDeckId: string | undefined;
+	// How many upcoming card fronts to warm at session start (bounded, just-in-time).
+	const WARM_AHEAD_COUNT = 3;
 
 	// Dual-queue architecture
 	let reviewQueue: CardData[] = [];
@@ -718,8 +720,20 @@ export function createReviewEngine(): ReviewEngine {
 		currentCard = null;
 		cardsReviewedCount = 0;
 
+		// Just-in-time warm: kick off synthesis for the next few due cards so playback stays
+		// instant and the provider calls are batched. Bounded — we never pre-generate a whole deck,
+		// so cards the learner never reaches are never synthesized (and never charged for).
+		warmUpcomingAudio();
+
 		// 3. Present first card immediately (speech recognition is already running)
 		presentCard();
+	}
+
+	function warmUpcomingAudio() {
+		if (!audioOn || !prepareAudioAhead) return;
+		for (const card of reviewQueue.slice(0, WARM_AHEAD_COUNT)) {
+			if (card.front) void preloadTTS(card.front, undefined, undefined, activeDeckId);
+		}
 	}
 
 	function destroy() {

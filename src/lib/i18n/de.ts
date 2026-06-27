@@ -273,6 +273,10 @@ export const de: Record<string, string> = {
 	'settings.usage.month': 'Diesen Monat',
 	'settings.usage.total': 'Gesamt',
 	'settings.usage.note': 'Kosten sind geschätzt und können von der Rechnung deines Anbieters abweichen.',
+	'settings.ttsCache.title': 'Sprachaudio-Cache',
+	'settings.ttsCache.summary': '{clips} Clips · {size}',
+	'settings.ttsCache.note': 'Gesprochene Kartenaudio wird zwischengespeichert, damit sie beim Lernen nicht jedes Mal neu erzeugt (und erneut berechnet) wird. Ungenutzte Audio wird nach einer Zeit der Inaktivität automatisch gelöscht.',
+	'settings.ttsCache.pinned': '{count} bis zu einem Prüfungsdatum aufbewahrt.',
 	'settings.usage.noUsage': 'Noch keine Nutzung aufgezeichnet',
 
 	// Card Browser
