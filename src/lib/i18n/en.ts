@@ -137,6 +137,9 @@ export const en: Record<string, string> = {
 	'settings.learningStepsHelper': 'Comma-separated. Cards walk through these steps before graduating. Default: 1, 10',
 	'settings.relearningSteps': 'Relearning steps (minutes)',
 	'settings.relearningStepsHelper': 'Steps for lapsed cards. Default: 10',
+	'settings.audioPinTitle': 'Keep audio ready until',
+	'settings.audioPinHelper': 'Pin this deck to an exam date to keep its spoken audio cached until then, so cards you study are not re-generated (and re-charged). Leave empty for the default — audio is kept while in use and cleared after a period of inactivity.',
+	'settings.audioPinClear': 'Clear',
 	'settings.save': 'Save',
 	'settings.saving': 'Saving...',
 	'settings.saved': 'Saved',
@@ -270,6 +273,10 @@ export const en: Record<string, string> = {
 	'settings.usage.month': 'This month',
 	'settings.usage.total': 'Total',
 	'settings.usage.note': 'Costs are estimated and may differ slightly from your provider\'s invoice.',
+	'settings.ttsCache.title': 'Voice audio cache',
+	'settings.ttsCache.summary': '{clips} clips · {size}',
+	'settings.ttsCache.note': 'Spoken-card audio is cached so it isn\'t re-generated (and re-charged) each time you study. Unused audio is cleared automatically after a period of inactivity.',
+	'settings.ttsCache.pinned': '{count} kept until an exam date.',
 	'settings.usage.noUsage': 'No usage recorded yet',
 
 	// Card Browser

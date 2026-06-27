@@ -159,6 +159,10 @@ export function createReviewEngine(): ReviewEngine {
 	let undoInFlight = false;
 	let sessionFinished = false;
 	let prepareAudioAhead = true;
+	// The deck under review. Passed to TTS so the server can honour this deck's exam-pin retention.
+	let activeDeckId: string | undefined;
+	// How many upcoming card fronts to warm at session start (bounded, just-in-time).
+	const WARM_AHEAD_COUNT = 3;
 
 	// Dual-queue architecture
 	let reviewQueue: CardData[] = [];
@@ -197,7 +201,7 @@ export function createReviewEngine(): ReviewEngine {
 			if (gen === speakGen) {
 				emit({ type: 'speaking' });
 			}
-		})
+		}, activeDeckId)
 			.then(() => {
 				if (gen === speakGen) playSound('/listen.mp3').catch(() => {});
 			})
@@ -312,7 +316,7 @@ export function createReviewEngine(): ReviewEngine {
 
 		// Preload the answer audio while question is playing
 		if (audioOn && prepareAudioAhead && currentCard.back) {
-			preloadTTS(currentCard.back);
+			preloadTTS(currentCard.back, undefined, undefined, activeDeckId);
 		}
 
 		speakText(currentCard.front);
@@ -356,7 +360,7 @@ export function createReviewEngine(): ReviewEngine {
 				emit({ type: 'phase_change', phase: 'rating' });
 				// Preload next card's front while answer is playing
 				if (audioOn && prepareAudioAhead && reviewQueue.length > 0) {
-					preloadTTS(reviewQueue[0].front);
+					preloadTTS(reviewQueue[0].front, undefined, undefined, activeDeckId);
 				}
 				speakText(currentCard.back);
 				break;
@@ -602,6 +606,7 @@ export function createReviewEngine(): ReviewEngine {
 	async function start(deckId: string, options?: StartOptions) {
 		destroyed = false;
 		sessionFinished = false;
+		activeDeckId = deckId;
 		prepareAudioAhead = options?.prepareAudioAhead ?? true;
 		startTime = Date.now();
 		isCramMode = options?.mode === 'cram';
@@ -715,8 +720,20 @@ export function createReviewEngine(): ReviewEngine {
 		currentCard = null;
 		cardsReviewedCount = 0;
 
+		// Just-in-time warm: kick off synthesis for the next few due cards so playback stays
+		// instant and the provider calls are batched. Bounded — we never pre-generate a whole deck,
+		// so cards the learner never reaches are never synthesized (and never charged for).
+		warmUpcomingAudio();
+
 		// 3. Present first card immediately (speech recognition is already running)
 		presentCard();
+	}
+
+	function warmUpcomingAudio() {
+		if (!audioOn || !prepareAudioAhead) return;
+		for (const card of reviewQueue.slice(0, WARM_AHEAD_COUNT)) {
+			if (card.front) void preloadTTS(card.front, undefined, undefined, activeDeckId);
+		}
 	}
 
 	function destroy() {
