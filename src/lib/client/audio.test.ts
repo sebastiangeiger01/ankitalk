@@ -247,4 +247,28 @@ describe('review audio', () => {
 			'TTS play() rejected: NotAllowedError: User gesture required (audio/mpeg, 1 bytes, canPlayType=probably; readyState=4, networkState=1)'
 		);
 	});
+
+	it('does not show raw upstream HTML when TTS returns an HTML 502 page', async () => {
+		vi.stubGlobal('fetch', vi.fn(async () => new Response(
+			'<!DOCTYPE html><!--[if lt IE 7]><html class="no-js ie6 oldie">bad gateway</html>',
+			{ status: 502, headers: { 'Content-Type': 'text/html' } }
+		)));
+		const { speak } = await import('./audio');
+
+		await expect(speak('first card')).rejects.toThrow(
+			'TTS HTTP 502: Speech service temporarily failed. Please retry.'
+		);
+	});
+
+	it('shows structured TTS JSON errors instead of raw response bodies', async () => {
+		vi.stubGlobal('fetch', vi.fn(async () => Response.json(
+			{ error: 'Speech provider failed', providerStatus: 502, detail: 'Bad gateway' },
+			{ status: 502 }
+		)));
+		const { speak } = await import('./audio');
+
+		await expect(speak('first card')).rejects.toThrow(
+			'TTS HTTP 502: Speech provider failed — provider 502 — Bad gateway'
+		);
+	});
 });
