@@ -435,6 +435,9 @@ export const en: Record<string, string> = {
 	'cards.editor.createFailed': 'Failed to create card',
 	'cards.editor.updateFailed': 'Failed to update card',
 	'cards.editor.saveFailed': 'Save failed',
+	'cards.editor.insertImage': 'Insert image',
+	'cards.editor.uploading': 'Uploading…',
+	'cards.editor.uploadFailed': 'Image upload failed',
 
 	// Rename dialog
 	'rename.title': 'Rename',
