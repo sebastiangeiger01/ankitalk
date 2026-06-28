@@ -10,6 +10,16 @@ import {
 	searchStudyMaterial
 } from '$lib/server/study-context';
 import { createDeck, createNotes, validateCardDrafts, type CardDraft } from '$lib/server/card-authoring';
+import {
+	deleteDeck,
+	deleteNotes,
+	moveNotesToDeck,
+	reorderNewCards,
+	setCardsSuspended,
+	updateDeck,
+	updateNoteFields,
+	updateNoteTags
+} from '$lib/server/card-editing';
 
 export interface McpToolContext {
 	db: D1Database;
@@ -392,6 +402,182 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 					});
 					return jsonResult(result as Record<string, unknown>);
 				})
+		);
+
+		const noteId = z.string().min(1).max(100);
+		const idList = (max: number) => z.array(z.string().min(1).max(100)).min(1).max(max);
+
+		server.registerTool(
+			'update_note_fields',
+			{
+				title: 'Edit a note’s fields',
+				description:
+					'Replace the fields of one existing note. Re-renders every card from the new content. For a cloze note this reconciles the card set: cards are added for new {{cN::}} deletions and removed for deletions that disappeared (added/removed cards reset their scheduling). Rejects edits whose result is invalid (returns validation) without writing.',
+				inputSchema: {
+					note_id: noteId.describe('The AnkiTalk note ID to edit.'),
+					fields: z.array(fieldSchema).min(1).max(20).describe('The full new set of fields for the note.')
+				},
+				outputSchema: {
+					updated: z.boolean(),
+					note_id: z.string().optional(),
+					cards_added: z.number().int().optional(),
+					cards_removed: z.number().int().optional(),
+					validation: z.array(z.looseObject({})).optional()
+				},
+				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+			},
+			async ({ note_id, fields }) =>
+				audited(ctx, 'update_note_fields', async () =>
+					jsonResult(await updateNoteFields(ctx.db, ctx.userId, { noteId: note_id, fields }))
+				)
+		);
+
+		server.registerTool(
+			'update_note_tags',
+			{
+				title: 'Edit a note’s tags',
+				description:
+					'Change the tags on one note. Use `set` to replace all tags, and/or `add`/`remove` to adjust the current tags. At least one of set/add/remove is required.',
+				inputSchema: {
+					note_id: noteId.describe('The AnkiTalk note ID to edit.'),
+					set: z.array(z.string().trim().min(1).max(200)).max(100).optional().describe('Replace all tags with this list.'),
+					add: z.array(z.string().trim().min(1).max(200)).max(100).optional().describe('Tags to add.'),
+					remove: z.array(z.string().trim().min(1).max(200)).max(100).optional().describe('Tags to remove.')
+				},
+				outputSchema: {
+					updated: z.boolean(),
+					note_id: z.string(),
+					tags: z.array(z.string())
+				},
+				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+			},
+			async ({ note_id, set, add, remove }) =>
+				audited(ctx, 'update_note_tags', async () =>
+					jsonResult(await updateNoteTags(ctx.db, ctx.userId, { noteId: note_id, set, add, remove }))
+				)
+		);
+
+		server.registerTool(
+			'update_deck',
+			{
+				title: 'Rename or describe a deck',
+				description: 'Rename a deck and/or change its description. At least one of name/description is required.',
+				inputSchema: {
+					deck_id: z.string().min(1).max(100).describe('The AnkiTalk deck ID to edit.'),
+					name: z.string().trim().min(1).max(200).optional().describe('New deck name.'),
+					description: z.string().max(2_000).optional().describe('New deck description.')
+				},
+				outputSchema: {
+					updated: z.boolean(),
+					deck: z.object({ deck_id: z.string(), name: z.string(), description: z.string() })
+				},
+				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+			},
+			async ({ deck_id, name, description }) =>
+				audited(ctx, 'update_deck', async () =>
+					jsonResult(await updateDeck(ctx.db, ctx.userId, { deckId: deck_id, name, description }))
+				)
+		);
+
+		server.registerTool(
+			'move_notes_to_deck',
+			{
+				title: 'Move notes to another deck',
+				description:
+					'Move one or more notes (and all their cards) into a different deck. Notes already in the target deck are skipped. Scheduling is preserved.',
+				inputSchema: {
+					note_ids: idList(100).describe('AnkiTalk note IDs to move.'),
+					target_deck_id: z.string().min(1).max(100).describe('Destination deck ID.')
+				},
+				outputSchema: {
+					moved: z.boolean(),
+					notes_moved: z.number().int(),
+					cards_moved: z.number().int()
+				},
+				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+			},
+			async ({ note_ids, target_deck_id }) =>
+				audited(ctx, 'move_notes_to_deck', async () =>
+					jsonResult(await moveNotesToDeck(ctx.db, ctx.userId, { noteIds: note_ids, targetDeckId: target_deck_id }))
+				)
+		);
+
+		server.registerTool(
+			'reorder_new_cards',
+			{
+				title: 'Reorder new cards',
+				description:
+					'Set the study order of still-new cards within a deck by listing their IDs in the desired order. Only cards that have not been studied yet (new state) can be repositioned; the call fails if any listed card is already in learning/review or not in the deck.',
+				inputSchema: {
+					deck_id: z.string().min(1).max(100).describe('The deck whose new cards are being reordered.'),
+					ordered_card_ids: z
+						.array(z.string().min(1).max(100))
+						.min(1)
+						.max(200)
+						.describe('New-card IDs in the desired study order.')
+				},
+				outputSchema: { reordered: z.number().int() },
+				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+			},
+			async ({ deck_id, ordered_card_ids }) =>
+				audited(ctx, 'reorder_new_cards', async () =>
+					jsonResult(await reorderNewCards(ctx.db, ctx.userId, { deckId: deck_id, orderedCardIds: ordered_card_ids }))
+				)
+		);
+
+		server.registerTool(
+			'set_card_suspended',
+			{
+				title: 'Suspend or unsuspend cards',
+				description:
+					'Suspend cards (remove them from study) or unsuspend them (return them to study). Reversible; pass suspended=false to restore. Reports how many of the requested cards matched.',
+				inputSchema: {
+					card_ids: idList(100).describe('AnkiTalk card IDs to update.'),
+					suspended: z.boolean().describe('true to suspend, false to unsuspend.')
+				},
+				outputSchema: { suspended: z.boolean(), matched: z.number().int() },
+				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+			},
+			async ({ card_ids, suspended }) =>
+				audited(ctx, 'set_card_suspended', async () =>
+					jsonResult(await setCardsSuspended(ctx.db, ctx.userId, { cardIds: card_ids, suspended }))
+				)
+		);
+
+		server.registerTool(
+			'delete_notes',
+			{
+				title: 'Delete notes',
+				description:
+					'Permanently delete one or more notes and all of their cards and review history. This cannot be undone and requires explicit user approval. Notes that do not exist are ignored.',
+				inputSchema: { note_ids: idList(100).describe('AnkiTalk note IDs to delete.') },
+				outputSchema: {
+					deleted: z.boolean(),
+					notes_deleted: z.number().int(),
+					cards_deleted: z.number().int()
+				},
+				annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false }
+			},
+			async ({ note_ids }) =>
+				audited(ctx, 'delete_notes', async () =>
+					jsonResult(await deleteNotes(ctx.db, ctx.userId, { noteIds: note_ids }))
+				)
+		);
+
+		server.registerTool(
+			'delete_deck',
+			{
+				title: 'Delete a deck',
+				description:
+					'Permanently delete a deck together with every note, card, and review it contains. This cannot be undone and requires explicit user approval.',
+				inputSchema: { deck_id: z.string().min(1).max(100).describe('The AnkiTalk deck ID to delete.') },
+				outputSchema: { deleted: z.boolean(), cards_deleted: z.number().int() },
+				annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false }
+			},
+			async ({ deck_id }) =>
+				audited(ctx, 'delete_deck', async () =>
+					jsonResult(await deleteDeck(ctx.db, ctx.userId, { deckId: deck_id }))
+				)
 		);
 	}
 

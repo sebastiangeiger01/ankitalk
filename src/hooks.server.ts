@@ -74,8 +74,10 @@ const SECURITY_HEADERS: Record<string, string> = {
 	'Permissions-Policy': 'camera=(), microphone=(self), geolocation=(), interest-cohort=()'
 };
 
-/** Throttle `users.updated_at` to once per day per user — was firing on every request. */
-const UPDATED_AT_TTL_SECONDS = 24 * 60 * 60;
+// `users.updated_at` is a coarse "last seen" timestamp; we only need it to advance once per day.
+// We gate it on the `updated_at` value we already read with the user row (below) rather than on a
+// per-request KV flag — that kept a KV read on the hot path of every authenticated request,
+// including the ~100 cache-hit `/api/tts` subrequests a single review session fires.
 
 /**
  * SvelteKit calls this for every *unexpected* error anywhere in the request lifecycle —
@@ -111,25 +113,23 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 	if (hankoId) {
 		const db = getDb(event.platform!);
-		const kv = event.platform!.env.KV;
 		const existing = await db
-			.prepare('SELECT id FROM users WHERE hanko_id = ?')
+			.prepare('SELECT id, updated_at FROM users WHERE hanko_id = ?')
 			.bind(hankoId)
-			.first<{ id: string }>();
+			.first<{ id: string; updated_at: string }>();
 
 		if (existing) {
 			event.locals.userId = existing.id;
-			// Skip the per-request `updated_at` write if we've already touched this user today.
-			const touchKey = `user-touched:${existing.id}`;
-			if (!(await kv.get(touchKey))) {
+			// Advance `updated_at` at most once per UTC day, gated on the value we just read so the
+			// write only fires when the day has rolled over — no per-request KV round-trip.
+			if (existing.updated_at?.slice(0, 10) !== new Date().toISOString().slice(0, 10)) {
 				event.platform!.context.waitUntil(
-					(async () => {
-						await db
-							.prepare("UPDATE users SET updated_at = datetime('now') WHERE id = ?")
-							.bind(existing.id)
-							.run();
-						await kv.put(touchKey, '1', { expirationTtl: UPDATED_AT_TTL_SECONDS });
-					})().catch(() => undefined)
+					db
+						.prepare("UPDATE users SET updated_at = datetime('now') WHERE id = ?")
+						.bind(existing.id)
+						.run()
+						.then(() => undefined)
+						.catch(() => undefined)
 				);
 			}
 		} else {

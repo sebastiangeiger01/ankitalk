@@ -44,6 +44,15 @@ export const AUDIO_RESPONSE_HEADERS = {
 	'Cache-Control': AUDIO_CACHE_CONTROL
 } as const;
 
+function isMissingSchemaError(err: unknown): boolean {
+	const message = err instanceof Error ? err.message : String(err);
+	return (
+		message.includes('no such table') ||
+		message.includes('no such column') ||
+		message.includes('no column named')
+	);
+}
+
 /** SHA-256 hex of the cache payload — the stable identity of one synthesized clip. */
 export async function ttsHash(payload: string): Promise<string> {
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(payload));
@@ -150,18 +159,23 @@ export async function isDeckAudioPinned(
 	userId: string,
 	deckId: string
 ): Promise<boolean> {
-	const row = await db
-		.prepare(
-			`SELECT 1 AS pinned
-			 FROM decks
-			 WHERE id = ? AND user_id = ?
-			   AND audio_keep_until IS NOT NULL
-			   AND audio_keep_until > datetime('now')
-			 LIMIT 1`
-		)
-		.bind(deckId, userId)
-		.first<{ pinned: number }>();
-	return row !== null;
+	try {
+		const row = await db
+			.prepare(
+				`SELECT 1 AS pinned
+				 FROM decks
+				 WHERE id = ? AND user_id = ?
+				   AND audio_keep_until IS NOT NULL
+				   AND audio_keep_until > datetime('now')
+				 LIMIT 1`
+			)
+			.bind(deckId, userId)
+			.first<{ pinned: number }>();
+		return row !== null;
+	} catch (err) {
+		if (isMissingSchemaError(err)) return false;
+		throw err;
+	}
 }
 
 /** SQLite datetime modifier for this object's lifecycle deletion, mirroring the bucket rules. */
@@ -181,22 +195,27 @@ export async function recordCachedAudio(
 	bytes: number,
 	pinned: boolean
 ): Promise<void> {
-	await db.batch([
-		db
-			.prepare(
-				`INSERT INTO tts_audio (user_id, hash, bytes, pinned, expires_at, updated_at)
-				 VALUES (?, ?, ?, ?, datetime('now', ?), datetime('now'))
-				 ON CONFLICT(user_id, hash) DO UPDATE SET
-				   bytes = excluded.bytes,
-				   pinned = excluded.pinned,
-				   expires_at = excluded.expires_at,
-				   updated_at = excluded.updated_at`
-			)
-			.bind(userId, hash, bytes, pinned ? 1 : 0, retentionModifier(pinned)),
-		db
-			.prepare(`DELETE FROM tts_audio WHERE user_id = ? AND expires_at <= datetime('now')`)
-			.bind(userId)
-	]);
+	try {
+		await db.batch([
+			db
+				.prepare(
+					`INSERT INTO tts_audio (user_id, hash, bytes, pinned, expires_at, updated_at)
+					 VALUES (?, ?, ?, ?, datetime('now', ?), datetime('now'))
+					 ON CONFLICT(user_id, hash) DO UPDATE SET
+					   bytes = excluded.bytes,
+					   pinned = excluded.pinned,
+					   expires_at = excluded.expires_at,
+					   updated_at = excluded.updated_at`
+				)
+				.bind(userId, hash, bytes, pinned ? 1 : 0, retentionModifier(pinned)),
+			db
+				.prepare(`DELETE FROM tts_audio WHERE user_id = ? AND expires_at <= datetime('now')`)
+				.bind(userId)
+		]);
+	} catch (err) {
+		if (isMissingSchemaError(err)) return;
+		throw err;
+	}
 }
 
 /** How long the cache-event monitor retains rows; pruned on read so it never grows unbounded. */
@@ -219,13 +238,24 @@ export async function recordCacheEvent(
 			return;
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
-			if (!message.includes('no column named hash')) throw err;
+			if (message.includes('no column named hash')) {
+				// Older production DBs can lag the optional diagnostic hash migration.
+			} else if (isMissingSchemaError(err)) {
+				return;
+			} else {
+				throw err;
+			}
 		}
 	}
-	await db
-		.prepare(`INSERT INTO tts_cache_events (user_id, status, chars) VALUES (?, ?, ?)`)
-		.bind(userId, status, chars)
-		.run();
+	try {
+		await db
+			.prepare(`INSERT INTO tts_cache_events (user_id, status, chars) VALUES (?, ?, ?)`)
+			.bind(userId, status, chars)
+			.run();
+	} catch (err) {
+		if (isMissingSchemaError(err)) return;
+		throw err;
+	}
 }
 
 export interface TtsCacheEventStats {
@@ -247,10 +277,17 @@ export async function getCacheEventStats(
 	userId: string,
 	includeRecent = false
 ): Promise<TtsCacheEventStats> {
-	await db
-		.prepare(`DELETE FROM tts_cache_events WHERE user_id = ? AND created_at < datetime('now', ?)`)
-		.bind(userId, CACHE_EVENT_RETENTION)
-		.run();
+	const empty = { by_status: [], hits: 0, misses: 0, saved_chars: 0, spent_chars: 0, recent: [] };
+
+	try {
+		await db
+			.prepare(`DELETE FROM tts_cache_events WHERE user_id = ? AND created_at < datetime('now', ?)`)
+			.bind(userId, CACHE_EVENT_RETENTION)
+			.run();
+	} catch (err) {
+		if (isMissingSchemaError(err)) return empty;
+		throw err;
+	}
 
 	const totalsPromise = db
 		.prepare(
@@ -269,10 +306,17 @@ export async function getCacheEventStats(
 			.all<{ status: string; chars: number; created_at: string }>()
 		: Promise.resolve({ results: [] as Array<{ status: string; chars: number; created_at: string }> });
 
-	const [totals, recent] = await Promise.all([
-		totalsPromise,
-		recentPromise
-	]);
+	let totals: { results: Array<{ status: string; count: number; chars: number }> };
+	let recent: { results: Array<{ status: string; chars: number; created_at: string }> };
+	try {
+		[totals, recent] = await Promise.all([
+			totalsPromise,
+			recentPromise
+		]);
+	} catch (err) {
+		if (isMissingSchemaError(err)) return empty;
+		throw err;
+	}
 
 	const by_status = totals.results;
 	const isHit = (status: string) =>
@@ -300,16 +344,22 @@ export interface TtsCacheStats {
 
 /** Summarize a user's live cached audio (rows whose R2 object hasn't aged out yet). */
 export async function getTtsCacheStats(db: D1Database, userId: string): Promise<TtsCacheStats> {
-	const row = await db
-		.prepare(
-			`SELECT COUNT(*) AS clips,
-			        COALESCE(SUM(bytes), 0) AS bytes,
-			        COALESCE(SUM(CASE WHEN pinned = 1 THEN 1 ELSE 0 END), 0) AS pinned_clips
-			 FROM tts_audio
-			 WHERE user_id = ? AND expires_at > datetime('now')`
-		)
-		.bind(userId)
-		.first<TtsCacheStats>();
+	let row: TtsCacheStats | null;
+	try {
+		row = await db
+			.prepare(
+				`SELECT COUNT(*) AS clips,
+				        COALESCE(SUM(bytes), 0) AS bytes,
+				        COALESCE(SUM(CASE WHEN pinned = 1 THEN 1 ELSE 0 END), 0) AS pinned_clips
+				 FROM tts_audio
+				 WHERE user_id = ? AND expires_at > datetime('now')`
+			)
+			.bind(userId)
+			.first<TtsCacheStats>();
+	} catch (err) {
+		if (isMissingSchemaError(err)) return { clips: 0, bytes: 0, pinned_clips: 0 };
+		throw err;
+	}
 	return {
 		clips: row?.clips ?? 0,
 		bytes: row?.bytes ?? 0,
