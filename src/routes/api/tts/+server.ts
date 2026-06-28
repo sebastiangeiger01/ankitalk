@@ -107,8 +107,6 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 	const kv = platform!.env.KV;
 	const bucket = platform!.env.MEDIA;
 
-	await enforceRateLimit(kv, userId, 'tts', RATE_LIMITS.tts_per_minute.limit, RATE_LIMITS.tts_per_minute.windowSec);
-
 	const voiceSettings = await getUserVoiceSettings(db, userId);
 
 	const body = (await request.json().catch(() => ({}))) as {
@@ -254,6 +252,13 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 	}
 
 	try {
+		// Only requests that will actually call the (paid) provider consume the TTS rate-limit
+		// budget. Every cache hit above (edge / R2 / in-flight) and every cache-only probe returned
+		// without reaching here, so they no longer cost a KV read+write each — that was the bulk of
+		// review traffic. The limiter still caps provider spend, which is its only real purpose, and
+		// runs inside this try so the generation lock is released by the finally even on a 429.
+		await enforceRateLimit(kv, userId, 'tts', RATE_LIMITS.tts_per_minute.limit, RATE_LIMITS.tts_per_minute.windowSec);
+
 		const work = (async (): Promise<GeneratedAudio> => {
 			let providerResponse: Response;
 			let cost: number;
