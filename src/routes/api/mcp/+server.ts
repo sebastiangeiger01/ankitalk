@@ -73,6 +73,7 @@ const handleMcp: RequestHandler = async ({ request, url, platform }) => {
 		userId: owner.userId,
 		tokenId: owner.tokenId,
 		scopes: owner.scopes,
+		media: platform!.env.MEDIA,
 		waitUntil: (promise) => platform!.context.waitUntil(promise.catch(() => undefined))
 	});
 	const transport = new WebStandardStreamableHTTPServerTransport({

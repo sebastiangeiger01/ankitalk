@@ -435,6 +435,9 @@ export const de: Record<string, string> = {
 	'cards.editor.createFailed': 'Karte konnte nicht erstellt werden',
 	'cards.editor.updateFailed': 'Karte konnte nicht aktualisiert werden',
 	'cards.editor.saveFailed': 'Speichern fehlgeschlagen',
+	'cards.editor.insertImage': 'Bild einfügen',
+	'cards.editor.uploading': 'Wird hochgeladen…',
+	'cards.editor.uploadFailed': 'Bild-Upload fehlgeschlagen',
 
 	// Rename dialog
 	'rename.title': 'Umbenennen',
