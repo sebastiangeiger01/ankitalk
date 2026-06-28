@@ -238,11 +238,15 @@ export interface TtsCacheEventStats {
 	/** Characters freshly synthesized (miss / no-bucket). */
 	spent_chars: number;
 	/** Most recent events for the debug table. */
-	recent: Array<{ status: string; chars: number; hash: string | null; created_at: string }>;
+	recent: Array<{ status: string; chars: number; created_at: string }>;
 }
 
 /** Aggregate the cache-event log for the settings monitor; prunes old rows first. */
-export async function getCacheEventStats(db: D1Database, userId: string): Promise<TtsCacheEventStats> {
+export async function getCacheEventStats(
+	db: D1Database,
+	userId: string,
+	includeRecent = false
+): Promise<TtsCacheEventStats> {
 	await db
 		.prepare(`DELETE FROM tts_cache_events WHERE user_id = ? AND created_at < datetime('now', ?)`)
 		.bind(userId, CACHE_EVENT_RETENTION)
@@ -255,29 +259,15 @@ export async function getCacheEventStats(db: D1Database, userId: string): Promis
 		)
 		.bind(userId)
 		.all<{ status: string; count: number; chars: number }>();
-	const recentPromise = db
-		.prepare(
-			`SELECT status, chars, hash, created_at FROM tts_cache_events
-			 WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 25`
-		)
-		.bind(userId)
-		.all<{ status: string; chars: number; hash: string | null; created_at: string }>()
-		.catch(async (err) => {
-			const message = err instanceof Error ? err.message : String(err);
-			if (!message.includes('no such column: hash')) throw err;
-			const legacy = await db
-				.prepare(
-					`SELECT status, chars, created_at FROM tts_cache_events
-					 WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 25`
-				)
-				.bind(userId)
-				.all<{ status: string; chars: number; created_at: string }>();
-			return {
-				results: legacy.results.map((row) => ({ ...row, hash: null })),
-				success: legacy.success,
-				meta: legacy.meta
-			};
-		});
+	const recentPromise = includeRecent
+		? db
+			.prepare(
+				`SELECT status, chars, created_at FROM tts_cache_events
+				 WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 25`
+			)
+			.bind(userId)
+			.all<{ status: string; chars: number; created_at: string }>()
+		: Promise.resolve({ results: [] as Array<{ status: string; chars: number; created_at: string }> });
 
 	const [totals, recent] = await Promise.all([
 		totalsPromise,

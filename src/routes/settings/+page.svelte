@@ -96,10 +96,13 @@
 			misses: number;
 			saved_chars: number;
 			spent_chars: number;
-			recent: Array<{ status: string; chars: number; hash: string | null; created_at: string }>;
+			recent: Array<{ status: string; chars: number; created_at: string }>;
 		};
 	}
 	let ttsCache = $state<TtsCacheInfo | null>(null);
+	let ttsCacheDetailsOpen = $state(false);
+	let ttsCacheDetailsLoaded = $state(false);
+	let loadingTtsCacheDetails = $state(false);
 
 	/**
 	 * Agent conversation usage logged through AnkiTalk this month. ElevenLabs doesn't
@@ -458,12 +461,26 @@
 		return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
 	}
 
-	function formatHash(hash: string | null): string {
-		return hash ? hash.slice(0, 12) : '-';
-	}
-
 	function allZero(usage: UsageData): boolean {
 		return usage.today.total === 0 && usage.week.total === 0 && usage.month.total === 0;
+	}
+
+	async function toggleTtsCacheDetails() {
+		const nextOpen = !ttsCacheDetailsOpen;
+		ttsCacheDetailsOpen = nextOpen;
+		if (!nextOpen || !ttsCache || ttsCacheDetailsLoaded || loadingTtsCacheDetails) return;
+		loadingTtsCacheDetails = true;
+		try {
+			const res = await fetch('/api/settings/tts-cache?includeRecent=1');
+			if (res.ok) {
+				ttsCache = await res.json() as TtsCacheInfo;
+				ttsCacheDetailsLoaded = true;
+			}
+		} catch {
+			// Keep the summary visible if the optional detail fetch fails.
+		} finally {
+			loadingTtsCacheDetails = false;
+		}
 	}
 
 	const primaryServices: Service[] = ['elevenlabs'];
@@ -480,7 +497,36 @@
 	function serviceCost(s: Service): string {
 		return $t(`settings.apiKeys.${s}Cost`);
 	}
+
+	function keyToggleLabel(service: Service): string {
+		if (expanded[service]) return $t('common.close');
+		return keyStatus[service] ? $t('settings.apiKeys.edit') : $t('settings.apiKeys.add');
+	}
 </script>
+
+{#snippet iconPlus()}
+	<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+{/snippet}
+
+{#snippet iconEdit()}
+	<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+{/snippet}
+
+{#snippet iconClose()}
+	<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+{/snippet}
+
+{#snippet iconCopy()}
+	<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+{/snippet}
+
+{#snippet iconCheck()}
+	<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5" /></svg>
+{/snippet}
+
+{#snippet iconTrash()}
+	<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="m19 6-1 14H6L5 6" /><path d="M10 11v6M14 11v6" /></svg>
+{/snippet}
 
 {#key current}
 <div class="settings-page">
@@ -611,8 +657,20 @@
 						{:else}
 							<span class="badge badge--not-configured">{$t('settings.apiKeys.notConfigured')}</span>
 						{/if}
-						<button class="action-btn" type="button" onclick={() => toggleExpanded(service)}>
-							{expanded[service] ? '×' : keyStatus[service] ? '✎' : '+'}
+						<button
+							class="action-btn icon-btn"
+							type="button"
+							onclick={() => toggleExpanded(service)}
+							aria-label={keyToggleLabel(service)}
+							title={keyToggleLabel(service)}
+						>
+							{#if expanded[service]}
+								{@render iconClose()}
+							{:else if keyStatus[service]}
+								{@render iconEdit()}
+							{:else}
+								{@render iconPlus()}
+							{/if}
 						</button>
 					</div>
 				</div>
@@ -695,8 +753,20 @@
 						{:else}
 							<span class="badge badge--not-configured">{$t('settings.apiKeys.notConfigured')}</span>
 						{/if}
-						<button class="action-btn" type="button" onclick={() => toggleExpanded(service)}>
-							{expanded[service] ? '×' : keyStatus[service] ? '✎' : '+'}
+						<button
+							class="action-btn icon-btn"
+							type="button"
+							onclick={() => toggleExpanded(service)}
+							aria-label={keyToggleLabel(service)}
+							title={keyToggleLabel(service)}
+						>
+							{#if expanded[service]}
+								{@render iconClose()}
+							{:else if keyStatus[service]}
+								{@render iconEdit()}
+							{:else}
+								{@render iconPlus()}
+							{/if}
 						</button>
 					</div>
 				</div>
@@ -891,8 +961,14 @@
 			<span class="agent-label">{$t('settings.mcp.endpointLabel')}</span>
 			<div class="mcp-endpoint-row">
 				<input type="text" class="agent-input mcp-endpoint-input" value={mcpEndpointUrl} readonly />
-				<button class="action-btn" type="button" onclick={copyMcpEndpoint}>
-					{mcpEndpointCopied ? $t('settings.mcp.copied') : $t('settings.mcp.copy')}
+				<button
+					class="action-btn icon-btn"
+					type="button"
+					onclick={copyMcpEndpoint}
+					aria-label={$t('settings.mcp.copy')}
+					title={mcpEndpointCopied ? $t('settings.mcp.copied') : $t('settings.mcp.copy')}
+				>
+					{#if mcpEndpointCopied}{@render iconCheck()}{:else}{@render iconCopy()}{/if}
 				</button>
 			</div>
 		</div>
@@ -936,7 +1012,15 @@
 				<p class="mcp-fresh-warn">{$t('settings.mcp.copyOnce')}</p>
 				<div class="mcp-fresh-row">
 					<code class="mcp-fresh-token">{mcpTokenJustCreated}</code>
-					<button class="action-btn" type="button" onclick={() => copyToClipboard(mcpTokenJustCreated ?? '')}>{$t('settings.mcp.copy')}</button>
+					<button
+						class="action-btn icon-btn"
+						type="button"
+						onclick={() => copyToClipboard(mcpTokenJustCreated ?? '')}
+						aria-label={$t('settings.mcp.copy')}
+						title={$t('settings.mcp.copy')}
+					>
+						{@render iconCopy()}
+					</button>
 				</div>
 				<button class="action-btn" type="button" onclick={() => (mcpTokenJustCreated = null)}>{$t('common.dismiss')}</button>
 			</div>
@@ -961,7 +1045,15 @@
 								<span class="mcp-token-when muted">{$t('settings.mcp.neverUsed')}</span>
 							{/if}
 						</div>
-						<button class="action-btn" type="button" onclick={() => revokeMcpToken(tok.id)}>{$t('settings.mcp.revoke')}</button>
+						<button
+							class="action-btn icon-btn"
+							type="button"
+							onclick={() => revokeMcpToken(tok.id)}
+							aria-label={$t('settings.mcp.revoke')}
+							title={$t('settings.mcp.revoke')}
+						>
+							{@render iconTrash()}
+						</button>
 					</li>
 				{/each}
 			</ul>
@@ -1026,26 +1118,41 @@
 								<span class="cache-tag cache-tag--{s.status}">{s.status}: {s.count}</span>
 							{/each}
 						</div>
-						<table class="cache-monitor-table">
-							<thead>
-								<tr>
-									<th>{$t('settings.ttsCache.colWhen')}</th>
-									<th>{$t('settings.ttsCache.colStatus')}</th>
-									<th>{$t('settings.ttsCache.colHash')}</th>
-									<th class="num">{$t('settings.ttsCache.colChars')}</th>
-								</tr>
-							</thead>
-							<tbody>
-								{#each ttsCache.events.recent as ev}
-									<tr>
-										<td>{formatEventTime(ev.created_at)}</td>
-										<td><span class="cache-tag cache-tag--{ev.status}">{ev.status}</span></td>
-										<td class="hash">{formatHash(ev.hash)}</td>
-										<td class="num">{ev.chars}</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
+						<button
+							type="button"
+							class="cache-monitor-toggle"
+							onclick={toggleTtsCacheDetails}
+							aria-expanded={ttsCacheDetailsOpen}
+							aria-controls="tts-cache-events"
+						>
+							{ttsCacheDetailsOpen ? $t('settings.ttsCache.hideRecent') : $t('settings.ttsCache.showRecent')}
+						</button>
+						{#if ttsCacheDetailsOpen}
+							{#if loadingTtsCacheDetails}
+								<div class="cache-monitor-loading">{$t('settings.ttsCache.loadingRecent')}</div>
+							{:else if ttsCache.events.recent.length > 0}
+								<div class="cache-monitor-table-wrap" id="tts-cache-events">
+									<table class="cache-monitor-table">
+										<thead>
+											<tr>
+												<th>{$t('settings.ttsCache.colWhen')}</th>
+												<th>{$t('settings.ttsCache.colStatus')}</th>
+												<th class="num">{$t('settings.ttsCache.colChars')}</th>
+											</tr>
+										</thead>
+										<tbody>
+											{#each ttsCache.events.recent as ev}
+												<tr>
+													<td>{formatEventTime(ev.created_at)}</td>
+													<td><span class="cache-tag cache-tag--{ev.status}">{ev.status}</span></td>
+													<td class="num">{ev.chars}</td>
+												</tr>
+											{/each}
+										</tbody>
+									</table>
+								</div>
+							{/if}
+						{/if}
 						<p class="cache-monitor-note">{$t('settings.ttsCache.monitorNote')}</p>
 					</div>
 				{/if}
@@ -1366,14 +1473,19 @@
 		color: var(--text-muted);
 		border-radius: 6px;
 		cursor: pointer;
-		font-size: 1.1rem;
-		width: 2.5rem;
-		height: 2.5rem;
-		display: flex;
+		font-size: 0.82rem;
+		font-weight: 600;
+		min-width: 2.5rem;
+		min-height: 2.5rem;
+		display: inline-flex;
 		align-items: center;
 		justify-content: center;
+		gap: 0.35rem;
 		transition: all 0.15s;
-		padding: 0;
+		padding: 0 0.75rem;
+		max-width: 100%;
+		line-height: 1.2;
+		text-align: center;
 		-webkit-tap-highlight-color: rgba(90, 90, 142, 0.3);
 		touch-action: manipulation;
 	}
@@ -1381,6 +1493,26 @@
 	.action-btn:hover {
 		border-color: var(--border-strong);
 		color: var(--text);
+	}
+
+	.icon-btn {
+		width: 2.5rem;
+		min-width: 2.5rem;
+		height: 2.5rem;
+		padding: 0;
+		flex: 0 0 auto;
+		white-space: nowrap;
+	}
+
+	.icon-btn svg,
+	.logout-btn svg {
+		width: 1rem;
+		height: 1rem;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 2;
+		stroke-linecap: round;
+		stroke-linejoin: round;
 	}
 
 	.key-message {
@@ -1681,6 +1813,34 @@
 		margin-bottom: 0.7rem;
 	}
 
+	.cache-monitor-toggle {
+		border: 1px solid var(--border);
+		background: transparent;
+		color: var(--text);
+		border-radius: 4px;
+		padding: 0.3rem 0.55rem;
+		font-size: 0.75rem;
+		font-weight: 600;
+		cursor: pointer;
+		margin-bottom: 0.6rem;
+	}
+
+	.cache-monitor-toggle:hover {
+		border-color: var(--primary);
+		color: var(--primary);
+	}
+
+	.cache-monitor-loading {
+		font-size: 0.75rem;
+		color: var(--text-muted);
+		margin-bottom: 0.5rem;
+	}
+
+	.cache-monitor-table-wrap {
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
+	}
+
 	.cache-monitor-table {
 		width: 100%;
 		border-collapse: collapse;
@@ -1703,11 +1863,6 @@
 
 	.cache-monitor-table .num {
 		text-align: right;
-	}
-
-	.cache-monitor-table .hash {
-		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-		font-size: 0.68rem;
 	}
 
 	.cache-tag {
@@ -1817,13 +1972,13 @@
 	.mcp-oauth strong { font-size: 0.85rem; color: var(--text); }
 	.mcp-oauth .agent-help { margin: 0.3rem 0 0.5rem; }
 	.mcp-endpoint { display: block; margin: 0.4rem 0 0.3rem; }
-	.mcp-endpoint-row { display: flex; align-items: center; gap: 0.45rem; }
+	.mcp-endpoint-row { display: flex; align-items: center; gap: 0.45rem; min-width: 0; }
 	.mcp-endpoint-input { min-width: 0; font-size: 0.8rem; }
 	.mcp-tokens-head {
 		display: flex; align-items: center; justify-content: space-between;
-		margin: 0.9rem 0 0.5rem;
+		gap: 0.75rem; margin: 0.9rem 0 0.5rem;
 	}
-	.mcp-token-create-controls { display: flex; align-items: center; gap: 0.45rem; }
+	.mcp-token-create-controls { display: flex; align-items: center; gap: 0.45rem; min-width: 0; }
 	.mcp-profile-select { width: auto; min-width: 150px; font-size: 0.78rem; padding: 0.42rem 0.55rem; }
 	.mcp-fresh {
 		background: var(--surface-2); border: 1px solid var(--warning);
@@ -1831,7 +1986,7 @@
 		display: flex; flex-direction: column; gap: 0.5rem;
 	}
 	.mcp-fresh-warn { font-size: 0.82rem; color: var(--warning); margin: 0; font-weight: 600; }
-	.mcp-fresh-row { display: flex; align-items: center; gap: 0.5rem; }
+	.mcp-fresh-row { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
 	.mcp-fresh-token {
 		flex: 1; min-width: 0;
 		font-family: monospace; font-size: 0.78rem;
@@ -1841,12 +1996,12 @@
 	}
 	.mcp-tokens { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.45rem; }
 	.mcp-token {
-		display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
+		display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem;
 		padding: 0.55rem 0.7rem;
 		background: var(--surface); border: 1px solid var(--border-muted); border-radius: 8px;
 		font-size: 0.85rem;
 	}
-	.mcp-token-meta { display: flex; flex-wrap: wrap; gap: 0.4rem 0.7rem; align-items: baseline; min-width: 0; }
+	.mcp-token-meta { display: flex; flex-wrap: wrap; gap: 0.4rem 0.7rem; align-items: baseline; flex: 1; min-width: 0; }
 	.mcp-token-prefix { font-family: monospace; color: var(--text); }
 	.mcp-token-label { color: var(--text-muted); }
 	.mcp-token-when { font-size: 0.75rem; color: var(--text-subtle); }
@@ -1867,8 +2022,12 @@
 		.agent-readiness-head .action-btn { width: 100%; justify-content: center; }
 		.agent-readiness-action { width: 100%; justify-content: center; }
 		.mcp-token-create-controls { width: 100%; flex-direction: column; align-items: stretch; }
+		.mcp-token-create-controls .action-btn { width: 100%; }
 		.mcp-profile-select { width: 100%; }
 		.mcp-tokens-head { align-items: stretch; flex-direction: column; gap: 0.55rem; }
+		.key-row-header { align-items: flex-start; }
+		.key-row-actions { flex-direction: column-reverse; align-items: flex-end; gap: 0.35rem; }
+		.key-input-footer .btn-primary { width: 100%; justify-content: center; }
 	}
 
 	.account-section {
