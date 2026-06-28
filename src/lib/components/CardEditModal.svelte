@@ -22,8 +22,32 @@
 	let cardType = $state<'basic' | 'cloze'>('basic');
 	let saving = $state(false);
 	let errorMsg = $state('');
+	let uploadingField = $state<number | null>(null);
 
 	let modalEl = $state<HTMLDivElement | null>(null);
+	let fileInputs = $state<Array<HTMLInputElement | null>>([]);
+
+	async function uploadImage(index: number, input: HTMLInputElement) {
+		const file = input.files?.[0];
+		input.value = '';
+		if (!file) return;
+
+		uploadingField = index;
+		errorMsg = '';
+		try {
+			const body = new FormData();
+			body.append('file', file);
+			const res = await fetch('/api/media', { method: 'POST', body });
+			if (!res.ok) throw new Error($t('cards.editor.uploadFailed'));
+			const { filename } = (await res.json()) as { filename: string };
+			const alt = file.name.replace(/\.[^.]+$/, '').replace(/"/g, '');
+			fields[index].value += `<img src="${filename}" alt="${alt}">`;
+		} catch (err) {
+			errorMsg = err instanceof Error ? err.message : $t('cards.editor.uploadFailed');
+		} finally {
+			uploadingField = null;
+		}
+	}
 
 	// focusTrap handles restore; here we just reset form state and shift focus from the
 	// generic "first focusable" (cancel button) to the first text input.
@@ -102,6 +126,23 @@
 						placeholder="{field.name}..."
 					></textarea>
 				</label>
+				<div class="field-tools">
+					<input
+						type="file"
+						accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/svg+xml,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg"
+						bind:this={fileInputs[i]}
+						onchange={(e) => uploadImage(i, e.currentTarget)}
+						hidden
+					/>
+					<button
+						type="button"
+						class="btn-insert"
+						onclick={() => fileInputs[i]?.click()}
+						disabled={saving || uploadingField !== null}
+					>
+						{uploadingField === i ? $t('cards.editor.uploading') : $t('cards.editor.insertImage')}
+					</button>
+				</div>
 			{/each}
 
 			<label class="field-label">
@@ -159,6 +200,13 @@
 		color: var(--text); font-size: 0.9rem; font-family: inherit; resize: vertical;
 	}
 	textarea:focus, input:focus, select:focus { outline: none; border-color: var(--border-strong); }
+	.field-tools { margin: -0.6rem 0 1rem; }
+	.btn-insert {
+		background: transparent; border: 1px solid var(--border); border-radius: 6px;
+		color: var(--text-muted); font-size: 0.8rem; padding: 0.3rem 0.7rem; cursor: pointer;
+	}
+	.btn-insert:hover:not(:disabled) { border-color: var(--border-strong); color: var(--text); }
+	.btn-insert:disabled { opacity: 0.5; cursor: not-allowed; }
 	.error { color: var(--danger-soft); font-size: 0.85rem; margin: 0.5rem 0; }
 	.actions { display: flex; gap: 0.75rem; justify-content: flex-end; margin-top: 1rem; }
 	.btn-primary, .btn-secondary {

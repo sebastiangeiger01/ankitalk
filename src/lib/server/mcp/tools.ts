@@ -20,12 +20,14 @@ import {
 	updateNoteFields,
 	updateNoteTags
 } from '$lib/server/card-editing';
+import { IMAGE_EXTENSIONS, isImageFilename, storeUserImage } from '$lib/server/media-store';
 
 export interface McpToolContext {
 	db: D1Database;
 	userId: string;
 	tokenId: string;
 	scopes: Set<McpScope>;
+	media: R2Bucket;
 	waitUntil: (promise: Promise<unknown>) => void;
 }
 
@@ -34,6 +36,22 @@ type ToolResult = {
 	structuredContent?: Record<string, unknown>;
 	isError?: boolean;
 };
+
+/** Max decoded image size accepted over MCP (base64 inflates payloads, so keep tool calls sane). */
+const MCP_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+/** Decode a base64 (optionally data-URL-prefixed) string to bytes. Throws BAD_IMAGE_DATA on failure. */
+function decodeBase64Image(value: string): Uint8Array {
+	const cleaned = value.replace(/^data:[^;,]*;base64,/, '').replace(/\s+/g, '');
+	try {
+		const binary = atob(cleaned);
+		const bytes = new Uint8Array(binary.length);
+		for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+		return bytes;
+	} catch {
+		throw new Error('BAD_IMAGE_DATA');
+	}
+}
 
 function jsonResult(value: Record<string, unknown>): ToolResult {
 	return {
@@ -401,6 +419,43 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 						idempotencyKey: idempotency_key
 					});
 					return jsonResult(result as Record<string, unknown>);
+				})
+		);
+
+		server.registerTool(
+			'attach_image',
+			{
+				title: 'Attach an image for a card',
+				description:
+					'Upload an image (PNG, JPG, GIF, WebP, BMP, or SVG) and get back a filename to embed in a note field as `<img src="FILENAME">`. Pass the raw bytes base64-encoded in `content_base64` and a `filename` whose extension sets the type (e.g. diagram.svg, figure.png). SVG is sanitized server-side. Uploads are content-addressed, so re-uploading the same image returns the same filename. Use the returned filename inside the field HTML you pass to create_notes or update_note_fields.',
+				inputSchema: {
+					filename: z
+						.string()
+						.trim()
+						.min(1)
+						.max(240)
+						.describe(`Source filename; only its extension is used. One of: ${IMAGE_EXTENSIONS.join(', ')}.`),
+					content_base64: z
+						.string()
+						.min(1)
+						.max(8_000_000)
+						.describe('The image bytes, base64-encoded (a data: URL prefix is accepted and stripped).')
+				},
+				outputSchema: {
+					filename: z.string().describe('Embed as <img src="FILENAME"> in a note field.'),
+					content_type: z.string(),
+					bytes: z.number().int()
+				},
+				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+			},
+			async ({ filename, content_base64 }) =>
+				audited(ctx, 'attach_image', async () => {
+					if (!isImageFilename(filename)) return errorResult('UNSUPPORTED_IMAGE_TYPE', `Unsupported image type: ${filename}.`);
+					const bytes = decodeBase64Image(content_base64);
+					if (bytes.byteLength > MCP_MAX_IMAGE_BYTES) {
+						return errorResult('IMAGE_TOO_LARGE', `Image exceeds the ${MCP_MAX_IMAGE_BYTES / (1024 * 1024)} MB limit for MCP uploads.`);
+					}
+					return jsonResult((await storeUserImage(ctx.media, ctx.userId, filename, bytes)) as unknown as Record<string, unknown>);
 				})
 		);
 
