@@ -93,6 +93,11 @@
 		if (errorTimer) clearTimeout(errorTimer);
 		errorTimer = setTimeout(() => { errorMsg = ''; }, 15000);
 	}
+	function dismissReviewError() {
+		if (errorTimer) clearTimeout(errorTimer);
+		errorTimer = null;
+		errorMsg = '';
+	}
 
 	function openTutor() {
 		if (!agentEnabled) {
@@ -474,7 +479,10 @@
 
 	<!-- Toast errors at top -->
 	{#if errorMsg}
-		<div class="toast-error">{errorMsg}</div>
+		<div class="toast-error" role="alert">
+			<span class="toast-error-text">{errorMsg}</span>
+			<button class="toast-dismiss" onclick={dismissReviewError} aria-label={$t('common.dismiss')} title={$t('common.dismiss')}>✕</button>
+		</div>
 	{/if}
 
 	{#if suspendedNotice}
@@ -945,14 +953,41 @@
 		top: max(0.75rem, env(safe-area-inset-top));
 		left: 50%;
 		transform: translateX(-50%);
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		max-width: min(90vw, 32rem);
 		background: #4a2020;
 		color: #ff8888;
-		padding: 0.5rem 1.2rem;
+		padding: 0.5rem 0.6rem 0.5rem 1.2rem;
 		border-radius: 8px;
 		font-size: 0.85rem;
 		font-weight: 600;
 		z-index: 100;
 		animation: slide-down 0.2s ease;
+	}
+
+	.toast-dismiss {
+		flex-shrink: 0;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.5rem;
+		height: 1.5rem;
+		padding: 0;
+		border: none;
+		border-radius: 6px;
+		background: transparent;
+		color: inherit;
+		font-size: 0.8rem;
+		line-height: 1;
+		cursor: pointer;
+		opacity: 0.8;
+	}
+
+	.toast-dismiss:hover {
+		opacity: 1;
+		background: rgba(255, 255, 255, 0.12);
 	}
 
 	.toast-notice {
