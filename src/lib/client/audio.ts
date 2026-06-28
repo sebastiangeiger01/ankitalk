@@ -61,6 +61,33 @@ function errorDetail(error: unknown): string {
 	return typeof error === 'string' ? error : 'unknown error';
 }
 
+async function ttsHttpErrorDetail(response: Response): Promise<string> {
+	const contentType = response.headers.get('Content-Type') ?? '';
+	if (contentType.includes('application/json')) {
+		const body = await response.json().catch(() => null) as {
+			error?: unknown;
+			detail?: unknown;
+			message?: unknown;
+			providerStatus?: unknown;
+		} | null;
+		const base = typeof body?.error === 'string'
+			? body.error
+			: typeof body?.message === 'string'
+				? body.message
+				: '';
+		const detail = typeof body?.detail === 'string' ? body.detail : '';
+		const provider = typeof body?.providerStatus === 'number' ? `provider ${body.providerStatus}` : '';
+		return [base, provider, detail].filter(Boolean).join(' — ').replace(/\s+/g, ' ').slice(0, 180);
+	}
+
+	const text = (await response.text().catch(() => '')).replace(/\s+/g, ' ').trim();
+	if (!text) return '';
+	if (/^<!doctype html/i.test(text) || /^<html[\s>]/i.test(text)) {
+		return 'Speech service temporarily failed. Please retry.';
+	}
+	return text.slice(0, 180);
+}
+
 async function fetchTTSAudio(
 	text: string,
 	voice?: string,
@@ -91,7 +118,7 @@ async function fetchTTSAudio(
 
 	if (response.status === 204) return null;
 	if (!response.ok) {
-		const detail = (await response.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 180);
+		const detail = await ttsHttpErrorDetail(response);
 		throw new Error(`TTS HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
 	}
 
