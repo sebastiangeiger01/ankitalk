@@ -13,6 +13,21 @@ const DEFAULTS = {
 	relearning_steps: '10'
 };
 
+/**
+ * Normalize a user-supplied exam-pin date. Accepts `YYYY-MM-DD` and stores it as end-of-day so
+ * the pin stays active through the whole exam day (the TTS path compares against `datetime('now')`).
+ * Empty / null clears the pin. Returns `undefined` for malformed input so the caller can 400.
+ */
+function normalizeKeepUntil(value: unknown): string | null | undefined {
+	if (value === null || value === '' || value === undefined) return null;
+	if (typeof value !== 'string') return undefined;
+	const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+	if (!match) return undefined;
+	const date = new Date(`${match[0]}T23:59:59Z`);
+	if (Number.isNaN(date.getTime())) return undefined;
+	return `${match[0]} 23:59:59`;
+}
+
 export const GET: RequestHandler = async ({ params, platform, locals }) => {
 	if (!locals.userId) throw error(401, 'Unauthorized');
 
@@ -20,9 +35,9 @@ export const GET: RequestHandler = async ({ params, platform, locals }) => {
 
 	// Verify deck ownership
 	const deck = await db
-		.prepare('SELECT id FROM decks WHERE id = ? AND user_id = ?')
+		.prepare('SELECT id, audio_keep_until FROM decks WHERE id = ? AND user_id = ?')
 		.bind(params.id, locals.userId)
-		.first();
+		.first<{ id: string; audio_keep_until: string | null }>();
 
 	if (!deck) throw error(404, 'Deck not found');
 
@@ -31,7 +46,11 @@ export const GET: RequestHandler = async ({ params, platform, locals }) => {
 		.bind(params.id)
 		.first();
 
-	return json({ settings: settings ?? { deck_id: params.id, ...DEFAULTS } });
+	return json({
+		settings: settings ?? { deck_id: params.id, ...DEFAULTS },
+		// Surfaced as a plain YYYY-MM-DD for the date picker (null when not pinned).
+		audio_keep_until: deck.audio_keep_until ? deck.audio_keep_until.slice(0, 10) : null
+	});
 };
 
 export const PUT: RequestHandler = async ({ params, request, platform, locals }) => {
@@ -48,6 +67,17 @@ export const PUT: RequestHandler = async ({ params, request, platform, locals })
 	if (!deck) throw error(404, 'Deck not found');
 
 	const body = (await request.json()) as Record<string, unknown>;
+
+	// Exam-pin retention for cached audio (separate column on `decks`). Only touched when the
+	// client actually sends the field, so a normal settings save doesn't clear an existing pin.
+	if ('audio_keep_until' in body) {
+		const keepUntil = normalizeKeepUntil(body.audio_keep_until);
+		if (keepUntil === undefined) throw error(400, 'Invalid audio_keep_until (expected YYYY-MM-DD)');
+		await db
+			.prepare('UPDATE decks SET audio_keep_until = ?, updated_at = datetime(\'now\') WHERE id = ? AND user_id = ?')
+			.bind(keepUntil, params.id, locals.userId)
+			.run();
+	}
 
 	const newCardsPerDay = Math.max(0, Math.min(9999, Number(body.new_cards_per_day ?? DEFAULTS.new_cards_per_day)));
 	const maxReviewsPerDay = Math.max(0, Math.min(9999, Number(body.max_reviews_per_day ?? DEFAULTS.max_reviews_per_day)));

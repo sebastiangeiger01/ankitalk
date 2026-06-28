@@ -19,7 +19,8 @@
 	let leechThreshold = $state(8);
 	let learningSteps = $state('1,10');
 	let relearningSteps = $state('10');
-
+	// Exam-pin: keep this deck's spoken audio cached (no regeneration) until this date. '' = off.
+	let audioKeepUntil = $state('');
 
 	async function loadSettings() {
 		try {
@@ -34,7 +35,10 @@
 			}
 
 			if (settingsRes.ok) {
-				const data = (await settingsRes.json()) as { settings: Record<string, number | string> };
+				const data = (await settingsRes.json()) as {
+					settings: Record<string, number | string>;
+					audio_keep_until?: string | null;
+				};
 				const s = data.settings;
 				newCardsPerDay = s.new_cards_per_day as number;
 				maxReviewsPerDay = s.max_reviews_per_day as number;
@@ -43,6 +47,7 @@
 				leechThreshold = s.leech_threshold as number;
 				learningSteps = (s.learning_steps as string) ?? '1,10';
 				relearningSteps = (s.relearning_steps as string) ?? '10';
+				audioKeepUntil = data.audio_keep_until ?? '';
 			}
 		} catch {
 			saveStatus = $t('settings.loadFailed');
@@ -65,7 +70,8 @@
 					max_interval: maxInterval,
 					leech_threshold: leechThreshold,
 				learning_steps: learningSteps,
-				relearning_steps: relearningSteps
+				relearning_steps: relearningSteps,
+				audio_keep_until: audioKeepUntil || null
 				})
 			});
 
@@ -174,6 +180,19 @@
 				<span class="helper">{$t('settings.relearningStepsHelper')}</span>
 			</div>
 
+			<div class="field">
+				<label for="audioKeepUntil">{$t('settings.audioPinTitle')}</label>
+				<div class="audio-pin-row">
+					<input id="audioKeepUntil" type="date" bind:value={audioKeepUntil} />
+					{#if audioKeepUntil}
+						<button type="button" class="link-btn" onclick={() => (audioKeepUntil = '')}>
+							{$t('settings.audioPinClear')}
+						</button>
+					{/if}
+				</div>
+				<span class="helper">{$t('settings.audioPinHelper')}</span>
+			</div>
+
 			<button type="submit" class="save-btn" disabled={saving}>
 				{#if saving}<Spinner size={14} />{/if}
 				{saving ? $t('settings.saving') : $t('settings.save')}
@@ -276,7 +295,8 @@
 	}
 
 	input[type="number"],
-	input[type="text"] {
+	input[type="text"],
+	input[type="date"] {
 		padding: 0.5rem 0.75rem;
 		background: var(--surface);
 		border: 1px solid var(--border);
@@ -286,14 +306,36 @@
 		width: 120px;
 	}
 
-	input[type="text"] {
+	input[type="text"],
+	input[type="date"] {
 		width: 200px;
 	}
 
 	input[type="number"]:focus,
-	input[type="text"]:focus {
+	input[type="text"]:focus,
+	input[type="date"]:focus {
 		outline: none;
 		border-color: var(--border-strong);
+	}
+
+	.audio-pin-row {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.link-btn {
+		background: none;
+		border: none;
+		color: var(--text-muted);
+		font-size: 0.8rem;
+		cursor: pointer;
+		text-decoration: underline;
+		padding: 0;
+	}
+
+	.link-btn:hover {
+		color: var(--text);
 	}
 
 	input[type="range"] {

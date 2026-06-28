@@ -61,10 +61,20 @@ function errorDetail(error: unknown): string {
 	return typeof error === 'string' ? error : 'unknown error';
 }
 
-async function fetchTTSAudio(text: string, voice?: string, speed?: number, signal?: AbortSignal): Promise<Blob> {
-	const params: Record<string, string> = { text };
+async function fetchTTSAudio(
+	text: string,
+	voice?: string,
+	speed?: number,
+	signal?: AbortSignal,
+	deckId?: string,
+	generate = true
+): Promise<Blob | null> {
+	const params: Record<string, string | boolean> = { text, generate };
 	if (voice) params.voice = voice;
 	if (speed) params.speed = String(speed);
+	// deckId doesn't change the audio (so it's intentionally absent from the client cache key);
+	// it only tells the server which deck's exam-pin retention this clip belongs to.
+	if (deckId) params.deckId = deckId;
 
 	let response: Response;
 	try {
@@ -79,6 +89,7 @@ async function fetchTTSAudio(text: string, voice?: string, speed?: number, signa
 		throw new Error(`TTS request failed: ${errorDetail(error)}`);
 	}
 
+	if (response.status === 204) return null;
 	if (!response.ok) {
 		const detail = (await response.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 180);
 		throw new Error(`TTS HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
@@ -90,14 +101,15 @@ async function fetchTTSAudio(text: string, voice?: string, speed?: number, signa
 }
 
 /** Preload the ElevenLabs MP3 response and report whether it is ready for gesture playback. */
-export function preloadTTS(text: string, voice?: string, speed?: number): Promise<boolean> {
+export function preloadTTS(text: string, voice?: string, speed?: number, deckId?: string): Promise<boolean> {
 	const key = cacheKey(text, voice, speed);
 	if (audioCache.has(key)) return Promise.resolve(true);
 	const existing = audioPreloads.get(key);
 	if (existing) return existing.then(() => true, () => false);
 
-	const preload = fetchTTSAudio(text, voice, speed)
+	const preload = fetchTTSAudio(text, voice, speed, undefined, deckId, false)
 		.then((audio) => {
+			if (!audio) throw new Error('TTS cache miss');
 			audioCache.set(key, audio);
 			return audio;
 		})
@@ -209,14 +221,14 @@ function playSource(src: string, onPlaybackStart?: () => void, objectUrl?: strin
 }
 
 /** Fetch ElevenLabs TTS and play it through the one iOS-authorized media element. */
-export async function speak(text: string, voice?: string, speed?: number, onPlaybackStart?: () => void): Promise<void> {
+export async function speak(text: string, voice?: string, speed?: number, onPlaybackStart?: () => void, deckId?: string): Promise<void> {
 	stopPlayback();
 	const abort = new AbortController();
 	currentAbort = abort;
 	lastSpokenText = text;
 
 	const key = cacheKey(text, voice, speed);
-	let audio = audioCache.get(key);
+	let audio: Blob | null | undefined = audioCache.get(key);
 	if (audio) {
 		audioCache.delete(key);
 	} else {
@@ -227,14 +239,21 @@ export async function speak(text: string, voice?: string, speed?: number, onPlay
 				audioCache.delete(key);
 			} catch {
 				if (abort.signal.aborted) return;
-				audio = await fetchTTSAudio(text, voice, speed, abort.signal);
+				// Deliberately NOT passing abort.signal — see the note in the `else` branch below.
+				audio = await fetchTTSAudio(text, voice, speed, undefined, deckId);
 			}
 		} else {
-			audio = await fetchTTSAudio(text, voice, speed, abort.signal);
+			// Deliberately NOT passing abort.signal: aborting the *fetch* when the learner advances
+			// or rates cancels the server handler mid-flight — AFTER ElevenLabs has been billed but
+			// BEFORE the clip is written to R2 or logged — so we pay, never cache, and re-pay on the
+			// next play. We still abort *playback* (the guard below skips a superseded clip), but we
+			// let the request itself run to completion so every paid clip always gets cached.
+			audio = await fetchTTSAudio(text, voice, speed, undefined, deckId);
 		}
 	}
 
 	if (abort !== currentAbort || abort.signal.aborted) return;
+	if (!audio) throw new Error('TTS audio was not generated');
 
 	const mime = audio.type || 'audio/mpeg';
 	const support = getAudioElement().canPlayType(mime);

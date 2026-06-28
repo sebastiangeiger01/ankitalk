@@ -84,6 +84,26 @@
 	let usageData = $state<UsageData | null>(null);
 	let loadingUsage = $state(false);
 
+	// How much spoken-card audio is cached durably (R2), so it isn't re-synthesized (re-charged),
+	// plus a monitor of recent cache hit/miss outcomes.
+	interface TtsCacheInfo {
+		clips: number;
+		bytes: number;
+		pinned_clips: number;
+		events: {
+			by_status: Array<{ status: string; count: number; chars: number }>;
+			hits: number;
+			misses: number;
+			saved_chars: number;
+			spent_chars: number;
+			recent: Array<{ status: string; chars: number; created_at: string }>;
+		};
+	}
+	let ttsCache = $state<TtsCacheInfo | null>(null);
+	let ttsCacheDetailsOpen = $state(false);
+	let ttsCacheDetailsLoaded = $state(false);
+	let loadingTtsCacheDetails = $state(false);
+
 	/**
 	 * Agent conversation usage logged through AnkiTalk this month. ElevenLabs doesn't
 	 * expose CAI minutes via API, so this is a local-only tally — see the note rendered
@@ -281,13 +301,15 @@
 
 		loadingUsage = true;
 		try {
-			const [usageRes, agentRes] = await Promise.all([
+			const [usageRes, agentRes, cacheRes] = await Promise.all([
 				fetch('/api/settings/usage'),
 				fetch('/api/agent/usage'),
+				fetch('/api/settings/tts-cache'),
 				loadMcpTokens()
 			]);
 			if (usageRes.ok) usageData = await usageRes.json() as UsageData;
 			if (agentRes.ok) agentUsage = await agentRes.json();
+			if (cacheRes.ok) ttsCache = await cacheRes.json() as TtsCacheInfo;
 		} catch {
 			// silently ignore
 		} finally {
@@ -422,8 +444,43 @@
 		return '$' + n.toFixed(2);
 	}
 
+	function formatBytes(n: number): string {
+		if (n < 1024) return `${n} B`;
+		if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+		return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+	}
+
+	function cacheHitRate(events: TtsCacheInfo['events']): number {
+		const total = events.hits + events.misses;
+		return total === 0 ? 0 : Math.round((events.hits / total) * 100);
+	}
+
+	function formatEventTime(iso: string): string {
+		// D1 stores "YYYY-MM-DD HH:MM:SS" in UTC; render a short local time for the debug list.
+		const date = new Date(iso.replace(' ', 'T') + 'Z');
+		return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
+	}
+
 	function allZero(usage: UsageData): boolean {
 		return usage.today.total === 0 && usage.week.total === 0 && usage.month.total === 0;
+	}
+
+	async function toggleTtsCacheDetails() {
+		const nextOpen = !ttsCacheDetailsOpen;
+		ttsCacheDetailsOpen = nextOpen;
+		if (!nextOpen || !ttsCache || ttsCacheDetailsLoaded || loadingTtsCacheDetails) return;
+		loadingTtsCacheDetails = true;
+		try {
+			const res = await fetch('/api/settings/tts-cache?includeRecent=1');
+			if (res.ok) {
+				ttsCache = await res.json() as TtsCacheInfo;
+				ttsCacheDetailsLoaded = true;
+			}
+		} catch {
+			// Keep the summary visible if the optional detail fetch fails.
+		} finally {
+			loadingTtsCacheDetails = false;
+		}
 	}
 
 	const primaryServices: Service[] = ['elevenlabs'];
@@ -440,7 +497,36 @@
 	function serviceCost(s: Service): string {
 		return $t(`settings.apiKeys.${s}Cost`);
 	}
+
+	function keyToggleLabel(service: Service): string {
+		if (expanded[service]) return $t('common.close');
+		return keyStatus[service] ? $t('settings.apiKeys.edit') : $t('settings.apiKeys.add');
+	}
 </script>
+
+{#snippet iconPlus()}
+	<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+{/snippet}
+
+{#snippet iconEdit()}
+	<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+{/snippet}
+
+{#snippet iconClose()}
+	<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+{/snippet}
+
+{#snippet iconCopy()}
+	<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+{/snippet}
+
+{#snippet iconCheck()}
+	<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5" /></svg>
+{/snippet}
+
+{#snippet iconTrash()}
+	<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="m19 6-1 14H6L5 6" /><path d="M10 11v6M14 11v6" /></svg>
+{/snippet}
 
 {#key current}
 <div class="settings-page">
@@ -571,8 +657,20 @@
 						{:else}
 							<span class="badge badge--not-configured">{$t('settings.apiKeys.notConfigured')}</span>
 						{/if}
-						<button class="action-btn" type="button" onclick={() => toggleExpanded(service)}>
-							{expanded[service] ? '×' : keyStatus[service] ? '✎' : '+'}
+						<button
+							class="action-btn icon-btn"
+							type="button"
+							onclick={() => toggleExpanded(service)}
+							aria-label={keyToggleLabel(service)}
+							title={keyToggleLabel(service)}
+						>
+							{#if expanded[service]}
+								{@render iconClose()}
+							{:else if keyStatus[service]}
+								{@render iconEdit()}
+							{:else}
+								{@render iconPlus()}
+							{/if}
 						</button>
 					</div>
 				</div>
@@ -655,8 +753,20 @@
 						{:else}
 							<span class="badge badge--not-configured">{$t('settings.apiKeys.notConfigured')}</span>
 						{/if}
-						<button class="action-btn" type="button" onclick={() => toggleExpanded(service)}>
-							{expanded[service] ? '×' : keyStatus[service] ? '✎' : '+'}
+						<button
+							class="action-btn icon-btn"
+							type="button"
+							onclick={() => toggleExpanded(service)}
+							aria-label={keyToggleLabel(service)}
+							title={keyToggleLabel(service)}
+						>
+							{#if expanded[service]}
+								{@render iconClose()}
+							{:else if keyStatus[service]}
+								{@render iconEdit()}
+							{:else}
+								{@render iconPlus()}
+							{/if}
 						</button>
 					</div>
 				</div>
@@ -851,8 +961,14 @@
 			<span class="agent-label">{$t('settings.mcp.endpointLabel')}</span>
 			<div class="mcp-endpoint-row">
 				<input type="text" class="agent-input mcp-endpoint-input" value={mcpEndpointUrl} readonly />
-				<button class="action-btn" type="button" onclick={copyMcpEndpoint}>
-					{mcpEndpointCopied ? $t('settings.mcp.copied') : $t('settings.mcp.copy')}
+				<button
+					class="action-btn icon-btn"
+					type="button"
+					onclick={copyMcpEndpoint}
+					aria-label={$t('settings.mcp.copy')}
+					title={mcpEndpointCopied ? $t('settings.mcp.copied') : $t('settings.mcp.copy')}
+				>
+					{#if mcpEndpointCopied}{@render iconCheck()}{:else}{@render iconCopy()}{/if}
 				</button>
 			</div>
 		</div>
@@ -896,7 +1012,15 @@
 				<p class="mcp-fresh-warn">{$t('settings.mcp.copyOnce')}</p>
 				<div class="mcp-fresh-row">
 					<code class="mcp-fresh-token">{mcpTokenJustCreated}</code>
-					<button class="action-btn" type="button" onclick={() => copyToClipboard(mcpTokenJustCreated ?? '')}>{$t('settings.mcp.copy')}</button>
+					<button
+						class="action-btn icon-btn"
+						type="button"
+						onclick={() => copyToClipboard(mcpTokenJustCreated ?? '')}
+						aria-label={$t('settings.mcp.copy')}
+						title={$t('settings.mcp.copy')}
+					>
+						{@render iconCopy()}
+					</button>
 				</div>
 				<button class="action-btn" type="button" onclick={() => (mcpTokenJustCreated = null)}>{$t('common.dismiss')}</button>
 			</div>
@@ -921,7 +1045,15 @@
 								<span class="mcp-token-when muted">{$t('settings.mcp.neverUsed')}</span>
 							{/if}
 						</div>
-						<button class="action-btn" type="button" onclick={() => revokeMcpToken(tok.id)}>{$t('settings.mcp.revoke')}</button>
+						<button
+							class="action-btn icon-btn"
+							type="button"
+							onclick={() => revokeMcpToken(tok.id)}
+							aria-label={$t('settings.mcp.revoke')}
+							title={$t('settings.mcp.revoke')}
+						>
+							{@render iconTrash()}
+						</button>
 					</li>
 				{/each}
 			</ul>
@@ -960,6 +1092,71 @@
 				</div>
 			</div>
 			<p class="usage-note">{$t('settings.usage.note')}</p>
+		{/if}
+
+		{#if ttsCache && (ttsCache.clips > 0 || ttsCache.events.hits + ttsCache.events.misses > 0)}
+			<div class="tts-cache">
+				<div class="tts-cache-head">
+					<strong>{$t('settings.ttsCache.title')}</strong>
+					<span class="tts-cache-size">{$t('settings.ttsCache.summary', { clips: ttsCache.clips, size: formatBytes(ttsCache.bytes) })}</span>
+				</div>
+				<p class="tts-cache-note">
+					{$t('settings.ttsCache.note')}
+					{#if ttsCache.pinned_clips > 0}
+						{' '}{$t('settings.ttsCache.pinned', { count: ttsCache.pinned_clips })}
+					{/if}
+				</p>
+
+				{#if ttsCache.events.hits + ttsCache.events.misses > 0}
+					<div class="cache-monitor">
+						<div class="cache-monitor-summary">
+							<span>{$t('settings.ttsCache.hitRate', { pct: cacheHitRate(ttsCache.events) })}</span>
+							<span>{$t('settings.ttsCache.saved', { chars: ttsCache.events.saved_chars })}</span>
+						</div>
+						<div class="cache-monitor-breakdown">
+							{#each ttsCache.events.by_status as s}
+								<span class="cache-tag cache-tag--{s.status}">{s.status}: {s.count}</span>
+							{/each}
+						</div>
+						<button
+							type="button"
+							class="cache-monitor-toggle"
+							onclick={toggleTtsCacheDetails}
+							aria-expanded={ttsCacheDetailsOpen}
+							aria-controls="tts-cache-events"
+						>
+							{ttsCacheDetailsOpen ? $t('settings.ttsCache.hideRecent') : $t('settings.ttsCache.showRecent')}
+						</button>
+						{#if ttsCacheDetailsOpen}
+							{#if loadingTtsCacheDetails}
+								<div class="cache-monitor-loading">{$t('settings.ttsCache.loadingRecent')}</div>
+							{:else if ttsCache.events.recent.length > 0}
+								<div class="cache-monitor-table-wrap" id="tts-cache-events">
+									<table class="cache-monitor-table">
+										<thead>
+											<tr>
+												<th>{$t('settings.ttsCache.colWhen')}</th>
+												<th>{$t('settings.ttsCache.colStatus')}</th>
+												<th class="num">{$t('settings.ttsCache.colChars')}</th>
+											</tr>
+										</thead>
+										<tbody>
+											{#each ttsCache.events.recent as ev}
+												<tr>
+													<td>{formatEventTime(ev.created_at)}</td>
+													<td><span class="cache-tag cache-tag--{ev.status}">{ev.status}</span></td>
+													<td class="num">{ev.chars}</td>
+												</tr>
+											{/each}
+										</tbody>
+									</table>
+								</div>
+							{/if}
+						{/if}
+						<p class="cache-monitor-note">{$t('settings.ttsCache.monitorNote')}</p>
+					</div>
+				{/if}
+			</div>
 		{/if}
 	</section>
 
@@ -1276,14 +1473,19 @@
 		color: var(--text-muted);
 		border-radius: 6px;
 		cursor: pointer;
-		font-size: 1.1rem;
-		width: 2.5rem;
-		height: 2.5rem;
-		display: flex;
+		font-size: 0.82rem;
+		font-weight: 600;
+		min-width: 2.5rem;
+		min-height: 2.5rem;
+		display: inline-flex;
 		align-items: center;
 		justify-content: center;
+		gap: 0.35rem;
 		transition: all 0.15s;
-		padding: 0;
+		padding: 0 0.75rem;
+		max-width: 100%;
+		line-height: 1.2;
+		text-align: center;
 		-webkit-tap-highlight-color: rgba(90, 90, 142, 0.3);
 		touch-action: manipulation;
 	}
@@ -1291,6 +1493,26 @@
 	.action-btn:hover {
 		border-color: var(--border-strong);
 		color: var(--text);
+	}
+
+	.icon-btn {
+		width: 2.5rem;
+		min-width: 2.5rem;
+		height: 2.5rem;
+		padding: 0;
+		flex: 0 0 auto;
+		white-space: nowrap;
+	}
+
+	.icon-btn svg,
+	.logout-btn svg {
+		width: 1rem;
+		height: 1rem;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 2;
+		stroke-linecap: round;
+		stroke-linejoin: round;
 	}
 
 	.key-message {
@@ -1541,6 +1763,142 @@
 		line-height: 1.5;
 	}
 
+	.tts-cache {
+		margin-top: 1rem;
+		padding: 0.75rem 1rem;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+	}
+
+	.tts-cache-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 0.75rem;
+	}
+
+	.tts-cache-size {
+		font-size: 0.85rem;
+		color: var(--text-muted);
+	}
+
+	.tts-cache-note {
+		font-size: 0.78rem;
+		color: #5a5a7a;
+		margin: 0.4rem 0 0;
+		line-height: 1.5;
+	}
+
+	.cache-monitor {
+		margin-top: 0.85rem;
+		padding-top: 0.85rem;
+		border-top: 1px solid var(--border);
+	}
+
+	.cache-monitor-summary {
+		display: flex;
+		gap: 1rem;
+		flex-wrap: wrap;
+		font-size: 0.82rem;
+		font-weight: 600;
+		color: var(--text);
+		margin-bottom: 0.6rem;
+	}
+
+	.cache-monitor-breakdown {
+		display: flex;
+		gap: 0.4rem;
+		flex-wrap: wrap;
+		margin-bottom: 0.7rem;
+	}
+
+	.cache-monitor-toggle {
+		border: 1px solid var(--border);
+		background: transparent;
+		color: var(--text);
+		border-radius: 4px;
+		padding: 0.3rem 0.55rem;
+		font-size: 0.75rem;
+		font-weight: 600;
+		cursor: pointer;
+		margin-bottom: 0.6rem;
+	}
+
+	.cache-monitor-toggle:hover {
+		border-color: var(--primary);
+		color: var(--primary);
+	}
+
+	.cache-monitor-loading {
+		font-size: 0.75rem;
+		color: var(--text-muted);
+		margin-bottom: 0.5rem;
+	}
+
+	.cache-monitor-table-wrap {
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
+	}
+
+	.cache-monitor-table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.75rem;
+	}
+
+	.cache-monitor-table th,
+	.cache-monitor-table td {
+		text-align: left;
+		padding: 0.25rem 0.4rem;
+		border-bottom: 1px solid var(--border);
+		color: var(--text-muted);
+		white-space: nowrap;
+	}
+
+	.cache-monitor-table th {
+		color: #8080a0;
+		font-weight: 600;
+	}
+
+	.cache-monitor-table .num {
+		text-align: right;
+	}
+
+	.cache-tag {
+		display: inline-block;
+		padding: 0.05rem 0.4rem;
+		border-radius: 4px;
+		font-size: 0.7rem;
+		font-weight: 600;
+	}
+
+	.cache-tag--edge-hit,
+	.cache-tag--r2-hit,
+	.cache-tag--inflight-hit {
+		background: rgba(67, 214, 146, 0.15);
+		color: var(--success);
+	}
+
+	.cache-tag--cache-only-miss {
+		background: rgba(255, 191, 102, 0.15);
+		color: #ffbf66;
+	}
+
+	.cache-tag--miss,
+	.cache-tag--no-bucket,
+	.cache-tag--miss-store-failed {
+		background: rgba(255, 102, 102, 0.15);
+		color: #ff8080;
+	}
+
+	.cache-monitor-note {
+		font-size: 0.72rem;
+		color: #5a5a7a;
+		margin: 0.5rem 0 0;
+		line-height: 1.5;
+	}
+
 	.muted {
 		color: #5a5a7a;
 		font-size: 0.88rem;
@@ -1614,13 +1972,13 @@
 	.mcp-oauth strong { font-size: 0.85rem; color: var(--text); }
 	.mcp-oauth .agent-help { margin: 0.3rem 0 0.5rem; }
 	.mcp-endpoint { display: block; margin: 0.4rem 0 0.3rem; }
-	.mcp-endpoint-row { display: flex; align-items: center; gap: 0.45rem; }
+	.mcp-endpoint-row { display: flex; align-items: center; gap: 0.45rem; min-width: 0; }
 	.mcp-endpoint-input { min-width: 0; font-size: 0.8rem; }
 	.mcp-tokens-head {
 		display: flex; align-items: center; justify-content: space-between;
-		margin: 0.9rem 0 0.5rem;
+		gap: 0.75rem; margin: 0.9rem 0 0.5rem;
 	}
-	.mcp-token-create-controls { display: flex; align-items: center; gap: 0.45rem; }
+	.mcp-token-create-controls { display: flex; align-items: center; gap: 0.45rem; min-width: 0; }
 	.mcp-profile-select { width: auto; min-width: 150px; font-size: 0.78rem; padding: 0.42rem 0.55rem; }
 	.mcp-fresh {
 		background: var(--surface-2); border: 1px solid var(--warning);
@@ -1628,7 +1986,7 @@
 		display: flex; flex-direction: column; gap: 0.5rem;
 	}
 	.mcp-fresh-warn { font-size: 0.82rem; color: var(--warning); margin: 0; font-weight: 600; }
-	.mcp-fresh-row { display: flex; align-items: center; gap: 0.5rem; }
+	.mcp-fresh-row { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
 	.mcp-fresh-token {
 		flex: 1; min-width: 0;
 		font-family: monospace; font-size: 0.78rem;
@@ -1638,12 +1996,12 @@
 	}
 	.mcp-tokens { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.45rem; }
 	.mcp-token {
-		display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
+		display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem;
 		padding: 0.55rem 0.7rem;
 		background: var(--surface); border: 1px solid var(--border-muted); border-radius: 8px;
 		font-size: 0.85rem;
 	}
-	.mcp-token-meta { display: flex; flex-wrap: wrap; gap: 0.4rem 0.7rem; align-items: baseline; min-width: 0; }
+	.mcp-token-meta { display: flex; flex-wrap: wrap; gap: 0.4rem 0.7rem; align-items: baseline; flex: 1; min-width: 0; }
 	.mcp-token-prefix { font-family: monospace; color: var(--text); }
 	.mcp-token-label { color: var(--text-muted); }
 	.mcp-token-when { font-size: 0.75rem; color: var(--text-subtle); }
@@ -1664,8 +2022,12 @@
 		.agent-readiness-head .action-btn { width: 100%; justify-content: center; }
 		.agent-readiness-action { width: 100%; justify-content: center; }
 		.mcp-token-create-controls { width: 100%; flex-direction: column; align-items: stretch; }
+		.mcp-token-create-controls .action-btn { width: 100%; }
 		.mcp-profile-select { width: 100%; }
 		.mcp-tokens-head { align-items: stretch; flex-direction: column; gap: 0.55rem; }
+		.key-row-header { align-items: flex-start; }
+		.key-row-actions { flex-direction: column-reverse; align-items: flex-end; gap: 0.35rem; }
+		.key-input-footer .btn-primary { width: 100%; justify-content: center; }
 	}
 
 	.account-section {

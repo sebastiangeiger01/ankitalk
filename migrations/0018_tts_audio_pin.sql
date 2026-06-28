@@ -1,0 +1,12 @@
+-- 0018_tts_audio_pin.sql
+-- Exam-pin retention for cached TTS audio.
+--
+-- Synthesized ElevenLabs/OpenAI audio is cached durably in R2 (keyed by a hash of the text +
+-- voice + settings) so a given clip is paid for once, not regenerated on every play. Retention
+-- is driven by R2's native object-lifecycle rules via two key prefixes (tts/std/, tts/pin/):
+-- unpinned audio expires after a short idle window; pinned audio is kept much longer.
+--
+-- A deck can be "pinned" to an exam date: while audio_keep_until is in the future, the deck's
+-- audio is stored under the long-retention prefix and refreshed on access, so anything the
+-- learner actually studies stays ready through the exam. NULL = not pinned (default idle window).
+ALTER TABLE decks ADD COLUMN audio_keep_until TEXT;
