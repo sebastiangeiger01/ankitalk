@@ -290,6 +290,73 @@ export async function listDecks(
 	};
 }
 
+/**
+ * List the notes in one deck with their fields, tags, and per-note cards (id, ordinal, state) so an
+ * agent can drive systematic bulk edits from stable IDs. Paginated with the same opaque cursor as
+ * the card readers; ordered by creation so the listing is stable across pages.
+ */
+export async function listNotes(
+	db: D1Database,
+	userId: string,
+	input: { deckId: string; limit: number; cursor?: string }
+) {
+	const deck = await db
+		.prepare('SELECT id FROM decks WHERE id = ? AND user_id = ?')
+		.bind(input.deckId, userId)
+		.first<{ id: string }>();
+	if (!deck) throw new Error('DECK_NOT_FOUND');
+
+	const offset = decodeCursor(input.cursor);
+	const noteRows = (
+		await db
+			.prepare(
+				`SELECT id, model_name, fields, tags
+				 FROM notes
+				 WHERE deck_id = ? AND user_id = ?
+				 ORDER BY created_at, id
+				 LIMIT ? OFFSET ?`
+			)
+			.bind(input.deckId, userId, input.limit + 1, offset)
+			.all<{ id: string; model_name: string; fields: string; tags: string }>()
+	).results;
+
+	const hasMore = noteRows.length > input.limit;
+	const page = hasMore ? noteRows.slice(0, input.limit) : noteRows;
+
+	const cardsByNote = new Map<string, Array<{ card_id: string; ordinal: number; state: CardState; suspended: boolean }>>();
+	if (page.length > 0) {
+		const ph = page.map(() => '?').join(',');
+		const cardRows = (
+			await db
+				.prepare(
+					`SELECT id, note_id, ordinal, fsrs_state, suspended
+					 FROM cards
+					 WHERE user_id = ? AND note_id IN (${ph})
+					 ORDER BY ordinal, id`
+				)
+				.bind(userId, ...page.map((note) => note.id))
+				.all<{ id: string; note_id: string; ordinal: number; fsrs_state: number; suspended: number }>()
+		).results;
+		for (const card of cardRows) {
+			const list = cardsByNote.get(card.note_id) ?? [];
+			list.push({ card_id: card.id, ordinal: card.ordinal, state: stateLabel(card.fsrs_state), suspended: card.suspended === 1 });
+			cardsByNote.set(card.note_id, list);
+		}
+	}
+
+	return {
+		deck_id: input.deckId,
+		notes: page.map((note) => ({
+			note_id: note.id,
+			model_name: note.model_name,
+			fields: parseFields(note.fields),
+			tags: parseTags(note.tags),
+			cards: cardsByNote.get(note.id) ?? []
+		})),
+		next_cursor: hasMore ? encodeCursor(offset + input.limit) : null
+	};
+}
+
 export type CardFinderStatus = 'due' | 'struggling' | 'leech' | 'new' | 'suspended';
 
 export async function findCards(
