@@ -455,7 +455,8 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 					if (bytes.byteLength > MCP_MAX_IMAGE_BYTES) {
 						return errorResult('IMAGE_TOO_LARGE', `Image exceeds the ${MCP_MAX_IMAGE_BYTES / (1024 * 1024)} MB limit for MCP uploads.`);
 					}
-					return jsonResult((await storeUserImage(ctx.media, ctx.userId, filename, bytes)) as unknown as Record<string, unknown>);
+					const stored = await storeUserImage(ctx.media, ctx.userId, filename, bytes);
+					return jsonResult({ filename: stored.filename, content_type: stored.contentType, bytes: stored.bytes });
 				})
 		);
 
