@@ -92,6 +92,26 @@ export function reorderedDueAts(baseIso: string, count: number): string[] {
 	return Array.from({ length: count }, (_, index) => new Date(start + index * 1000).toISOString());
 }
 
+/**
+ * Merge partial field patches onto a note's existing fields: a patch whose name matches an
+ * existing field replaces that field's value; a patch with a new name is appended. Order of the
+ * existing fields is preserved. Returns the full merged field list.
+ */
+export function mergeFieldPatches(existing: NoteField[], patches: NoteField[]): NoteField[] {
+	const merged = existing.map((field) => ({ ...field }));
+	const indexByName = new Map(merged.map((field, index) => [field.name, index]));
+	for (const patch of patches) {
+		const at = indexByName.get(patch.name);
+		if (at === undefined) {
+			indexByName.set(patch.name, merged.length);
+			merged.push({ name: patch.name, value: patch.value });
+		} else {
+			merged[at].value = patch.value;
+		}
+	}
+	return merged;
+}
+
 // ── Deck edits ─────────────────────────────────────────────────────────────────────────────────
 
 export async function updateDeck(
@@ -233,6 +253,35 @@ export async function updateNoteFields(
 
 	await db.batch(statements);
 	return { updated: true, note_id: input.noteId, cards_added: toAdd.length, cards_removed: removeIds.length };
+}
+
+/**
+ * Patch a subset of a note's fields by name, leaving the others untouched, then re-render via the
+ * same path as updateNoteFields (so cloze reconciliation and validation are identical). Use this
+ * to change one field without resending the whole note.
+ */
+export async function patchNoteFields(
+	db: D1Database,
+	userId: string,
+	input: { noteId: string; patches: NoteField[] }
+): Promise<{ updated: boolean; note_id?: string; cards_added?: number; cards_removed?: number; validation?: unknown[] }> {
+	const note = await db
+		.prepare('SELECT fields FROM notes WHERE id = ? AND user_id = ?')
+		.bind(input.noteId, userId)
+		.first<{ fields: string }>();
+	if (!note) throw new Error('NOTE_NOT_FOUND');
+
+	let existing: NoteField[];
+	try {
+		const parsed = JSON.parse(note.fields) as unknown;
+		existing = Array.isArray(parsed)
+			? parsed.map((field) => ({ name: String((field as NoteField)?.name ?? ''), value: String((field as NoteField)?.value ?? '') }))
+			: [];
+	} catch {
+		existing = [];
+	}
+
+	return updateNoteFields(db, userId, { noteId: input.noteId, fields: mergeFieldPatches(existing, input.patches) });
 }
 
 export async function updateNoteTags(
