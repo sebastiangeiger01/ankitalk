@@ -7,6 +7,7 @@ import {
 	getCardContext,
 	getStudyProgress,
 	listDecks,
+	listNotes,
 	searchStudyMaterial
 } from '$lib/server/study-context';
 import { createDeck, createNotes, validateCardDrafts, type CardDraft } from '$lib/server/card-authoring';
@@ -14,6 +15,7 @@ import {
 	deleteDeck,
 	deleteNotes,
 	moveNotesToDeck,
+	patchNoteFields,
 	reorderNewCards,
 	setCardsSuspended,
 	updateDeck,
@@ -21,6 +23,7 @@ import {
 	updateNoteTags
 } from '$lib/server/card-editing';
 import { IMAGE_EXTENSIONS, isImageFilename, storeUserImage } from '$lib/server/media-store';
+import { validateDeckMedia, validateNoteMedia } from '$lib/server/media-validate';
 
 export interface McpToolContext {
 	db: D1Database;
@@ -278,6 +281,87 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 			async ({ limit, cursor }) =>
 				audited(ctx, 'list_decks', async () => jsonResult(await listDecks(ctx.db, ctx.userId, { limit, cursor })))
 		);
+
+		server.registerTool(
+			'list_notes',
+			{
+				title: 'List notes in a deck',
+				description:
+					'List the notes in one deck with their fields, tags, and per-note cards (card_id, ordinal, state). Use this to drive systematic bulk edits from stable IDs — feed the returned note_ids to patch_note_fields/update_note_fields/move_notes_to_deck/delete_notes, or the card_ids to set_card_suspended/reorder_new_cards. For text or status search use search_study_material or find_cards instead.',
+				inputSchema: {
+					deck_id: z.string().min(1).max(100).describe('The deck whose notes to list.'),
+					limit: z.number().int().min(1).max(50).default(20).describe('Notes per page; defaults to 20.'),
+					cursor
+				},
+				outputSchema: {
+					deck_id: z.string(),
+					notes: z.array(
+						z.object({
+							note_id: z.string(),
+							model_name: z.string(),
+							fields: z.array(z.object({ name: z.string(), value: z.string() })),
+							tags: z.array(z.string()),
+							cards: z.array(
+								z.object({
+									card_id: z.string(),
+									ordinal: z.number().int(),
+									state: z.enum(['new', 'learning', 'review', 'relearning', 'unknown']),
+									suspended: z.boolean()
+								})
+							)
+						})
+					),
+					next_cursor: z.string().nullable()
+				},
+				annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+			},
+			async ({ deck_id, limit, cursor }) =>
+				audited(ctx, 'list_notes', async () => jsonResult(await listNotes(ctx.db, ctx.userId, { deckId: deck_id, limit, cursor })))
+		);
+
+		server.registerTool(
+			'validate_note_media',
+			{
+				title: 'Check a note’s images resolve',
+				description:
+					'Check that every image referenced by a note (`<img src="...">` and similar) actually exists in storage. Returns the missing filenames, if any. Use this after editing a note to confirm no image is broken.',
+				inputSchema: { note_id: z.string().min(1).max(100).describe('The AnkiTalk note ID to check.') },
+				outputSchema: {
+					note_id: z.string(),
+					total_refs: z.number().int(),
+					missing: z.array(z.string()),
+					ok: z.boolean()
+				},
+				annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+			},
+			async ({ note_id }) =>
+				audited(ctx, 'validate_note_media', async () =>
+					jsonResult(await validateNoteMedia(ctx.db, ctx.media, ctx.userId, note_id))
+				)
+		);
+
+		server.registerTool(
+			'validate_deck_media',
+			{
+				title: 'Check a deck’s images resolve',
+				description:
+					'Check that every image referenced by the notes in a deck exists in storage. Returns each missing reference as { note_id, filename }. Scans up to 1000 notes (notes_truncated flags when there are more). Use this to audit a deck after a bulk image migration.',
+				inputSchema: { deck_id: z.string().min(1).max(100).describe('The AnkiTalk deck ID to check.') },
+				outputSchema: {
+					deck_id: z.string(),
+					notes_checked: z.number().int(),
+					notes_truncated: z.boolean(),
+					total_refs: z.number().int(),
+					missing: z.array(z.object({ note_id: z.string(), filename: z.string() })),
+					ok: z.boolean()
+				},
+				annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+			},
+			async ({ deck_id }) =>
+				audited(ctx, 'validate_deck_media', async () =>
+					jsonResult(await validateDeckMedia(ctx.db, ctx.media, ctx.userId, deck_id))
+				)
+		);
 	}
 
 	if (ctx.scopes.has('study:read')) {
@@ -444,7 +528,7 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 				outputSchema: {
 					filename: z.string().describe('Embed as <img src="FILENAME"> in a note field.'),
 					content_type: z.string(),
-					bytes: z.number().int()
+					size_bytes: z.number().int()
 				},
 				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
 			},
@@ -456,7 +540,76 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 						return errorResult('IMAGE_TOO_LARGE', `Image exceeds the ${MCP_MAX_IMAGE_BYTES / (1024 * 1024)} MB limit for MCP uploads.`);
 					}
 					const stored = await storeUserImage(ctx.media, ctx.userId, filename, bytes);
-					return jsonResult({ filename: stored.filename, content_type: stored.contentType, bytes: stored.bytes });
+					return jsonResult({ filename: stored.filename, content_type: stored.contentType, size_bytes: stored.bytes });
+				})
+		);
+
+		server.registerTool(
+			'attach_images',
+			{
+				title: 'Attach several images for cards',
+				description:
+					'Upload up to 20 images in one call and get a filename for each, to embed as `<img src="FILENAME">`. Same rules as attach_image (content-addressed, SVG sanitized). Each image is processed independently: results preserve input order and report a per-item `error` instead of failing the whole batch, so you can migrate many slide images in one pass.',
+				inputSchema: {
+					images: z
+						.array(
+							z.object({
+								filename: z
+									.string()
+									.trim()
+									.min(1)
+									.max(240)
+									.describe(`Source filename; only its extension is used. One of: ${IMAGE_EXTENSIONS.join(', ')}.`),
+								content_base64: z
+									.string()
+									.min(1)
+									.max(8_000_000)
+									.describe('Base64-encoded image bytes (a data: URL prefix is accepted and stripped).')
+							})
+						)
+						.min(1)
+						.max(20)
+						.describe('The images to upload, in order.')
+				},
+				outputSchema: {
+					results: z.array(
+						z.object({
+							source_filename: z.string(),
+							filename: z.string().optional(),
+							content_type: z.string().optional(),
+							size_bytes: z.number().int().optional(),
+							error: z.string().optional()
+						})
+					),
+					uploaded: z.number().int(),
+					failed: z.number().int()
+				},
+				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+			},
+			async ({ images }) =>
+				audited(ctx, 'attach_images', async () => {
+					const results: Array<Record<string, unknown>> = [];
+					let uploaded = 0;
+					let failed = 0;
+					for (const image of images) {
+						try {
+							if (!isImageFilename(image.filename)) throw new Error('UNSUPPORTED_IMAGE_TYPE');
+							const bytes = decodeBase64Image(image.content_base64);
+							if (bytes.byteLength > MCP_MAX_IMAGE_BYTES) throw new Error('IMAGE_TOO_LARGE');
+							const stored = await storeUserImage(ctx.media, ctx.userId, image.filename, bytes);
+							results.push({
+								source_filename: image.filename,
+								filename: stored.filename,
+								content_type: stored.contentType,
+								size_bytes: stored.bytes
+							});
+							uploaded++;
+						} catch (err) {
+							results.push({ source_filename: image.filename, error: err instanceof Error ? err.message : 'UPLOAD_FAILED' });
+							failed++;
+						}
+					}
+					return jsonResult({ results, uploaded, failed });
 				})
 		);
 
@@ -485,6 +638,35 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 			async ({ note_id, fields }) =>
 				audited(ctx, 'update_note_fields', async () =>
 					jsonResult(await updateNoteFields(ctx.db, ctx.userId, { noteId: note_id, fields }))
+				)
+		);
+
+		server.registerTool(
+			'patch_note_fields',
+			{
+				title: 'Patch some of a note’s fields',
+				description:
+					'Update only the named fields of a note, leaving the others untouched (a lighter alternative to update_note_fields, which needs the full field set). A field name that does not exist yet is added. Re-renders the cards through the same validation and cloze reconciliation as update_note_fields, and rejects edits whose result is invalid (returns validation) without writing.',
+				inputSchema: {
+					note_id: noteId.describe('The AnkiTalk note ID to edit.'),
+					fields: z
+						.array(fieldSchema)
+						.min(1)
+						.max(20)
+						.describe('Only the fields to change (by name); unlisted fields are kept as-is.')
+				},
+				outputSchema: {
+					updated: z.boolean(),
+					note_id: z.string().optional(),
+					cards_added: z.number().int().optional(),
+					cards_removed: z.number().int().optional(),
+					validation: z.array(z.looseObject({})).optional()
+				},
+				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+			},
+			async ({ note_id, fields }) =>
+				audited(ctx, 'patch_note_fields', async () =>
+					jsonResult(await patchNoteFields(ctx.db, ctx.userId, { noteId: note_id, patches: fields }))
 				)
 		);
 

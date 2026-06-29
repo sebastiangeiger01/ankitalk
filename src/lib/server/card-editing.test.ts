@@ -1,6 +1,33 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { applyTagChanges, parseTags, reconcileOrdinals, reorderedDueAts, serializeTags } from './card-editing';
+import { applyTagChanges, mergeFieldPatches, parseTags, reconcileOrdinals, reorderedDueAts, serializeTags } from './card-editing';
+
+describe('mergeFieldPatches', () => {
+	const base = [
+		{ name: 'Front', value: 'q' },
+		{ name: 'Back', value: 'a' }
+	];
+
+	it('replaces a named field and leaves the others untouched', () => {
+		expect(mergeFieldPatches(base, [{ name: 'Back', value: 'a2' }])).toEqual([
+			{ name: 'Front', value: 'q' },
+			{ name: 'Back', value: 'a2' }
+		]);
+	});
+
+	it('appends a field whose name does not exist yet', () => {
+		expect(mergeFieldPatches(base, [{ name: 'Extra', value: 'x' }])).toEqual([
+			{ name: 'Front', value: 'q' },
+			{ name: 'Back', value: 'a' },
+			{ name: 'Extra', value: 'x' }
+		]);
+	});
+
+	it('does not mutate the input fields', () => {
+		mergeFieldPatches(base, [{ name: 'Front', value: 'changed' }]);
+		expect(base[0].value).toBe('q');
+	});
+});
 
 describe('parseTags / serializeTags', () => {
 	it('splits on whitespace and drops empties', () => {

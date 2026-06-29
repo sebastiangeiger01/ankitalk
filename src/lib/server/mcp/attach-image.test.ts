@@ -50,11 +50,11 @@ describe('attach_image MCP tool', () => {
 		});
 
 		expect(result.isError).toBeFalsy();
-		const structured = result.structuredContent as { filename: string; content_type: string; bytes: number };
+		const structured = result.structuredContent as { filename: string; content_type: string; size_bytes: number };
 		expect(typeof structured.content_type).toBe('string');
 		expect(structured.content_type).toBe('image/png');
 		expect(structured.filename).toMatch(/^[0-9a-f]{64}\.png$/);
-		expect(structured.bytes).toBeGreaterThan(0);
+		expect(structured.size_bytes).toBeGreaterThan(0);
 
 		await client.close();
 	});

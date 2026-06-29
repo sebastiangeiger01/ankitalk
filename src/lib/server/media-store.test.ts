@@ -1,6 +1,23 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { imageExtension, isImageFilename, storeUserImage } from './media-store';
+import { extractMediaFilenames, imageExtension, isImageFilename, storeUserImage } from './media-store';
+
+describe('extractMediaFilenames', () => {
+	it('pulls bare filenames from img/audio/source tags', () => {
+		const html = '<p>see <img src="abc.png" alt="x"> and <audio src="clip.mp3"></audio></p>';
+		expect(extractMediaFilenames(html).sort()).toEqual(['abc.png', 'clip.mp3']);
+	});
+
+	it('unwraps already-rewritten /api/media URLs and dedupes', () => {
+		const html = '<img src="/api/media/abc.png"><img src="abc.png">';
+		expect(extractMediaFilenames(html)).toEqual(['abc.png']);
+	});
+
+	it('skips external and data sources', () => {
+		const html = '<img src="https://example.com/a.png"><img src="data:image/png;base64,AAAA">';
+		expect(extractMediaFilenames(html)).toEqual([]);
+	});
+});
 
 function fakeBucket() {
 	const store = new Map<string, { body: Uint8Array; contentType?: string }>();

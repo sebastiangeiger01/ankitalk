@@ -8,7 +8,7 @@
  * upload overwriting another's. R2 keys are namespaced per user (`${userId}/${filename}`), and
  * reads are user-scoped in `/api/media/[key]`.
  */
-import { IMPORT_LIMITS, mediaContentTypeForFilename, sanitizeMediaBytes } from '$lib/sanitize';
+import { IMPORT_LIMITS, isSafeMediaFilename, mediaContentTypeForFilename, sanitizeMediaBytes } from '$lib/sanitize';
 
 /** Extensions accepted by the image-upload paths (raster + sanitized SVG). */
 export const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'] as const;
@@ -25,6 +25,26 @@ export function isImageFilename(filename: string): boolean {
 /** Human-readable error for a filename that is not a supported image type. */
 export function imageTypeError(filename: string): string {
 	return `Unsupported image type: ${filename}. Supported types are PNG, JPG, GIF, WebP, BMP, and SVG.`;
+}
+
+/**
+ * Extract the bare media filenames referenced by `<img|audio|source src="...">` in card HTML.
+ * Skips external (`http(s):`, `data:`) and foreign-path sources; unwraps already-rewritten
+ * `/api/media/<name>` URLs back to the filename. Used to check that a card's media resolves.
+ */
+export function extractMediaFilenames(html: string): string[] {
+	const out = new Set<string>();
+	const re = /<(?:img|audio|source)\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi;
+	let match: RegExpExecArray | null;
+	while ((match = re.exec(html)) !== null) {
+		let src = match[1].trim();
+		if (/^https?:\/\//i.test(src) || /^data:/i.test(src)) continue;
+		const api = src.match(/^\/api\/media\/([^/?#]+)$/);
+		if (api) src = decodeURIComponent(api[1]);
+		if (src.includes('/') || src.includes('\\')) continue;
+		if (isSafeMediaFilename(src)) out.add(src);
+	}
+	return [...out];
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
