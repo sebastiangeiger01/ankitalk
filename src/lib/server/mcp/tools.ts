@@ -22,7 +22,13 @@ import {
 	updateNoteFields,
 	updateNoteTags
 } from '$lib/server/card-editing';
-import { IMAGE_EXTENSIONS, isImageFilename, storeUserImage } from '$lib/server/media-store';
+import {
+	IMAGE_EXTENSIONS,
+	decodeBase64Image,
+	isImageFilename,
+	storeUserImage,
+	verifyImageIntegrity
+} from '$lib/server/media-store';
 import { validateDeckMedia, validateNoteMedia } from '$lib/server/media-validate';
 
 export interface McpToolContext {
@@ -42,19 +48,6 @@ type ToolResult = {
 
 /** Max decoded image size accepted over MCP (base64 inflates payloads, so keep tool calls sane). */
 const MCP_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-
-/** Decode a base64 (optionally data-URL-prefixed) string to bytes. Throws BAD_IMAGE_DATA on failure. */
-function decodeBase64Image(value: string): Uint8Array {
-	const cleaned = value.replace(/^data:[^;,]*;base64,/, '').replace(/\s+/g, '');
-	try {
-		const binary = atob(cleaned);
-		const bytes = new Uint8Array(binary.length);
-		for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-		return bytes;
-	} catch {
-		throw new Error('BAD_IMAGE_DATA');
-	}
-}
 
 function jsonResult(value: Record<string, unknown>): ToolResult {
 	return {
@@ -506,12 +499,51 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 				})
 		);
 
+		const imageSha256 = z
+			.string()
+			.regex(/^[0-9a-fA-F]{64}$/)
+			.optional()
+			.describe('Optional SHA-256 (hex) of the original file. If given, the server verifies the upload survived transit intact.');
+		const imageSizeBytes = z
+			.number()
+			.int()
+			.positive()
+			.max(MCP_MAX_IMAGE_BYTES)
+			.optional()
+			.describe('Optional exact byte size of the original file. If given, a truncated upload is rejected with a clear error.');
+
+		// Decode → size-check → optional integrity-check → sanitize+store, shared by attach_image and
+		// attach_images so both report identical, actionable errors (e.g. transit truncation).
+		const processOneImage = async (
+			filename: string,
+			contentBase64: string,
+			expected: { sha256?: string; sizeBytes?: number }
+		): Promise<{ ok: true; stored: { filename: string; contentType: string; bytes: number } } | { ok: false; code: string; message: string }> => {
+			if (!isImageFilename(filename)) {
+				return { ok: false, code: 'UNSUPPORTED_IMAGE_TYPE', message: `Unsupported image type: ${filename}.` };
+			}
+			const bytes = decodeBase64Image(contentBase64);
+			if (!bytes) {
+				return {
+					ok: false,
+					code: 'BAD_IMAGE_DATA',
+					message: 'content_base64 is not valid base64 (it may have been truncated in transit). Re-encode the file and retry.'
+				};
+			}
+			if (bytes.byteLength > MCP_MAX_IMAGE_BYTES) {
+				return { ok: false, code: 'IMAGE_TOO_LARGE', message: `Image exceeds the ${MCP_MAX_IMAGE_BYTES / (1024 * 1024)} MB limit for MCP uploads.` };
+			}
+			const mismatch = await verifyImageIntegrity(bytes, expected);
+			if (mismatch) return { ok: false, code: 'IMAGE_INTEGRITY_MISMATCH', message: mismatch };
+			return { ok: true, stored: await storeUserImage(ctx.media, ctx.userId, filename, bytes) };
+		};
+
 		server.registerTool(
 			'attach_image',
 			{
 				title: 'Attach an image for a card',
 				description:
-					'Upload an image (PNG, JPG, GIF, WebP, BMP, or SVG) and get back a filename to embed in a note field as `<img src="FILENAME">`. Pass the raw bytes base64-encoded in `content_base64` and a `filename` whose extension sets the type (e.g. diagram.svg, figure.png). SVG is sanitized server-side. Uploads are content-addressed, so re-uploading the same image returns the same filename. Use the returned filename inside the field HTML you pass to create_notes or update_note_fields.',
+					'Upload an image (PNG, JPG, GIF, WebP, BMP, or SVG) and get back a filename to embed in a note field as `<img src="FILENAME">`. Pass the raw bytes base64-encoded in `content_base64` and a `filename` whose extension sets the type (e.g. diagram.svg, figure.png). SVG is sanitized server-side. Uploads are content-addressed, so re-uploading the same image returns the same filename. For large images, also pass `sha256` and/or `size_bytes` of the original file so a payload corrupted in transit is rejected with a clear error instead of being stored truncated. Use the returned filename inside the field HTML you pass to create_notes or update_note_fields. To upload many images at once, use attach_images.',
 				inputSchema: {
 					filename: z
 						.string()
@@ -523,7 +555,9 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 						.string()
 						.min(1)
 						.max(8_000_000)
-						.describe('The image bytes, base64-encoded (a data: URL prefix is accepted and stripped).')
+						.describe('The image bytes, base64-encoded (a data: URL prefix is accepted and stripped).'),
+					sha256: imageSha256,
+					size_bytes: imageSizeBytes
 				},
 				outputSchema: {
 					filename: z.string().describe('Embed as <img src="FILENAME"> in a note field.'),
@@ -532,15 +566,11 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 				},
 				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
 			},
-			async ({ filename, content_base64 }) =>
+			async ({ filename, content_base64, sha256, size_bytes }) =>
 				audited(ctx, 'attach_image', async () => {
-					if (!isImageFilename(filename)) return errorResult('UNSUPPORTED_IMAGE_TYPE', `Unsupported image type: ${filename}.`);
-					const bytes = decodeBase64Image(content_base64);
-					if (bytes.byteLength > MCP_MAX_IMAGE_BYTES) {
-						return errorResult('IMAGE_TOO_LARGE', `Image exceeds the ${MCP_MAX_IMAGE_BYTES / (1024 * 1024)} MB limit for MCP uploads.`);
-					}
-					const stored = await storeUserImage(ctx.media, ctx.userId, filename, bytes);
-					return jsonResult({ filename: stored.filename, content_type: stored.contentType, size_bytes: stored.bytes });
+					const result = await processOneImage(filename, content_base64, { sha256, sizeBytes: size_bytes });
+					if (!result.ok) return errorResult(result.code, result.message);
+					return jsonResult({ filename: result.stored.filename, content_type: result.stored.contentType, size_bytes: result.stored.bytes });
 				})
 		);
 
@@ -549,7 +579,7 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 			{
 				title: 'Attach several images for cards',
 				description:
-					'Upload up to 20 images in one call and get a filename for each, to embed as `<img src="FILENAME">`. Same rules as attach_image (content-addressed, SVG sanitized). Each image is processed independently: results preserve input order and report a per-item `error` instead of failing the whole batch, so you can migrate many slide images in one pass.',
+					'Upload up to 20 images in one call and get a filename for each, to embed as `<img src="FILENAME">`. Same rules as attach_image (content-addressed, SVG sanitized; optional per-image `sha256`/`size_bytes` integrity check). Each image is processed independently: results preserve input order and report a per-item `error` instead of failing the whole batch, so you can migrate many slide images in one pass.',
 				inputSchema: {
 					images: z
 						.array(
@@ -564,7 +594,9 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 									.string()
 									.min(1)
 									.max(8_000_000)
-									.describe('Base64-encoded image bytes (a data: URL prefix is accepted and stripped).')
+									.describe('Base64-encoded image bytes (a data: URL prefix is accepted and stripped).'),
+								sha256: imageSha256,
+								size_bytes: imageSizeBytes
 							})
 						)
 						.min(1)
@@ -592,20 +624,20 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 					let uploaded = 0;
 					let failed = 0;
 					for (const image of images) {
-						try {
-							if (!isImageFilename(image.filename)) throw new Error('UNSUPPORTED_IMAGE_TYPE');
-							const bytes = decodeBase64Image(image.content_base64);
-							if (bytes.byteLength > MCP_MAX_IMAGE_BYTES) throw new Error('IMAGE_TOO_LARGE');
-							const stored = await storeUserImage(ctx.media, ctx.userId, image.filename, bytes);
+						const result = await processOneImage(image.filename, image.content_base64, {
+							sha256: image.sha256,
+							sizeBytes: image.size_bytes
+						});
+						if (result.ok) {
 							results.push({
 								source_filename: image.filename,
-								filename: stored.filename,
-								content_type: stored.contentType,
-								size_bytes: stored.bytes
+								filename: result.stored.filename,
+								content_type: result.stored.contentType,
+								size_bytes: result.stored.bytes
 							});
 							uploaded++;
-						} catch (err) {
-							results.push({ source_filename: image.filename, error: err instanceof Error ? err.message : 'UPLOAD_FAILED' });
+						} else {
+							results.push({ source_filename: image.filename, error: `${result.code}: ${result.message}` });
 							failed++;
 						}
 					}

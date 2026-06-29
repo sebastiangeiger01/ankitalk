@@ -55,6 +55,51 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 		.join('');
 }
 
+/**
+ * Decode a base64 image payload to bytes, tolerantly: strips a `data:` URL prefix and whitespace,
+ * accepts the URL-safe alphabet (`-`/`_`), and re-pads. Returns null if the string still isn't
+ * valid base64 (e.g. truncated in transit), so callers can surface a clear error.
+ */
+export function decodeBase64Image(value: string): Uint8Array | null {
+	let s = value
+		.replace(/^data:[^;,]*;base64,/, '')
+		.replace(/\s+/g, '')
+		.replace(/-/g, '+')
+		.replace(/_/g, '/')
+		.replace(/=+$/, '');
+	const remainder = s.length % 4;
+	if (remainder === 1) return null; // never a valid base64 length
+	if (remainder !== 0) s += '='.repeat(4 - remainder);
+	try {
+		const binary = atob(s);
+		const bytes = new Uint8Array(binary.length);
+		for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+		return bytes;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Verify decoded image bytes against optional caller-supplied expectations, so a payload corrupted
+ * or truncated in transit fails loudly. Returns a human-readable reason on mismatch, or null if ok.
+ */
+export async function verifyImageIntegrity(
+	bytes: Uint8Array,
+	expected: { sha256?: string; sizeBytes?: number }
+): Promise<string | null> {
+	if (expected.sizeBytes !== undefined && bytes.byteLength !== expected.sizeBytes) {
+		return `decoded ${bytes.byteLength} bytes but expected ${expected.sizeBytes} — the upload was likely truncated or corrupted in transit; re-encode and retry`;
+	}
+	if (expected.sha256) {
+		const actual = await sha256Hex(bytes);
+		if (actual.toLowerCase() !== expected.sha256.toLowerCase()) {
+			return `sha256 mismatch (got ${actual.slice(0, 12)}…, expected ${expected.sha256.slice(0, 12)}…) — the upload was corrupted in transit; re-encode and retry`;
+		}
+	}
+	return null;
+}
+
 export interface StoredImage {
 	/** Content-addressed filename to embed as `<img src="...">` in a card field. */
 	filename: string;

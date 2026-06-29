@@ -59,3 +59,43 @@ describe('attach_image MCP tool', () => {
 		await client.close();
 	});
 });
+
+describe('attach_images MCP tool', () => {
+	const ctx = (media: R2Bucket): McpToolContext => ({
+		db: fakeDb,
+		userId: 'user-1',
+		tokenId: 'token-1',
+		scopes: new Set<McpScope>(['cards:write']),
+		media,
+		waitUntil: () => {}
+	});
+
+	it('uploads a batch and reports per-item integrity failures instead of failing the call', async () => {
+		const { media } = fakeMedia();
+		const client = await connectedClient(ctx(media));
+
+		const result = await client.callTool({
+			name: 'attach_images',
+			arguments: {
+				images: [
+					{ filename: 'a.png', content_base64: 'AAAA' },
+					// size_bytes intentionally wrong → flagged as a transit-corruption mismatch.
+					{ filename: 'b.png', content_base64: 'AAAA', size_bytes: 999 }
+				]
+			}
+		});
+
+		expect(result.isError).toBeFalsy();
+		const out = result.structuredContent as {
+			uploaded: number;
+			failed: number;
+			results: Array<{ source_filename: string; filename?: string; error?: string }>;
+		};
+		expect(out.uploaded).toBe(1);
+		expect(out.failed).toBe(1);
+		expect(out.results[0].filename).toMatch(/^[0-9a-f]{64}\.png$/);
+		expect(out.results[1].error).toMatch(/IMAGE_INTEGRITY_MISMATCH/);
+
+		await client.close();
+	});
+});

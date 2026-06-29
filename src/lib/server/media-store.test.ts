@@ -1,6 +1,52 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { extractMediaFilenames, imageExtension, isImageFilename, storeUserImage } from './media-store';
+import {
+	decodeBase64Image,
+	extractMediaFilenames,
+	imageExtension,
+	isImageFilename,
+	storeUserImage,
+	verifyImageIntegrity
+} from './media-store';
+
+const textBytes = (s: string) => new TextEncoder().encode(s);
+const toB64 = (s: string) => Buffer.from(s).toString('base64');
+
+describe('decodeBase64Image', () => {
+	it('decodes standard base64 (with a data: prefix and whitespace)', () => {
+		const b64 = toB64('hello');
+		expect(decodeBase64Image(`data:image/png;base64, ${b64}\n`)).toEqual(textBytes('hello'));
+	});
+
+	it('accepts URL-safe and unpadded base64', () => {
+		const standard = Buffer.from([0xfb, 0xff, 0xbf]).toString('base64'); // contains + and /
+		const urlSafe = standard.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+		expect(decodeBase64Image(urlSafe)).toEqual(new Uint8Array([0xfb, 0xff, 0xbf]));
+	});
+
+	it('returns null for an impossible base64 length (likely truncated)', () => {
+		expect(decodeBase64Image('abcde')).toBeNull(); // length % 4 === 1
+	});
+});
+
+describe('verifyImageIntegrity', () => {
+	const bytes = textBytes('hello');
+
+	it('passes when size and sha256 match', async () => {
+		const sha = '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824';
+		expect(await verifyImageIntegrity(bytes, { sizeBytes: 5, sha256: sha })).toBeNull();
+	});
+
+	it('reports a size mismatch (truncation) clearly', async () => {
+		const reason = await verifyImageIntegrity(bytes, { sizeBytes: 999 });
+		expect(reason).toMatch(/decoded 5 bytes but expected 999/);
+	});
+
+	it('reports a checksum mismatch', async () => {
+		const reason = await verifyImageIntegrity(bytes, { sha256: 'f'.repeat(64) });
+		expect(reason).toMatch(/sha256 mismatch/);
+	});
+});
 
 describe('extractMediaFilenames', () => {
 	it('pulls bare filenames from img/audio/source tags', () => {
