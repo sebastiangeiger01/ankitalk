@@ -21,6 +21,11 @@ function fakeMedia() {
 	return { media, store };
 }
 
+const fakeKv = {
+	put: () => Promise.resolve(),
+	get: () => Promise.resolve(null)
+} as unknown as KVNamespace;
+
 async function connectedClient(ctx: McpToolContext): Promise<Client> {
 	const server = createMcpServer(ctx);
 	const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -38,6 +43,8 @@ describe('attach_image MCP tool', () => {
 			tokenId: 'token-1',
 			scopes: new Set<McpScope>(['cards:write']),
 			media,
+			kv: fakeKv,
+			origin: 'https://test.local',
 			waitUntil: () => {}
 		};
 		const client = await connectedClient(ctx);
@@ -55,6 +62,48 @@ describe('attach_image MCP tool', () => {
 		expect(structured.content_type).toBe('image/png');
 		expect(structured.filename).toMatch(/^[0-9a-f]{64}\.png$/);
 		expect(structured.size_bytes).toBeGreaterThan(0);
+
+		await client.close();
+	});
+});
+
+describe('attach_images MCP tool', () => {
+	const ctx = (media: R2Bucket): McpToolContext => ({
+		db: fakeDb,
+		userId: 'user-1',
+		tokenId: 'token-1',
+		scopes: new Set<McpScope>(['cards:write']),
+		media,
+		kv: fakeKv,
+		origin: 'https://test.local',
+		waitUntil: () => {}
+	});
+
+	it('uploads a batch and reports per-item integrity failures instead of failing the call', async () => {
+		const { media } = fakeMedia();
+		const client = await connectedClient(ctx(media));
+
+		const result = await client.callTool({
+			name: 'attach_images',
+			arguments: {
+				images: [
+					{ filename: 'a.png', content_base64: 'AAAA' },
+					// size_bytes intentionally wrong → flagged as a transit-corruption mismatch.
+					{ filename: 'b.png', content_base64: 'AAAA', size_bytes: 999 }
+				]
+			}
+		});
+
+		expect(result.isError).toBeFalsy();
+		const out = result.structuredContent as {
+			uploaded: number;
+			failed: number;
+			results: Array<{ source_filename: string; filename?: string; error?: string }>;
+		};
+		expect(out.uploaded).toBe(1);
+		expect(out.failed).toBe(1);
+		expect(out.results[0].filename).toMatch(/^[0-9a-f]{64}\.png$/);
+		expect(out.results[1].error).toMatch(/IMAGE_INTEGRITY_MISMATCH/);
 
 		await client.close();
 	});
