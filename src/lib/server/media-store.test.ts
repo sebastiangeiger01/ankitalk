@@ -3,11 +3,49 @@ import { describe, expect, it } from 'vitest';
 import {
 	decodeBase64Image,
 	extractMediaFilenames,
+	fetchRemoteImage,
 	imageExtension,
+	imageExtensionFromUrl,
 	isImageFilename,
 	storeUserImage,
 	verifyImageIntegrity
 } from './media-store';
+
+describe('imageExtensionFromUrl', () => {
+	it('prefers the URL path extension', () => {
+		expect(imageExtensionFromUrl('https://x.com/a/b/figure.PNG?v=2', 'image/jpeg')).toBe('png');
+	});
+
+	it('falls back to the content-type when the path has no usable extension', () => {
+		expect(imageExtensionFromUrl('https://x.com/download', 'image/svg+xml; charset=utf-8')).toBe('svg');
+	});
+
+	it('returns null when neither yields a supported type', () => {
+		expect(imageExtensionFromUrl('https://x.com/download', 'application/pdf')).toBeNull();
+	});
+});
+
+describe('fetchRemoteImage SSRF guards', () => {
+	it('rejects non-https URLs without fetching', async () => {
+		expect(await fetchRemoteImage('http://example.com/a.png', 1000)).toEqual({ ok: false, error: 'Only https:// URLs are allowed.' });
+	});
+
+	it('rejects loopback, private, and metadata hosts', async () => {
+		for (const url of [
+			'https://localhost/a.png',
+			'https://127.0.0.1/a.png',
+			'https://10.0.0.5/a.png',
+			'https://192.168.1.10/a.png',
+			'https://169.254.169.254/latest/meta-data'
+		]) {
+			expect(await fetchRemoteImage(url, 1000)).toEqual({ ok: false, error: 'That host is not allowed.' });
+		}
+	});
+
+	it('rejects a malformed URL', async () => {
+		expect(await fetchRemoteImage('not a url', 1000)).toEqual({ ok: false, error: 'URL is not valid.' });
+	});
+});
 
 const textBytes = (s: string) => new TextEncoder().encode(s);
 const toB64 = (s: string) => Buffer.from(s).toString('base64');

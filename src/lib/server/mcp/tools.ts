@@ -25,11 +25,14 @@ import {
 import {
 	IMAGE_EXTENSIONS,
 	decodeBase64Image,
+	fetchRemoteImage,
+	imageExtensionFromUrl,
 	isImageFilename,
 	storeUserImage,
 	verifyImageIntegrity
 } from '$lib/server/media-store';
 import { validateDeckMedia, validateNoteMedia } from '$lib/server/media-validate';
+import { IMPORT_LIMITS } from '$lib/sanitize';
 
 export interface McpToolContext {
 	db: D1Database;
@@ -512,30 +515,44 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 			.optional()
 			.describe('Optional exact byte size of the original file. If given, a truncated upload is rejected with a clear error.');
 
-		// Decode → size-check → optional integrity-check → sanitize+store, shared by attach_image and
-		// attach_images so both report identical, actionable errors (e.g. transit truncation).
+		type ImageResult =
+			| { ok: true; stored: { filename: string; contentType: string; bytes: number } }
+			| { ok: false; code: string; message: string };
+
+		// Size-check → optional integrity-check → sanitize+store. Shared tail for every ingestion path
+		// (base64 single/batch, remote URL) so they all report identical, actionable errors.
+		const finalizeImage = async (
+			filename: string,
+			bytes: Uint8Array,
+			expected: { sha256?: string; sizeBytes?: number },
+			maxBytes: number
+		): Promise<ImageResult> => {
+			if (!isImageFilename(filename)) {
+				return { ok: false, code: 'UNSUPPORTED_IMAGE_TYPE', message: `Unsupported image type: ${filename}.` };
+			}
+			if (bytes.byteLength > maxBytes) {
+				return { ok: false, code: 'IMAGE_TOO_LARGE', message: `Image exceeds the ${Math.floor(maxBytes / (1024 * 1024))} MB limit.` };
+			}
+			const mismatch = await verifyImageIntegrity(bytes, expected);
+			if (mismatch) return { ok: false, code: 'IMAGE_INTEGRITY_MISMATCH', message: mismatch };
+			return { ok: true, stored: await storeUserImage(ctx.media, ctx.userId, filename, bytes) };
+		};
+
+		// Decode base64 → finalize, shared by attach_image and attach_images.
 		const processOneImage = async (
 			filename: string,
 			contentBase64: string,
 			expected: { sha256?: string; sizeBytes?: number }
-		): Promise<{ ok: true; stored: { filename: string; contentType: string; bytes: number } } | { ok: false; code: string; message: string }> => {
-			if (!isImageFilename(filename)) {
-				return { ok: false, code: 'UNSUPPORTED_IMAGE_TYPE', message: `Unsupported image type: ${filename}.` };
-			}
+		): Promise<ImageResult> => {
 			const bytes = decodeBase64Image(contentBase64);
 			if (!bytes) {
 				return {
 					ok: false,
 					code: 'BAD_IMAGE_DATA',
-					message: 'content_base64 is not valid base64 (it may have been truncated in transit). Re-encode the file and retry.'
+					message: 'content_base64 is not valid base64 (it may have been truncated in transit). Re-encode the file and retry, or use attach_image_from_url.'
 				};
 			}
-			if (bytes.byteLength > MCP_MAX_IMAGE_BYTES) {
-				return { ok: false, code: 'IMAGE_TOO_LARGE', message: `Image exceeds the ${MCP_MAX_IMAGE_BYTES / (1024 * 1024)} MB limit for MCP uploads.` };
-			}
-			const mismatch = await verifyImageIntegrity(bytes, expected);
-			if (mismatch) return { ok: false, code: 'IMAGE_INTEGRITY_MISMATCH', message: mismatch };
-			return { ok: true, stored: await storeUserImage(ctx.media, ctx.userId, filename, bytes) };
+			return finalizeImage(filename, bytes, expected, MCP_MAX_IMAGE_BYTES);
 		};
 
 		server.registerTool(
@@ -642,6 +659,59 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 						}
 					}
 					return jsonResult({ results, uploaded, failed });
+				})
+		);
+
+		server.registerTool(
+			'attach_image_from_url',
+			{
+				title: 'Attach an image from a URL',
+				description:
+					'Fetch an image from an https:// URL server-side and get back a filename to embed as `<img src="FILENAME">`. Preferred over attach_image/attach_images for anything non-trivial: the bytes travel out-of-band over HTTPS instead of through the tool call, so nothing is truncated or burns context. The URL must be publicly reachable (no localhost/private hosts), https only, and resolve to a supported image type (PNG, JPG, GIF, WebP, BMP, SVG; SVG is sanitized). Content-addressed like the other attach tools. Use the returned filename in the field HTML you pass to create_notes or update_note_fields.',
+				inputSchema: {
+					url: z.string().url().max(2_000).describe('Public https:// URL of the image to fetch.'),
+					sha256: z
+						.string()
+						.regex(/^[0-9a-fA-F]{64}$/)
+						.optional()
+						.describe('Optional SHA-256 (hex) of the expected file; the fetched bytes are verified against it.'),
+					size_bytes: z
+						.number()
+						.int()
+						.positive()
+						.max(IMPORT_LIMITS.maxMediaFileBytes)
+						.optional()
+						.describe('Optional expected exact byte size; a mismatch is rejected.')
+				},
+				outputSchema: {
+					filename: z.string().describe('Embed as <img src="FILENAME"> in a note field.'),
+					content_type: z.string(),
+					size_bytes: z.number().int(),
+					source_url: z.string()
+				},
+				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+			},
+			async ({ url, sha256, size_bytes }) =>
+				audited(ctx, 'attach_image_from_url', async () => {
+					const fetched = await fetchRemoteImage(url, IMPORT_LIMITS.maxMediaFileBytes);
+					if (!fetched.ok) return errorResult('IMAGE_FETCH_FAILED', fetched.error);
+					const ext = imageExtensionFromUrl(url, fetched.contentType);
+					if (!ext) {
+						return errorResult('UNSUPPORTED_IMAGE_TYPE', 'Could not determine a supported image type from the URL or its content-type.');
+					}
+					const result = await finalizeImage(
+						`upload.${ext}`,
+						fetched.bytes,
+						{ sha256, sizeBytes: size_bytes },
+						IMPORT_LIMITS.maxMediaFileBytes
+					);
+					if (!result.ok) return errorResult(result.code, result.message);
+					return jsonResult({
+						filename: result.stored.filename,
+						content_type: result.stored.contentType,
+						size_bytes: result.stored.bytes,
+						source_url: url
+					});
 				})
 		);
 

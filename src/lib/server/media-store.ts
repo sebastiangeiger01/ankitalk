@@ -100,6 +100,93 @@ export async function verifyImageIntegrity(
 	return null;
 }
 
+const CONTENT_TYPE_EXTENSION: Record<string, string> = {
+	'image/png': 'png',
+	'image/jpeg': 'jpg',
+	'image/gif': 'gif',
+	'image/webp': 'webp',
+	'image/bmp': 'bmp',
+	'image/svg+xml': 'svg'
+};
+
+/** Pick an image extension for a fetched URL: from the path first, then the response content-type. */
+export function imageExtensionFromUrl(url: string, contentType: string | null): string | null {
+	try {
+		const ext = imageExtension(new URL(url).pathname);
+		if (ext) return ext;
+	} catch {
+		// fall through to content-type
+	}
+	if (contentType) {
+		const base = contentType.split(';')[0].trim().toLowerCase();
+		return CONTENT_TYPE_EXTENSION[base] ?? null;
+	}
+	return null;
+}
+
+function isBlockedFetchHost(hostname: string): boolean {
+	const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+	if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return true;
+	// IPv6 loopback / unique-local / link-local literals.
+	if (host === '::1' || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80')) return true;
+	// IPv4 literals in loopback / link-local (incl. cloud metadata 169.254.169.254) / private / reserved ranges.
+	const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+	if (ipv4) {
+		const a = Number(ipv4[1]);
+		const b = Number(ipv4[2]);
+		if (a === 0 || a === 10 || a === 127 || a >= 224) return true;
+		if (a === 169 && b === 254) return true;
+		if (a === 172 && b >= 16 && b <= 31) return true;
+		if (a === 192 && b === 168) return true;
+	}
+	return false;
+}
+
+/** Timeout for a single remote-image fetch. */
+export const FETCH_IMAGE_TIMEOUT_MS = 10_000;
+
+/**
+ * Fetch a remote image over HTTPS for ingestion, with SSRF guards: https-only, no redirects
+ * (a redirect could point at an internal host), and a literal-host denylist for loopback/private/
+ * link-local/metadata addresses. Caps the response at `maxBytes`. Returns the bytes + content-type
+ * or a human-readable error.
+ */
+export async function fetchRemoteImage(
+	url: string,
+	maxBytes: number
+): Promise<{ ok: true; bytes: Uint8Array; contentType: string | null } | { ok: false; error: string }> {
+	let parsed: URL;
+	try {
+		parsed = new URL(url);
+	} catch {
+		return { ok: false, error: 'URL is not valid.' };
+	}
+	if (parsed.protocol !== 'https:') return { ok: false, error: 'Only https:// URLs are allowed.' };
+	if (isBlockedFetchHost(parsed.hostname)) return { ok: false, error: 'That host is not allowed.' };
+
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), FETCH_IMAGE_TIMEOUT_MS);
+	try {
+		const response = await fetch(parsed.toString(), {
+			method: 'GET',
+			redirect: 'error',
+			signal: controller.signal,
+			headers: { accept: 'image/*' }
+		});
+		if (!response.ok) return { ok: false, error: `Fetch failed with HTTP ${response.status}.` };
+		const declared = response.headers.get('content-length');
+		if (declared && Number(declared) > maxBytes) return { ok: false, error: 'Remote image exceeds the size limit.' };
+		const bytes = new Uint8Array(await response.arrayBuffer());
+		if (bytes.byteLength > maxBytes) return { ok: false, error: 'Remote image exceeds the size limit.' };
+		return { ok: true, bytes, contentType: response.headers.get('content-type') };
+	} catch (err) {
+		const aborted = err instanceof Error && err.name === 'AbortError';
+		return { ok: false, error: aborted ? 'Fetch timed out.' : 'Could not fetch the URL.' };
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
 export interface StoredImage {
 	/** Content-addressed filename to embed as `<img src="...">` in a card field. */
 	filename: string;
