@@ -124,6 +124,14 @@ export function imageExtensionFromUrl(url: string, contentType: string | null): 
 	return null;
 }
 
+/**
+ * Denylist of literal hostnames/IP literals that must never be fetched. NOTE: this only inspects the
+ * literal host in the URL — it does NOT resolve DNS, so a public hostname that resolves to a private
+ * IP (DNS-rebinding SSRF) is not caught here. On Cloudflare Workers that vector is largely moot:
+ * `fetch` egresses through Cloudflare's edge, not a local/VPC network, and there is no link-local
+ * metadata service to reach. If this code is ever ported to Node/a server with private-network reach,
+ * add post-resolution IP checks (or an allowlist) before relying on it.
+ */
 function isBlockedFetchHost(hostname: string): boolean {
 	const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
 	if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return true;

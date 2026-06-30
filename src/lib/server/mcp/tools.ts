@@ -556,7 +556,13 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 					message: 'content_base64 is not valid base64 (it may have been truncated in transit). Re-encode the file and retry, or use attach_image_from_url.'
 				};
 			}
-			return finalizeImage(filename, bytes, expected, MCP_MAX_IMAGE_BYTES);
+			const result = await finalizeImage(filename, bytes, expected, MCP_MAX_IMAGE_BYTES);
+			if (!result.ok && result.code === 'IMAGE_TOO_LARGE') {
+				// The base64 path caps lower than the out-of-band paths; point the caller there
+				// rather than letting them assume the image is too big for AnkiTalk entirely.
+				return { ...result, message: `${result.message} For larger files, use create_image_upload (direct curl upload) or attach_image_from_url instead.` };
+			}
+			return result;
 		};
 
 		server.registerTool(
@@ -724,7 +730,7 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 			{
 				title: 'Get a direct image-upload link',
 				description:
-					'Mint a short-lived URL to upload local images directly over HTTPS, without hosting them anywhere or pasting base64. Best for migrating many local files. Returns an `upload_url` and a ready-to-run `curl_example`: PUT each file as the raw body with a `?filename=` matching its type, e.g. `curl -sS -X PUT "<upload_url>?filename=slide1.png" --data-binary @slide1.png`. The PUT responds with JSON `{ filename, content_type, size_bytes }`; embed that `filename` as `<img src="FILENAME">` in note fields. One link can upload several files until it expires.',
+					'Mint a short-lived URL to upload local images directly over HTTPS, without hosting them anywhere or pasting base64. Best for migrating many local files. Returns an `upload_url` and a ready-to-run `curl_example`: PUT each file as the raw body with a `?filename=` matching its type, e.g. `curl -sS -X PUT "<upload_url>?filename=slide1.png" --data-binary @slide1.png`. The PUT responds with JSON `{ filename, content_type, size_bytes }`; embed that `filename` as `<img src="FILENAME">` in note fields. One link can upload several files until it expires. Upload files one at a time, not in parallel, so the per-link use counter stays accurate. The link is propagated across regions, so the very first PUT can briefly return 401 "invalid or expired" — if that happens, wait ~2 seconds and retry the same PUT once before minting a new link.',
 				inputSchema: {},
 				outputSchema: {
 					upload_url: z.string(),
