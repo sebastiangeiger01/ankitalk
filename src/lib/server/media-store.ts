@@ -1,7 +1,8 @@
 /**
- * Shared image-media storage used by both the web upload endpoint (`POST /api/media`) and the
- * MCP `attach_image` tool, so human- and agent-authored cards land in exactly the same place
- * with the same validation and sanitization.
+ * Shared image-media storage used by the web upload endpoint (`POST /api/media`), the direct
+ * capability-token upload (`PUT /api/media/upload/[token]`), and the MCP `attach_image_from_url`
+ * tool — so human- and agent-authored cards land in exactly the same place with the same
+ * validation and sanitization.
  *
  * Files are content-addressed: the stored filename is `sha256(sanitized bytes).ext`. That makes
  * uploads idempotent (the same image re-uploaded reuses the same key) and avoids one card's
@@ -53,31 +54,6 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 	return Array.from(new Uint8Array(digest))
 		.map((b) => b.toString(16).padStart(2, '0'))
 		.join('');
-}
-
-/**
- * Decode a base64 image payload to bytes, tolerantly: strips a `data:` URL prefix and whitespace,
- * accepts the URL-safe alphabet (`-`/`_`), and re-pads. Returns null if the string still isn't
- * valid base64 (e.g. truncated in transit), so callers can surface a clear error.
- */
-export function decodeBase64Image(value: string): Uint8Array | null {
-	let s = value
-		.replace(/^data:[^;,]*;base64,/, '')
-		.replace(/\s+/g, '')
-		.replace(/-/g, '+')
-		.replace(/_/g, '/')
-		.replace(/=+$/, '');
-	const remainder = s.length % 4;
-	if (remainder === 1) return null; // never a valid base64 length
-	if (remainder !== 0) s += '='.repeat(4 - remainder);
-	try {
-		const binary = atob(s);
-		const bytes = new Uint8Array(binary.length);
-		for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-		return bytes;
-	} catch {
-		return null;
-	}
 }
 
 /**

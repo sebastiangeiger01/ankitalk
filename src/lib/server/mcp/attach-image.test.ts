@@ -5,26 +5,23 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createMcpServer, type McpToolContext } from './tools';
 import type { McpScope } from './auth';
 
-// audited() writes an audit row via ctx.db; a no-op prepare/bind/run chain is all attach_image needs.
+// audited() writes an audit row via ctx.db; a no-op prepare/bind/run chain is all these tools need.
 const fakeDb = {
 	prepare: () => ({ bind: () => ({ run: () => Promise.resolve() }) })
 } as unknown as D1Database;
 
-function fakeMedia() {
-	const store = new Map<string, Uint8Array>();
-	const media = {
-		put(key: string, value: ArrayBuffer | Uint8Array) {
-			store.set(key, value instanceof Uint8Array ? value : new Uint8Array(value));
-			return Promise.resolve();
-		}
-	} as unknown as R2Bucket;
-	return { media, store };
-}
+const fakeMedia = {} as unknown as R2Bucket;
 
-const fakeKv = {
-	put: () => Promise.resolve(),
-	get: () => Promise.resolve(null)
-} as unknown as KVNamespace;
+function fakeKv() {
+	const store = new Map<string, string>();
+	return {
+		put: (k: string, v: string) => {
+			store.set(k, v);
+			return Promise.resolve();
+		},
+		get: (k: string) => Promise.resolve(store.get(k) ?? null)
+	} as unknown as KVNamespace;
+}
 
 async function connectedClient(ctx: McpToolContext): Promise<Client> {
 	const server = createMcpServer(ctx);
@@ -34,76 +31,55 @@ async function connectedClient(ctx: McpToolContext): Promise<Client> {
 	return client;
 }
 
-describe('attach_image MCP tool', () => {
-	it('returns a result matching its output schema (filename + content_type + bytes)', async () => {
-		const { media } = fakeMedia();
-		const ctx: McpToolContext = {
-			db: fakeDb,
-			userId: 'user-1',
-			tokenId: 'token-1',
-			scopes: new Set<McpScope>(['cards:write']),
-			media,
-			kv: fakeKv,
-			origin: 'https://test.local',
-			waitUntil: () => {}
-		};
-		const client = await connectedClient(ctx);
+function ctx(): McpToolContext {
+	return {
+		db: fakeDb,
+		userId: 'user-1',
+		tokenId: 'token-1',
+		scopes: new Set<McpScope>(['cards:write']),
+		media: fakeMedia,
+		kv: fakeKv(),
+		origin: 'https://test.local',
+		waitUntil: () => {}
+	};
+}
 
-		// The SDK validates structuredContent against the tool's output schema, which is exactly
-		// what caught the original content_type mismatch.
-		const result = await client.callTool({
-			name: 'attach_image',
-			arguments: { filename: 'pixel.png', content_base64: 'AAAA' }
-		});
+describe('image-ingestion tool surface', () => {
+	it('exposes only the out-of-band upload tools (base64 attach tools were removed)', async () => {
+		const client = await connectedClient(ctx());
+		const names = (await client.listTools()).tools.map((t) => t.name);
 
-		expect(result.isError).toBeFalsy();
-		const structured = result.structuredContent as { filename: string; content_type: string; size_bytes: number };
-		expect(typeof structured.content_type).toBe('string');
-		expect(structured.content_type).toBe('image/png');
-		expect(structured.filename).toMatch(/^[0-9a-f]{64}\.png$/);
-		expect(structured.size_bytes).toBeGreaterThan(0);
+		expect(names).toContain('attach_image_from_url');
+		expect(names).toContain('create_image_upload');
+		expect(names).not.toContain('attach_image');
+		expect(names).not.toContain('attach_images');
 
 		await client.close();
 	});
 });
 
-describe('attach_images MCP tool', () => {
-	const ctx = (media: R2Bucket): McpToolContext => ({
-		db: fakeDb,
-		userId: 'user-1',
-		tokenId: 'token-1',
-		scopes: new Set<McpScope>(['cards:write']),
-		media,
-		kv: fakeKv,
-		origin: 'https://test.local',
-		waitUntil: () => {}
-	});
+describe('create_image_upload MCP tool', () => {
+	it('returns a result matching its output schema', async () => {
+		const client = await connectedClient(ctx());
 
-	it('uploads a batch and reports per-item integrity failures instead of failing the call', async () => {
-		const { media } = fakeMedia();
-		const client = await connectedClient(ctx(media));
-
-		const result = await client.callTool({
-			name: 'attach_images',
-			arguments: {
-				images: [
-					{ filename: 'a.png', content_base64: 'AAAA' },
-					// size_bytes intentionally wrong → flagged as a transit-corruption mismatch.
-					{ filename: 'b.png', content_base64: 'AAAA', size_bytes: 999 }
-				]
-			}
-		});
+		// The SDK validates structuredContent against the tool's output schema — the same check that
+		// originally caught the attach_image content_type mismatch, kept here on a surviving tool.
+		const result = await client.callTool({ name: 'create_image_upload', arguments: {} });
 
 		expect(result.isError).toBeFalsy();
 		const out = result.structuredContent as {
-			uploaded: number;
-			failed: number;
-			results: Array<{ source_filename: string; filename?: string; error?: string }>;
+			upload_url: string;
+			method: string;
+			curl_example: string;
+			max_uploads: number;
+			max_bytes: number;
+			accepts: string[];
 		};
-		expect(out.uploaded).toBe(1);
-		expect(out.failed).toBe(1);
-		expect(out.results[0].filename).toMatch(/^[0-9a-f]{64}\.png$/);
-		expect(out.results[1].error).toMatch(/IMAGE_INTEGRITY_MISMATCH/);
+		expect(out.method).toBe('PUT');
+		expect(out.upload_url).toMatch(/^https:\/\/test\.local\/api\/media\/upload\/[0-9a-f]+$/);
+		expect(out.curl_example).toContain('--data-binary');
+		expect(out.max_uploads).toBeGreaterThan(0);
+		expect(out.accepts).toContain('png');
 
 		await client.close();
 	});
