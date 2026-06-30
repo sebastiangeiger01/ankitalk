@@ -526,11 +526,11 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 		};
 
 		server.registerTool(
-			'attach_image_from_url',
+			'add_image_from_url',
 			{
-				title: 'Attach an image from a URL',
+				title: 'Add an image from a URL',
 				description:
-					'Fetch an image from an https:// URL server-side and get back a filename to embed as `<img src="FILENAME">`. The image bytes travel out-of-band over HTTPS rather than through the tool call, so nothing is truncated or burns context. The URL must be publicly reachable (no localhost/private hosts), https only, and resolve to a supported image type (PNG, JPG, GIF, WebP, BMP, SVG; SVG is sanitized). Content-addressed like the other attach tools. Use the returned filename in the field HTML you pass to create_notes or update_note_fields.',
+					'Fetch an image from an https:// URL server-side and get back a filename to embed as `<img src="FILENAME">`. The image bytes travel out-of-band over HTTPS rather than through the tool call, so nothing is truncated or burns context. The URL must be publicly reachable (no localhost/private hosts), https only, and resolve to a supported image type (PNG, JPG, GIF, WebP, BMP, SVG; SVG is sanitized). Content-addressed. Use the returned filename in the field HTML you pass to create_notes or update_note_fields. Note: for a diagram you generate yourself, you do not need this — inline `<svg>…</svg>` directly in the field HTML (it is sanitized on save). Use this only for raster images or art you cannot author as SVG. For local files, use create_image_upload_link instead.',
 				inputSchema: {
 					url: z.string().url().max(2_000).describe('Public https:// URL of the image to fetch.'),
 					sha256: z
@@ -555,7 +555,7 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
 			},
 			async ({ url, sha256, size_bytes }) =>
-				audited(ctx, 'attach_image_from_url', async () => {
+				audited(ctx, 'add_image_from_url', async () => {
 					const fetched = await fetchRemoteImage(url, IMPORT_LIMITS.maxMediaFileBytes);
 					if (!fetched.ok) return errorResult('IMAGE_FETCH_FAILED', fetched.error);
 					const ext = imageExtensionFromUrl(url, fetched.contentType);
@@ -579,11 +579,11 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 		);
 
 		server.registerTool(
-			'create_image_upload',
+			'create_image_upload_link',
 			{
-				title: 'Get a direct image-upload link',
+				title: 'Create a direct image-upload link',
 				description:
-					'Mint a short-lived URL to upload local images directly over HTTPS, without hosting them anywhere or pasting base64. Best for migrating many local files. Returns an `upload_url` and a ready-to-run `curl_example`: PUT each file as the raw body with a `?filename=` matching its type, e.g. `curl -sS -X PUT "<upload_url>?filename=slide1.png" --data-binary @slide1.png`. The PUT responds with JSON `{ filename, content_type, size_bytes }`; embed that `filename` as `<img src="FILENAME">` in note fields. One link can upload several files until it expires. Upload files one at a time, not in parallel, so the per-link use counter stays accurate. The link is propagated across regions, so the very first PUT can briefly return 401 "invalid or expired" — if that happens, wait ~2 seconds and retry the same PUT once before minting a new link.',
+					'Mint a short-lived URL to upload local image files directly over HTTPS, without hosting them anywhere. Best for many local files (e.g. lecture slides). Returns an `upload_url` and a ready-to-run `curl_example`: PUT each file as the raw body with a `?filename=` matching its type, e.g. `curl -sS -X PUT "<upload_url>?filename=slide1.png" --data-binary @slide1.png`. The PUT responds with JSON `{ filename, content_type, size_bytes }`; embed that `filename` as `<img src="FILENAME">` in note fields. One link can upload several files until it expires. Upload files one at a time, not in parallel, so the per-link use counter stays accurate. The link is propagated across regions, so the very first PUT can briefly return 401 "invalid or expired" — if that happens, wait ~2 seconds and retry the same PUT once before minting a new link. (For a diagram you generate yourself, skip the upload and inline `<svg>…</svg>` directly in the field HTML; for an image already on the public web, use add_image_from_url.)',
 				inputSchema: {},
 				outputSchema: {
 					upload_url: z.string(),
@@ -597,7 +597,7 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
 			},
 			async () =>
-				audited(ctx, 'create_image_upload', async () => {
+				audited(ctx, 'create_image_upload_link', async () => {
 					const token = `${newId()}${newId()}`.replace(/-/g, '');
 					const meta = await mintUploadToken(ctx.kv, ctx.userId, token);
 					const uploadUrl = `${ctx.origin}/api/media/upload/${token}`;

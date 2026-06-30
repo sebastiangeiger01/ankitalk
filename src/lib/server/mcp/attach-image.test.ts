@@ -49,8 +49,8 @@ describe('image-ingestion tool surface', () => {
 		const client = await connectedClient(ctx());
 		const names = (await client.listTools()).tools.map((t) => t.name);
 
-		expect(names).toContain('attach_image_from_url');
-		expect(names).toContain('create_image_upload');
+		expect(names).toContain('add_image_from_url');
+		expect(names).toContain('create_image_upload_link');
 		expect(names).not.toContain('attach_image');
 		expect(names).not.toContain('attach_images');
 
@@ -58,13 +58,13 @@ describe('image-ingestion tool surface', () => {
 	});
 });
 
-describe('create_image_upload MCP tool', () => {
+describe('create_image_upload_link MCP tool', () => {
 	it('returns a result matching its output schema', async () => {
 		const client = await connectedClient(ctx());
 
 		// The SDK validates structuredContent against the tool's output schema — the same check that
 		// originally caught the attach_image content_type mismatch, kept here on a surviving tool.
-		const result = await client.callTool({ name: 'create_image_upload', arguments: {} });
+		const result = await client.callTool({ name: 'create_image_upload_link', arguments: {} });
 
 		expect(result.isError).toBeFalsy();
 		const out = result.structuredContent as {

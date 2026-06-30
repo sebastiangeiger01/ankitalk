@@ -1,6 +1,6 @@
 /**
  * Shared image-media storage used by the web upload endpoint (`POST /api/media`), the direct
- * capability-token upload (`PUT /api/media/upload/[token]`), and the MCP `attach_image_from_url`
+ * capability-token upload (`PUT /api/media/upload/[token]`), and the MCP `add_image_from_url`
  * tool — so human- and agent-authored cards land in exactly the same place with the same
  * validation and sanitization.
  *
