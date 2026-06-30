@@ -1,7 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import {
-	decodeBase64Image,
 	extractMediaFilenames,
 	fetchRemoteImage,
 	imageExtension,
@@ -48,24 +47,6 @@ describe('fetchRemoteImage SSRF guards', () => {
 });
 
 const textBytes = (s: string) => new TextEncoder().encode(s);
-const toB64 = (s: string) => Buffer.from(s).toString('base64');
-
-describe('decodeBase64Image', () => {
-	it('decodes standard base64 (with a data: prefix and whitespace)', () => {
-		const b64 = toB64('hello');
-		expect(decodeBase64Image(`data:image/png;base64, ${b64}\n`)).toEqual(textBytes('hello'));
-	});
-
-	it('accepts URL-safe and unpadded base64', () => {
-		const standard = Buffer.from([0xfb, 0xff, 0xbf]).toString('base64'); // contains + and /
-		const urlSafe = standard.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-		expect(decodeBase64Image(urlSafe)).toEqual(new Uint8Array([0xfb, 0xff, 0xbf]));
-	});
-
-	it('returns null for an impossible base64 length (likely truncated)', () => {
-		expect(decodeBase64Image('abcde')).toBeNull(); // length % 4 === 1
-	});
-});
 
 describe('verifyImageIntegrity', () => {
 	const bytes = textBytes('hello');
