@@ -5,7 +5,7 @@ import { consumeUploadToken } from '$lib/server/media-upload-token';
 import type { RequestHandler } from './$types';
 
 /**
- * Out-of-band image upload. The agent obtains the URL+token from the `create_image_upload` MCP
+ * Out-of-band image upload. The agent obtains the URL+token from the `create_image_upload_link` MCP
  * tool, then PUTs the raw image bytes here (e.g. `curl --data-binary @file`). No session cookie or
  * bearer is needed — the path token is the capability. The `filename` query parameter supplies the
  * extension (which selects the raster-vs-SVG sanitize branch); the stored name is content-addressed.

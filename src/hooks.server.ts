@@ -24,6 +24,17 @@ function isPublicMcpEndpoint(pathname: string): boolean {
 }
 
 /**
+ * Direct media-upload endpoint. The unguessable capability token in the URL path IS the
+ * credential — it's minted by an authenticated MCP call and validated in the route handler
+ * (`consumeUploadToken`), not via the Hanko cookie. So, like the MCP endpoints, it must bypass
+ * both the login redirect (a `curl` upload carries no session) and the cookie-CSRF guard (the
+ * route reads no cookie, so a forged cross-site request gains nothing without the path token).
+ */
+function isCapabilityUploadEndpoint(pathname: string): boolean {
+	return pathname.startsWith('/api/media/upload/');
+}
+
+/**
  * Same-origin CSRF guard. We disable SvelteKit's built-in `csrf.checkOrigin` (it has no
  * per-route opt-out and would block the legitimate cross-origin form POST to our OAuth token
  * endpoint), so this hook IS our CSRF protection. It covers every mutating request — both
@@ -97,6 +108,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 	// credential (or PKCE), not the browser's Hanko cookie. Token-management routes and the
 	// consent page are intentionally excluded so they stay protected browser surfaces.
 	const isRemoteMcpEndpoint = isPublicMcpEndpoint(event.url.pathname);
+	// Token-authed endpoints (MCP bearer/PKCE, or a capability token in the path) don't use the
+	// Hanko cookie, so they skip the login redirect and the cookie-CSRF guard alike.
+	const isTokenAuthedEndpoint = isRemoteMcpEndpoint || isCapabilityUploadEndpoint(event.url.pathname);
 
 	const hankoApiUrl = event.platform?.env.HANKO_API_URL;
 	if (!hankoApiUrl) {
@@ -144,7 +158,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 	// Protect non-public paths
 	const isPublic = PUBLIC_PATHS.some((p) => event.url.pathname.startsWith(p));
-	if (!hankoId && !isPublic && !isRemoteMcpEndpoint) {
+	if (!hankoId && !isPublic && !isTokenAuthedEndpoint) {
 		// Preserve where the user was headed (e.g. the OAuth consent page) so login can return
 		// them there. Only same-origin relative paths are ever round-tripped (see login page).
 		const target = event.url.pathname + event.url.search;
@@ -152,7 +166,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 		throw redirect(303, dest);
 	}
 
-	if (!isRemoteMcpEndpoint) enforceSameOrigin(event);
+	if (!isTokenAuthedEndpoint) enforceSameOrigin(event);
 
 	const response = await resolve(event);
 

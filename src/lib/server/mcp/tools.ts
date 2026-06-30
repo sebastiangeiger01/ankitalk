@@ -24,7 +24,6 @@ import {
 } from '$lib/server/card-editing';
 import {
 	IMAGE_EXTENSIONS,
-	decodeBase64Image,
 	fetchRemoteImage,
 	imageExtensionFromUrl,
 	isImageFilename,
@@ -52,9 +51,6 @@ type ToolResult = {
 	structuredContent?: Record<string, unknown>;
 	isError?: boolean;
 };
-
-/** Max decoded image size accepted over MCP (base64 inflates payloads, so keep tool calls sane). */
-const MCP_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 function jsonResult(value: Record<string, unknown>): ToolResult {
 	return {
@@ -506,25 +502,12 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 				})
 		);
 
-		const imageSha256 = z
-			.string()
-			.regex(/^[0-9a-fA-F]{64}$/)
-			.optional()
-			.describe('Optional SHA-256 (hex) of the original file. If given, the server verifies the upload survived transit intact.');
-		const imageSizeBytes = z
-			.number()
-			.int()
-			.positive()
-			.max(MCP_MAX_IMAGE_BYTES)
-			.optional()
-			.describe('Optional exact byte size of the original file. If given, a truncated upload is rejected with a clear error.');
-
 		type ImageResult =
 			| { ok: true; stored: { filename: string; contentType: string; bytes: number } }
 			| { ok: false; code: string; message: string };
 
-		// Size-check → optional integrity-check → sanitize+store. Shared tail for every ingestion path
-		// (base64 single/batch, remote URL) so they all report identical, actionable errors.
+		// Size-check → optional integrity-check → sanitize+store. Used by the URL-fetch ingestion
+		// path so its errors stay consistent and actionable.
 		const finalizeImage = async (
 			filename: string,
 			bytes: Uint8Array,
@@ -542,142 +525,12 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 			return { ok: true, stored: await storeUserImage(ctx.media, ctx.userId, filename, bytes) };
 		};
 
-		// Decode base64 → finalize, shared by attach_image and attach_images.
-		const processOneImage = async (
-			filename: string,
-			contentBase64: string,
-			expected: { sha256?: string; sizeBytes?: number }
-		): Promise<ImageResult> => {
-			const bytes = decodeBase64Image(contentBase64);
-			if (!bytes) {
-				return {
-					ok: false,
-					code: 'BAD_IMAGE_DATA',
-					message: 'content_base64 is not valid base64 (it may have been truncated in transit). Re-encode the file and retry, or use attach_image_from_url.'
-				};
-			}
-			const result = await finalizeImage(filename, bytes, expected, MCP_MAX_IMAGE_BYTES);
-			if (!result.ok && result.code === 'IMAGE_TOO_LARGE') {
-				// The base64 path caps lower than the out-of-band paths; point the caller there
-				// rather than letting them assume the image is too big for AnkiTalk entirely.
-				return { ...result, message: `${result.message} For larger files, use create_image_upload (direct curl upload) or attach_image_from_url instead.` };
-			}
-			return result;
-		};
-
 		server.registerTool(
-			'attach_image',
+			'add_image_from_url',
 			{
-				title: 'Attach an image for a card',
+				title: 'Add an image from a URL',
 				description:
-					'Upload an image (PNG, JPG, GIF, WebP, BMP, or SVG) and get back a filename to embed in a note field as `<img src="FILENAME">`. Pass the raw bytes base64-encoded in `content_base64` and a `filename` whose extension sets the type (e.g. diagram.svg, figure.png). SVG is sanitized server-side. Uploads are content-addressed, so re-uploading the same image returns the same filename. For large images, also pass `sha256` and/or `size_bytes` of the original file so a payload corrupted in transit is rejected with a clear error instead of being stored truncated. Use the returned filename inside the field HTML you pass to create_notes or update_note_fields. To upload many images at once, use attach_images.',
-				inputSchema: {
-					filename: z
-						.string()
-						.trim()
-						.min(1)
-						.max(240)
-						.describe(`Source filename; only its extension is used. One of: ${IMAGE_EXTENSIONS.join(', ')}.`),
-					content_base64: z
-						.string()
-						.min(1)
-						.max(8_000_000)
-						.describe('The image bytes, base64-encoded (a data: URL prefix is accepted and stripped).'),
-					sha256: imageSha256,
-					size_bytes: imageSizeBytes
-				},
-				outputSchema: {
-					filename: z.string().describe('Embed as <img src="FILENAME"> in a note field.'),
-					content_type: z.string(),
-					size_bytes: z.number().int()
-				},
-				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
-			},
-			async ({ filename, content_base64, sha256, size_bytes }) =>
-				audited(ctx, 'attach_image', async () => {
-					const result = await processOneImage(filename, content_base64, { sha256, sizeBytes: size_bytes });
-					if (!result.ok) return errorResult(result.code, result.message);
-					return jsonResult({ filename: result.stored.filename, content_type: result.stored.contentType, size_bytes: result.stored.bytes });
-				})
-		);
-
-		server.registerTool(
-			'attach_images',
-			{
-				title: 'Attach several images for cards',
-				description:
-					'Upload up to 20 images in one call and get a filename for each, to embed as `<img src="FILENAME">`. Same rules as attach_image (content-addressed, SVG sanitized; optional per-image `sha256`/`size_bytes` integrity check). Each image is processed independently: results preserve input order and report a per-item `error` instead of failing the whole batch, so you can migrate many slide images in one pass.',
-				inputSchema: {
-					images: z
-						.array(
-							z.object({
-								filename: z
-									.string()
-									.trim()
-									.min(1)
-									.max(240)
-									.describe(`Source filename; only its extension is used. One of: ${IMAGE_EXTENSIONS.join(', ')}.`),
-								content_base64: z
-									.string()
-									.min(1)
-									.max(8_000_000)
-									.describe('Base64-encoded image bytes (a data: URL prefix is accepted and stripped).'),
-								sha256: imageSha256,
-								size_bytes: imageSizeBytes
-							})
-						)
-						.min(1)
-						.max(20)
-						.describe('The images to upload, in order.')
-				},
-				outputSchema: {
-					results: z.array(
-						z.object({
-							source_filename: z.string(),
-							filename: z.string().optional(),
-							content_type: z.string().optional(),
-							size_bytes: z.number().int().optional(),
-							error: z.string().optional()
-						})
-					),
-					uploaded: z.number().int(),
-					failed: z.number().int()
-				},
-				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
-			},
-			async ({ images }) =>
-				audited(ctx, 'attach_images', async () => {
-					const results: Array<Record<string, unknown>> = [];
-					let uploaded = 0;
-					let failed = 0;
-					for (const image of images) {
-						const result = await processOneImage(image.filename, image.content_base64, {
-							sha256: image.sha256,
-							sizeBytes: image.size_bytes
-						});
-						if (result.ok) {
-							results.push({
-								source_filename: image.filename,
-								filename: result.stored.filename,
-								content_type: result.stored.contentType,
-								size_bytes: result.stored.bytes
-							});
-							uploaded++;
-						} else {
-							results.push({ source_filename: image.filename, error: `${result.code}: ${result.message}` });
-							failed++;
-						}
-					}
-					return jsonResult({ results, uploaded, failed });
-				})
-		);
-
-		server.registerTool(
-			'attach_image_from_url',
-			{
-				title: 'Attach an image from a URL',
-				description:
-					'Fetch an image from an https:// URL server-side and get back a filename to embed as `<img src="FILENAME">`. Preferred over attach_image/attach_images for anything non-trivial: the bytes travel out-of-band over HTTPS instead of through the tool call, so nothing is truncated or burns context. The URL must be publicly reachable (no localhost/private hosts), https only, and resolve to a supported image type (PNG, JPG, GIF, WebP, BMP, SVG; SVG is sanitized). Content-addressed like the other attach tools. Use the returned filename in the field HTML you pass to create_notes or update_note_fields.',
+					'Fetch an image from an https:// URL server-side and get back a filename to embed as `<img src="FILENAME">`. The image bytes travel out-of-band over HTTPS rather than through the tool call, so nothing is truncated or burns context. The URL must be publicly reachable (no localhost/private hosts), https only, and resolve to a supported image type (PNG, JPG, GIF, WebP, BMP, SVG; SVG is sanitized). Content-addressed. Use the returned filename in the field HTML you pass to create_notes or update_note_fields. Note: for a diagram you generate yourself, you do not need this — inline `<svg>…</svg>` directly in the field HTML (it is sanitized on save). Use this only for raster images or art you cannot author as SVG. For local files, use create_image_upload_link instead.',
 				inputSchema: {
 					url: z.string().url().max(2_000).describe('Public https:// URL of the image to fetch.'),
 					sha256: z
@@ -702,7 +555,7 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
 			},
 			async ({ url, sha256, size_bytes }) =>
-				audited(ctx, 'attach_image_from_url', async () => {
+				audited(ctx, 'add_image_from_url', async () => {
 					const fetched = await fetchRemoteImage(url, IMPORT_LIMITS.maxMediaFileBytes);
 					if (!fetched.ok) return errorResult('IMAGE_FETCH_FAILED', fetched.error);
 					const ext = imageExtensionFromUrl(url, fetched.contentType);
@@ -726,11 +579,11 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 		);
 
 		server.registerTool(
-			'create_image_upload',
+			'create_image_upload_link',
 			{
-				title: 'Get a direct image-upload link',
+				title: 'Create a direct image-upload link',
 				description:
-					'Mint a short-lived URL to upload local images directly over HTTPS, without hosting them anywhere or pasting base64. Best for migrating many local files. Returns an `upload_url` and a ready-to-run `curl_example`: PUT each file as the raw body with a `?filename=` matching its type, e.g. `curl -sS -X PUT "<upload_url>?filename=slide1.png" --data-binary @slide1.png`. The PUT responds with JSON `{ filename, content_type, size_bytes }`; embed that `filename` as `<img src="FILENAME">` in note fields. One link can upload several files until it expires. Upload files one at a time, not in parallel, so the per-link use counter stays accurate. The link is propagated across regions, so the very first PUT can briefly return 401 "invalid or expired" — if that happens, wait ~2 seconds and retry the same PUT once before minting a new link.',
+					'Mint a short-lived URL to upload local image files directly over HTTPS, without hosting them anywhere. Best for many local files (e.g. lecture slides). Returns an `upload_url` and a ready-to-run `curl_example`: PUT each file as the raw body with a `?filename=` matching its type, e.g. `curl -sS -X PUT "<upload_url>?filename=slide1.png" --data-binary @slide1.png`. The PUT responds with JSON `{ filename, content_type, size_bytes }`; embed that `filename` as `<img src="FILENAME">` in note fields. One link can upload several files until it expires. Upload files one at a time, not in parallel, so the per-link use counter stays accurate. The link is propagated across regions, so the very first PUT can briefly return 401 "invalid or expired" — if that happens, wait ~2 seconds and retry the same PUT once before minting a new link. (For a diagram you generate yourself, skip the upload and inline `<svg>…</svg>` directly in the field HTML; for an image already on the public web, use add_image_from_url.)',
 				inputSchema: {},
 				outputSchema: {
 					upload_url: z.string(),
@@ -744,7 +597,7 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
 			},
 			async () =>
-				audited(ctx, 'create_image_upload', async () => {
+				audited(ctx, 'create_image_upload_link', async () => {
 					const token = `${newId()}${newId()}`.replace(/-/g, '');
 					const meta = await mintUploadToken(ctx.kv, ctx.userId, token);
 					const uploadUrl = `${ctx.origin}/api/media/upload/${token}`;
