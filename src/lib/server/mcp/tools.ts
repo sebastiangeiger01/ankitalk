@@ -32,6 +32,7 @@ import {
 	verifyImageIntegrity
 } from '$lib/server/media-store';
 import { validateDeckMedia, validateNoteMedia } from '$lib/server/media-validate';
+import { mintUploadToken } from '$lib/server/media-upload-token';
 import { IMPORT_LIMITS } from '$lib/sanitize';
 
 export interface McpToolContext {
@@ -40,6 +41,9 @@ export interface McpToolContext {
 	tokenId: string;
 	scopes: Set<McpScope>;
 	media: R2Bucket;
+	kv: KVNamespace;
+	/** Absolute origin of this request (e.g. https://ankitalk.app), for building upload URLs. */
+	origin: string;
 	waitUntil: (promise: Promise<unknown>) => void;
 }
 
@@ -711,6 +715,41 @@ export function createMcpServer(ctx: McpToolContext): McpServer {
 						content_type: result.stored.contentType,
 						size_bytes: result.stored.bytes,
 						source_url: url
+					});
+				})
+		);
+
+		server.registerTool(
+			'create_image_upload',
+			{
+				title: 'Get a direct image-upload link',
+				description:
+					'Mint a short-lived URL to upload local images directly over HTTPS, without hosting them anywhere or pasting base64. Best for migrating many local files. Returns an `upload_url` and a ready-to-run `curl_example`: PUT each file as the raw body with a `?filename=` matching its type, e.g. `curl -sS -X PUT "<upload_url>?filename=slide1.png" --data-binary @slide1.png`. The PUT responds with JSON `{ filename, content_type, size_bytes }`; embed that `filename` as `<img src="FILENAME">` in note fields. One link can upload several files until it expires.',
+				inputSchema: {},
+				outputSchema: {
+					upload_url: z.string(),
+					method: z.string(),
+					curl_example: z.string(),
+					expires_at: z.string(),
+					max_uploads: z.number().int(),
+					max_bytes: z.number().int(),
+					accepts: z.array(z.string())
+				},
+				annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+			},
+			async () =>
+				audited(ctx, 'create_image_upload', async () => {
+					const token = `${newId()}${newId()}`.replace(/-/g, '');
+					const meta = await mintUploadToken(ctx.kv, ctx.userId, token);
+					const uploadUrl = `${ctx.origin}/api/media/upload/${token}`;
+					return jsonResult({
+						upload_url: uploadUrl,
+						method: 'PUT',
+						curl_example: `curl -sS -X PUT "${uploadUrl}?filename=slide1.png" --data-binary @slide1.png`,
+						expires_at: new Date(meta.expiresAt).toISOString(),
+						max_uploads: meta.maxUses,
+						max_bytes: IMPORT_LIMITS.maxMediaFileBytes,
+						accepts: [...IMAGE_EXTENSIONS]
 					});
 				})
 		);

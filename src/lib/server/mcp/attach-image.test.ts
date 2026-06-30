@@ -21,6 +21,11 @@ function fakeMedia() {
 	return { media, store };
 }
 
+const fakeKv = {
+	put: () => Promise.resolve(),
+	get: () => Promise.resolve(null)
+} as unknown as KVNamespace;
+
 async function connectedClient(ctx: McpToolContext): Promise<Client> {
 	const server = createMcpServer(ctx);
 	const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -38,6 +43,8 @@ describe('attach_image MCP tool', () => {
 			tokenId: 'token-1',
 			scopes: new Set<McpScope>(['cards:write']),
 			media,
+			kv: fakeKv,
+			origin: 'https://test.local',
 			waitUntil: () => {}
 		};
 		const client = await connectedClient(ctx);
@@ -67,6 +74,8 @@ describe('attach_images MCP tool', () => {
 		tokenId: 'token-1',
 		scopes: new Set<McpScope>(['cards:write']),
 		media,
+		kv: fakeKv,
+		origin: 'https://test.local',
 		waitUntil: () => {}
 	});
 
