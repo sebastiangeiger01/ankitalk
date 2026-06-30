@@ -1,6 +1,90 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { extractMediaFilenames, imageExtension, isImageFilename, storeUserImage } from './media-store';
+import {
+	decodeBase64Image,
+	extractMediaFilenames,
+	fetchRemoteImage,
+	imageExtension,
+	imageExtensionFromUrl,
+	isImageFilename,
+	storeUserImage,
+	verifyImageIntegrity
+} from './media-store';
+
+describe('imageExtensionFromUrl', () => {
+	it('prefers the URL path extension', () => {
+		expect(imageExtensionFromUrl('https://x.com/a/b/figure.PNG?v=2', 'image/jpeg')).toBe('png');
+	});
+
+	it('falls back to the content-type when the path has no usable extension', () => {
+		expect(imageExtensionFromUrl('https://x.com/download', 'image/svg+xml; charset=utf-8')).toBe('svg');
+	});
+
+	it('returns null when neither yields a supported type', () => {
+		expect(imageExtensionFromUrl('https://x.com/download', 'application/pdf')).toBeNull();
+	});
+});
+
+describe('fetchRemoteImage SSRF guards', () => {
+	it('rejects non-https URLs without fetching', async () => {
+		expect(await fetchRemoteImage('http://example.com/a.png', 1000)).toEqual({ ok: false, error: 'Only https:// URLs are allowed.' });
+	});
+
+	it('rejects loopback, private, and metadata hosts', async () => {
+		for (const url of [
+			'https://localhost/a.png',
+			'https://127.0.0.1/a.png',
+			'https://10.0.0.5/a.png',
+			'https://192.168.1.10/a.png',
+			'https://169.254.169.254/latest/meta-data'
+		]) {
+			expect(await fetchRemoteImage(url, 1000)).toEqual({ ok: false, error: 'That host is not allowed.' });
+		}
+	});
+
+	it('rejects a malformed URL', async () => {
+		expect(await fetchRemoteImage('not a url', 1000)).toEqual({ ok: false, error: 'URL is not valid.' });
+	});
+});
+
+const textBytes = (s: string) => new TextEncoder().encode(s);
+const toB64 = (s: string) => Buffer.from(s).toString('base64');
+
+describe('decodeBase64Image', () => {
+	it('decodes standard base64 (with a data: prefix and whitespace)', () => {
+		const b64 = toB64('hello');
+		expect(decodeBase64Image(`data:image/png;base64, ${b64}\n`)).toEqual(textBytes('hello'));
+	});
+
+	it('accepts URL-safe and unpadded base64', () => {
+		const standard = Buffer.from([0xfb, 0xff, 0xbf]).toString('base64'); // contains + and /
+		const urlSafe = standard.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+		expect(decodeBase64Image(urlSafe)).toEqual(new Uint8Array([0xfb, 0xff, 0xbf]));
+	});
+
+	it('returns null for an impossible base64 length (likely truncated)', () => {
+		expect(decodeBase64Image('abcde')).toBeNull(); // length % 4 === 1
+	});
+});
+
+describe('verifyImageIntegrity', () => {
+	const bytes = textBytes('hello');
+
+	it('passes when size and sha256 match', async () => {
+		const sha = '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824';
+		expect(await verifyImageIntegrity(bytes, { sizeBytes: 5, sha256: sha })).toBeNull();
+	});
+
+	it('reports a size mismatch (truncation) clearly', async () => {
+		const reason = await verifyImageIntegrity(bytes, { sizeBytes: 999 });
+		expect(reason).toMatch(/decoded 5 bytes but expected 999/);
+	});
+
+	it('reports a checksum mismatch', async () => {
+		const reason = await verifyImageIntegrity(bytes, { sha256: 'f'.repeat(64) });
+		expect(reason).toMatch(/sha256 mismatch/);
+	});
+});
 
 describe('extractMediaFilenames', () => {
 	it('pulls bare filenames from img/audio/source tags', () => {
