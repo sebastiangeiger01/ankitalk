@@ -172,6 +172,17 @@ export const en: Record<string, string> = {
 	'appSettings.prepareAudioAheadDesc': 'Generates upcoming card audio before you play it so reviews feel faster. This can use credits for cards you may not hear.',
 	'appSettings.dashboard': 'Dashboard',
 
+	// Settings section navigation (short pill labels)
+	'settings.nav.label': 'Settings sections',
+	'settings.nav.language': 'Language',
+	'settings.nav.keys': 'Keys',
+	'settings.nav.audio': 'Audio',
+	'settings.nav.tutor': 'Tutor',
+	'settings.nav.mcp': 'MCP',
+	'settings.nav.usage': 'Usage',
+	'settings.nav.account': 'Account',
+	'settings.account.title': 'Account',
+
 	// Voice provider
 	'settings.voice.title': 'Voice provider',
 	'settings.voice.desc': 'Choose which service speaks cards and listens for review commands.',
@@ -185,11 +196,9 @@ export const en: Record<string, string> = {
 	'settings.voice.commandLanguage.auto': 'Auto',
 	'settings.voice.commandLanguage.en': 'English',
 	'settings.voice.commandLanguage.de': 'German',
-	'settings.voice.saved': 'Voice settings saved',
-	'settings.voice.saveFailed': 'Failed to save voice settings',
 
 	// ElevenLabs voice studio
-	'settings.elevenlabs.needKey': 'Add your ElevenLabs API key below to pick a voice, choose a model and see your credit balance.',
+	'settings.elevenlabs.needKey': 'Add your ElevenLabs API key in the API Keys section above to pick a voice, choose a model and see your credit balance.',
 	'settings.elevenlabs.credits': 'Credit balance',
 	'settings.elevenlabs.creditsError': 'Could not load your credit balance — your ElevenLabs key may be missing the “User” (Read) permission.',
 	'settings.elevenlabs.creditsUsed': '{used} / {limit} characters used',
@@ -218,6 +227,10 @@ export const en: Record<string, string> = {
 	'settings.elevenlabs.retry': 'Retry',
 	'settings.elevenlabs.searchVoices': 'Search by name or voice ID…',
 	'settings.elevenlabs.preview': 'Preview voice',
+	'settings.elevenlabs.previewBtn': 'Preview',
+	'settings.elevenlabs.previewStop': 'Stop',
+	'settings.elevenlabs.allCategories': 'All',
+	'settings.elevenlabs.categoryFilter': 'Filter voices by category',
 	'settings.elevenlabs.noVoices': 'No voices match your search.',
 	'settings.elevenlabs.tuning': 'Advanced voice tuning',
 	'settings.elevenlabs.speed': 'Speed',
@@ -289,13 +302,17 @@ export const en: Record<string, string> = {
 	'settings.ttsCache.pinned': '{count} kept until an exam date.',
 	'settings.ttsCache.hitRate': 'Cache hit rate: {pct}%',
 	'settings.ttsCache.saved': '~{chars} characters served from cache',
-	'settings.ttsCache.showRecent': 'Show recent requests',
-	'settings.ttsCache.hideRecent': 'Hide recent requests',
+	'settings.ttsCache.diagnostics': 'Recent requests (diagnostics)',
 	'settings.ttsCache.loadingRecent': 'Loading recent requests...',
 	'settings.ttsCache.colWhen': 'When',
 	'settings.ttsCache.colStatus': 'Result',
 	'settings.ttsCache.colChars': 'Chars',
-	'settings.ttsCache.monitorNote': 'Recent voice requests (last 14 days). edge-hit / r2-hit / inflight-hit were served without a provider call; cache-only-miss was not billed.',
+	'settings.ttsCache.status.hit': 'Served from cache',
+	'settings.ttsCache.status.generated': 'Newly generated',
+	'settings.ttsCache.status.noStore': 'Generated (cache unavailable)',
+	'settings.ttsCache.status.storeFailed': 'Generated, failed to store',
+	'settings.ttsCache.status.skipped': 'Not in cache (not billed)',
+	'settings.ttsCache.monitorNote': 'Recent voice requests (last 14 days). Requests served from cache did not use provider credits.',
 	'settings.usage.noUsage': 'No usage recorded yet',
 
 	// Card Browser
@@ -434,6 +451,8 @@ export const en: Record<string, string> = {
 	'common.confirm': 'Confirm',
 	'common.dismiss': 'Dismiss',
 	'common.close': 'Close',
+	'common.savedFlag': 'Saved ✓',
+	'common.saveFailedFlag': 'Save failed',
 	'common.ok': 'OK',
 
 	// Card editor (modal)
@@ -538,6 +557,9 @@ export const en: Record<string, string> = {
 	'settings.agent.readiness.override.language': 'Language',
 	'settings.agent.readiness.override.voice': 'Voice ID',
 	'settings.agent.readiness.nextStep': 'Next step',
+	'settings.agent.readiness.oneStepLeft': '1 step left',
+	'settings.agent.readiness.stepsLeft': '{count} steps left',
+	'settings.agent.readiness.showChecklist': 'Show full checklist',
 	'settings.agent.readiness.action.apiKey': 'Open ElevenLabs API keys',
 	'settings.agent.readiness.action.agent': 'Open agent in ElevenLabs',
 	'settings.agent.readiness.action.mcp': 'Continue with MCP setup below',

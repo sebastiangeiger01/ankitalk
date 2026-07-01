@@ -1,9 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { replaceState } from '$app/navigation';
 	import { getPrepareAudioAhead, setPrepareAudioAhead } from '$lib/client/preferences';
 	import { locale, t, type Locale } from '$lib/i18n';
 	import Spinner from '$lib/components/Spinner.svelte';
+	import SavedFlag from '$lib/components/SavedFlag.svelte';
 	import ElevenLabsSettings from '$lib/components/ElevenLabsSettings.svelte';
+	import { SavedFlags } from '$lib/client/saved-flags.svelte';
 	import type { UserVoiceSettings, VoiceCommandLanguage, VoiceProvider } from '$lib/voice';
 
 	function setLocale(l: Locale) {
@@ -30,6 +33,65 @@
 		return locale.subscribe((v) => { current = v; });
 	});
 
+	// Transient "Saved ✓" feedback for all instant-save controls, keyed by control group.
+	const savedFlags = new SavedFlags();
+
+	// --- In-page section navigation ---
+	const navSections = [
+		{ id: 'section-language', labelKey: 'settings.nav.language' },
+		{ id: 'section-keys', labelKey: 'settings.nav.keys' },
+		{ id: 'section-audio', labelKey: 'settings.nav.audio' },
+		{ id: 'section-tutor', labelKey: 'settings.nav.tutor' },
+		{ id: 'mcp-integration', labelKey: 'settings.nav.mcp' },
+		{ id: 'section-usage', labelKey: 'settings.nav.usage' },
+		{ id: 'section-account', labelKey: 'settings.nav.account' }
+	] as const;
+	let activeSection = $state<string>('section-language');
+	// Height of the app's sticky top nav; the section nav sits directly beneath it. Measured
+	// (not hardcoded) because iOS safe-area insets change the nav height per device.
+	let navOffset = $state(61);
+
+	$effect(() => {
+		const appNav = document.querySelector<HTMLElement>('nav:not(.section-nav)');
+		if (!appNav) return;
+		const update = () => { navOffset = appNav.offsetHeight; };
+		update();
+		const observer = new ResizeObserver(update);
+		observer.observe(appNav);
+		return () => observer.disconnect();
+	});
+
+	$effect(() => {
+		// The `{#key current}` block recreates every section on locale change, so re-observe.
+		void current;
+		const observer = new IntersectionObserver(
+			(entries) => {
+				for (const entry of entries) {
+					if (entry.isIntersecting) activeSection = entry.target.id;
+				}
+			},
+			// A horizontal band in the upper part of the viewport: whichever section crosses
+			// it is "active". Simple, dependency-free scroll spy.
+			{ rootMargin: '-25% 0px -65% 0px' }
+		);
+		for (const { id } of navSections) {
+			const el = document.getElementById(id);
+			if (el) observer.observe(el);
+		}
+		return () => observer.disconnect();
+	});
+
+	function scrollToSection(event: MouseEvent, id: string) {
+		event.preventDefault();
+		const el = document.getElementById(id);
+		if (!el) return;
+		const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+		el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+		// SvelteKit's replaceState (not history.replaceState) keeps the router's state in sync.
+		replaceState(`#${id}`, {});
+		activeSection = id;
+	}
+
 	// --- API key state ---
 	type Service = 'openai' | 'deepgram' | 'anthropic' | 'elevenlabs';
 
@@ -38,6 +100,10 @@
 		deepgram: boolean;
 		anthropic: boolean;
 		elevenlabs: boolean;
+	}
+
+	interface KeyStatusResponse extends KeyStatus {
+		suffixes?: Partial<Record<Service, string>>;
 	}
 
 	interface UsagePeriod {
@@ -55,6 +121,7 @@
 	}
 
 	let keyStatus = $state<KeyStatus>({ openai: false, deepgram: false, anthropic: false, elevenlabs: false });
+	let keySuffixes = $state<Partial<Record<Service, string>>>({});
 	let keyInputs = $state<Record<Service, string>>({ openai: '', deepgram: '', anthropic: '', elevenlabs: '' });
 	let expanded = $state<Record<Service, boolean>>({ openai: false, deepgram: false, anthropic: false, elevenlabs: false });
 	let saving = $state<Record<Service, boolean>>({ openai: false, deepgram: false, anthropic: false, elevenlabs: false });
@@ -79,7 +146,6 @@
 		elevenlabs_agent_id: null
 	});
 	let savingVoiceSettings = $state(false);
-	let voiceSettingsMessage = $state<{ text: string; ok: boolean } | null>(null);
 
 	let usageData = $state<UsageData | null>(null);
 	let loadingUsage = $state(false);
@@ -100,7 +166,6 @@
 		};
 	}
 	let ttsCache = $state<TtsCacheInfo | null>(null);
-	let ttsCacheDetailsOpen = $state(false);
 	let ttsCacheDetailsLoaded = $state(false);
 	let loadingTtsCacheDetails = $state(false);
 
@@ -146,6 +211,22 @@
 			return $t(`settings.agent.readiness.issues.${issue}`, { fields });
 		}
 		return $t(`settings.agent.readiness.issues.${issue}`);
+	}
+
+	function readinessChecklist(readiness: AgentReadiness): { ok: boolean; text: string }[] {
+		return [
+			{ ok: readiness.agent.reachable, text: $t('settings.agent.readiness.agent') },
+			{ ok: readiness.agent.authentication_enabled, text: $t('settings.agent.readiness.security') },
+			{ ok: readiness.agent.missing_overrides.length === 0, text: $t('settings.agent.readiness.overrides') },
+			{ ok: readiness.agent.session_available, text: $t('settings.agent.readiness.session') },
+			{ ok: readiness.mcp.server_found, text: $t('settings.agent.readiness.server') },
+			{ ok: readiness.mcp.authenticated, text: $t('settings.agent.readiness.auth') },
+			{ ok: readiness.mcp.assigned_to_agent, text: $t('settings.agent.readiness.assignment') },
+			{
+				ok: readiness.mcp.authenticated && readiness.mcp.missing_tools.length === 0,
+				text: $t('settings.agent.readiness.tools', { count: readiness.mcp.tools_found.length })
+			}
+		];
 	}
 
 	type SetupAction = { issue: AgentReadinessIssue; href: string; external: boolean; labelKey: string };
@@ -280,8 +361,14 @@
 		try {
 			const res = await fetch('/api/settings/api-keys');
 			if (res.ok) {
-				const data = await res.json() as KeyStatus;
-				keyStatus = data;
+				const data = await res.json() as KeyStatusResponse;
+				keyStatus = {
+					openai: data.openai,
+					deepgram: data.deepgram,
+					anthropic: data.anthropic,
+					elevenlabs: data.elevenlabs
+				};
+				keySuffixes = data.suffixes ?? {};
 			}
 		} catch {
 			// silently ignore — keys stay as not configured
@@ -329,30 +416,26 @@
 		const input = event.currentTarget as HTMLInputElement;
 		prepareAudioAhead = input.checked;
 		setPrepareAudioAhead(input.checked);
+		savedFlags.flash('prepareAhead', true);
 	}
 
-	async function saveVoiceSettings(nextSettings: UserVoiceSettings, previousSettings: UserVoiceSettings) {
+	async function saveVoiceSettings(nextSettings: UserVoiceSettings, previousSettings: UserVoiceSettings): Promise<boolean> {
 		voiceSettings = nextSettings;
 		savingVoiceSettings = true;
-		voiceSettingsMessage = null;
 		try {
 			const res = await fetch('/api/settings/voice', {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(nextSettings)
 			});
-			if (res.ok) {
-				const data = await res.json() as { settings: UserVoiceSettings };
-				voiceSettings = data.settings;
-				voiceSettingsMessage = { text: $t('settings.voice.saved'), ok: true };
-				setTimeout(() => { voiceSettingsMessage = null; }, 2000);
-				if (data.settings.elevenlabs_agent_id !== previousSettings.elevenlabs_agent_id && keyStatus.elevenlabs) void checkAgentSetup();
-			} else {
-				throw new Error('Failed to save voice settings');
-			}
+			if (!res.ok) throw new Error('Failed to save voice settings');
+			const data = await res.json() as { settings: UserVoiceSettings };
+			voiceSettings = data.settings;
+			if (data.settings.elevenlabs_agent_id !== previousSettings.elevenlabs_agent_id && keyStatus.elevenlabs) void checkAgentSetup();
+			return true;
 		} catch {
 			voiceSettings = previousSettings;
-			voiceSettingsMessage = { text: $t('settings.voice.saveFailed'), ok: false };
+			return false;
 		} finally {
 			savingVoiceSettings = false;
 		}
@@ -361,24 +444,34 @@
 	async function updateVoiceProvider(provider: VoiceProvider) {
 		if (voiceSettings.voice_provider === provider) return;
 		const previous = { ...voiceSettings };
-		await saveVoiceSettings(
+		const ok = await saveVoiceSettings(
 			{ ...voiceSettings, voice_provider: provider },
 			previous
 		);
+		savedFlags.flash('provider', ok);
 	}
 
-	async function updateElevenLabsSettings(partial: Partial<UserVoiceSettings>) {
+	async function updateElevenLabsSettings(partial: Partial<UserVoiceSettings>): Promise<boolean> {
 		const previous = { ...voiceSettings };
-		await saveVoiceSettings({ ...voiceSettings, ...partial }, previous);
+		return saveVoiceSettings({ ...voiceSettings, ...partial }, previous);
 	}
 
 	async function updateVoiceCommandLanguage(language: VoiceCommandLanguage) {
 		if (voiceSettings.voice_command_language === language) return;
 		const previous = { ...voiceSettings };
-		await saveVoiceSettings(
+		const ok = await saveVoiceSettings(
 			{ ...voiceSettings, voice_command_language: language },
 			previous
 		);
+		savedFlags.flash('commandLanguage', ok);
+	}
+
+	async function saveAgentId(event: FocusEvent) {
+		const next = (event.currentTarget as HTMLInputElement).value.trim() || null;
+		if (next === (voiceSettings.elevenlabs_agent_id ?? null)) return;
+		const previous = { ...voiceSettings };
+		const ok = await saveVoiceSettings({ ...voiceSettings, elevenlabs_agent_id: next }, previous);
+		savedFlags.flash('agentId', ok);
 	}
 
 	async function saveKey(service: Service) {
@@ -394,6 +487,7 @@
 			});
 			if (res.ok) {
 				keyStatus[service] = true;
+				keySuffixes[service] = `…${key.slice(-4)}`;
 				keyInputs[service] = '';
 				expanded[service] = false;
 				messages[service] = { text: $t('settings.apiKeys.saved'), ok: true };
@@ -429,6 +523,7 @@
 			});
 			if (res.ok) {
 				keyStatus[service] = false;
+				keySuffixes[service] = undefined;
 				messages[service] = { text: $t('settings.apiKeys.removed'), ok: true };
 			}
 		} catch {
@@ -461,14 +556,47 @@
 		return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
 	}
 
+	// Map raw cache-event statuses to human labels + badge tone. Unknown statuses fall
+	// back to the raw string so new server states never render as blanks.
+	const cacheStatusMeta: Record<string, { labelKey: string; badge: string }> = {
+		'edge-hit': { labelKey: 'settings.ttsCache.status.hit', badge: 'badge--success' },
+		'r2-hit': { labelKey: 'settings.ttsCache.status.hit', badge: 'badge--success' },
+		'inflight-hit': { labelKey: 'settings.ttsCache.status.hit', badge: 'badge--success' },
+		'miss': { labelKey: 'settings.ttsCache.status.generated', badge: '' },
+		'no-bucket': { labelKey: 'settings.ttsCache.status.noStore', badge: 'badge--warning' },
+		'miss-store-failed': { labelKey: 'settings.ttsCache.status.storeFailed', badge: 'badge--danger' },
+		'cache-only-miss': { labelKey: 'settings.ttsCache.status.skipped', badge: 'badge--warning' }
+	};
+
+	function cacheStatusLabel(status: string): string {
+		const meta = cacheStatusMeta[status];
+		return meta ? $t(meta.labelKey) : status;
+	}
+
+	function cacheStatusBadge(status: string): string {
+		return cacheStatusMeta[status]?.badge ?? '';
+	}
+
+	// Several raw statuses share one human label (edge/R2/in-flight hits are all "served
+	// from cache"), so aggregate counts per label for the summary chips.
+	function cacheBreakdown(byStatus: TtsCacheInfo['events']['by_status']): { label: string; badge: string; count: number }[] {
+		const groups = new Map<string, { label: string; badge: string; count: number }>();
+		for (const s of byStatus) {
+			const label = cacheStatusLabel(s.status);
+			const existing = groups.get(label);
+			if (existing) existing.count += s.count;
+			else groups.set(label, { label, badge: cacheStatusBadge(s.status), count: s.count });
+		}
+		return [...groups.values()];
+	}
+
 	function allZero(usage: UsageData): boolean {
 		return usage.today.total === 0 && usage.week.total === 0 && usage.month.total === 0;
 	}
 
-	async function toggleTtsCacheDetails() {
-		const nextOpen = !ttsCacheDetailsOpen;
-		ttsCacheDetailsOpen = nextOpen;
-		if (!nextOpen || !ttsCache || ttsCacheDetailsLoaded || loadingTtsCacheDetails) return;
+	async function onCacheDetailsToggle(event: Event) {
+		const open = (event.currentTarget as HTMLDetailsElement).open;
+		if (!open || !ttsCache || ttsCacheDetailsLoaded || loadingTtsCacheDetails) return;
 		loadingTtsCacheDetails = true;
 		try {
 			const res = await fetch('/api/settings/tts-cache?includeRecent=1');
@@ -528,29 +656,169 @@
 	<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="m19 6-1 14H6L5 6" /><path d="M10 11v6M14 11v6" /></svg>
 {/snippet}
 
+<!-- One row per API key service, shared by the "voice review" and "advanced providers"
+     lists: configured badge + masked suffix, expand/edit, save-on-Enter, remove. -->
+{#snippet keyRow(service: Service)}
+	<div class="key-row">
+		<div class="key-row-header">
+			<div class="key-row-info">
+				<span class="key-service-name">{serviceLabel(service)}</span>
+				<span class="key-service-desc">{serviceDesc(service)}</span>
+				<span class="key-service-cost">{serviceCost(service)}</span>
+			</div>
+			<div class="key-row-actions">
+				{#if keyStatus[service]}
+					<span class="key-badge-group">
+						<span class="badge badge--success">{$t('settings.apiKeys.configured')}</span>
+						{#if keySuffixes[service]}
+							<code class="key-suffix">{keySuffixes[service]}</code>
+						{/if}
+					</span>
+				{:else}
+					<span class="badge">{$t('settings.apiKeys.notConfigured')}</span>
+				{/if}
+				<button
+					class="action-btn icon-btn"
+					type="button"
+					onclick={() => toggleExpanded(service)}
+					aria-label={keyToggleLabel(service)}
+					title={keyToggleLabel(service)}
+				>
+					{#if expanded[service]}
+						{@render iconClose()}
+					{:else if keyStatus[service]}
+						{@render iconEdit()}
+					{:else}
+						{@render iconPlus()}
+					{/if}
+				</button>
+			</div>
+		</div>
+
+		{#if messages[service]}
+			<p class="key-message" class:key-message--ok={messages[service]!.ok} class:key-message--err={!messages[service]!.ok}>
+				{messages[service]!.text}
+			</p>
+		{/if}
+
+		{#if keyStatus[service] && !expanded[service]}
+			<div class="key-remove-row">
+				<button
+					class="btn-danger"
+					disabled={removing[service]}
+					onclick={() => removeKey(service)}
+				>
+					{#if removing[service]}<Spinner size={13} />{/if}
+					{removing[service] ? $t('settings.apiKeys.removing') : $t('settings.apiKeys.remove')}
+				</button>
+			</div>
+		{/if}
+
+		{#if expanded[service]}
+			<div class="key-input-area">
+				<input
+					class="key-input"
+					type="password"
+					placeholder={$t('settings.apiKeys.placeholder')}
+					bind:value={keyInputs[service]}
+					onkeydown={(e) => { if (e.key === 'Enter') saveKey(service); }}
+				/>
+				{#if service === 'elevenlabs'}
+					<div class="perm-hint">
+						<span class="perm-hint-title">{$t('settings.apiKeys.elevenlabsPerms.title')}</span>
+						<span class="perm-hint-intro">{$t('settings.apiKeys.elevenlabsPerms.intro')}</span>
+						<ul class="perm-list">
+							<li>{$t('settings.apiKeys.elevenlabsPerms.tts')}</li>
+							<li>{$t('settings.apiKeys.elevenlabsPerms.stt')}</li>
+							<li>{$t('settings.apiKeys.elevenlabsPerms.agents')}</li>
+							<li>{$t('settings.apiKeys.elevenlabsPerms.voices')}</li>
+							<li>{$t('settings.apiKeys.elevenlabsPerms.user')}</li>
+						</ul>
+					</div>
+				{/if}
+				<div class="key-input-footer">
+					<span class="key-link-hint">
+						{$t('settings.apiKeys.getKey')}
+						<a href={serviceHrefs[service]} target="_blank" rel="noopener noreferrer">
+							{serviceLinks[service]}
+						</a>
+					</span>
+					<button
+						class="btn-primary"
+						disabled={saving[service] || !keyInputs[service].trim()}
+						onclick={() => saveKey(service)}
+					>
+						{#if saving[service]}<Spinner size={13} />{/if}
+						{saving[service] ? $t('settings.apiKeys.validating') : $t('settings.apiKeys.save')}
+					</button>
+				</div>
+			</div>
+		{/if}
+	</div>
+{/snippet}
+
 {#key current}
-<div class="settings-page">
+<div class="settings-page" style="--nav-offset: {navOffset}px">
 	<a href="/" class="back-link">&larr; {$t('appSettings.dashboard')}</a>
 
 	<h1>{$t('appSettings.title')}</h1>
 
-	<section class="section">
+	<nav class="section-nav" aria-label={$t('settings.nav.label')}>
+		{#each navSections as sectionLink (sectionLink.id)}
+			<a
+				href="#{sectionLink.id}"
+				class:active={activeSection === sectionLink.id}
+				aria-current={activeSection === sectionLink.id ? 'true' : undefined}
+				onclick={(e) => scrollToSection(e, sectionLink.id)}
+			>
+				{$t(sectionLink.labelKey)}
+			</a>
+		{/each}
+	</nav>
+
+	<section class="section card" id="section-language">
 		<h2>{$t('appSettings.language')}</h2>
-		<div class="lang-options">
-			<button class="lang-btn" class:active={current === 'en'} onclick={() => setLocale('en')}>
-				English
+		<div class="segmented-control" role="group" aria-label={$t('appSettings.language')}>
+			<button
+				class="segment-option"
+				class:active={current === 'en'}
+				aria-pressed={current === 'en'}
+				onclick={() => setLocale('en')}
+			>
+				<span>English</span>
 			</button>
-			<button class="lang-btn" class:active={current === 'de'} onclick={() => setLocale('de')}>
-				Deutsch
+			<button
+				class="segment-option"
+				class:active={current === 'de'}
+				aria-pressed={current === 'de'}
+				onclick={() => setLocale('de')}
+			>
+				<span>Deutsch</span>
 			</button>
 		</div>
 	</section>
 
-	<section class="section">
+	<section class="section card" id="section-keys">
+		<h2>{$t('settings.apiKeys.title')}</h2>
+		<p class="section-desc">{$t('settings.apiKeys.description')}</p>
+
+		<h3 class="subsection-label">{$t('settings.apiKeys.voiceSection')}</h3>
+		{#each primaryServices as service}
+			{@render keyRow(service)}
+		{/each}
+
+		<h3 class="subsection-label subsection-label--optional">{$t('settings.apiKeys.advancedSection')}</h3>
+		<p class="section-desc">{$t('settings.apiKeys.advancedDesc')}</p>
+		{#each advancedServices as service}
+			{@render keyRow(service)}
+		{/each}
+	</section>
+
+	<section class="section card" id="section-audio">
 		<h2>{$t('appSettings.audio')}</h2>
 		<div class="voice-provider-group" aria-label={$t('settings.voice.title')}>
 			<div class="voice-provider-copy">
-				<span class="preference-title">{$t('settings.voice.title')}</span>
+				<span class="preference-title">{$t('settings.voice.title')} <SavedFlag status={savedFlags.get('provider')} /></span>
 				<span class="preference-desc">{$t('settings.voice.desc')}</span>
 			</div>
 			<div class="provider-options">
@@ -583,11 +851,6 @@
 					</span>
 				</label>
 			</div>
-			{#if voiceSettingsMessage}
-				<p class="key-message" class:key-message--ok={voiceSettingsMessage.ok} class:key-message--err={!voiceSettingsMessage.ok}>
-					{voiceSettingsMessage.text}
-				</p>
-			{/if}
 		</div>
 
 		{#if voiceSettings.voice_provider === 'elevenlabs'}
@@ -600,7 +863,7 @@
 		{/if}
 		<div class="voice-language-group" aria-label={$t('settings.voice.commandLanguage')}>
 			<div class="voice-provider-copy">
-				<span class="preference-title">{$t('settings.voice.commandLanguage')}</span>
+				<span class="preference-title">{$t('settings.voice.commandLanguage')} <SavedFlag status={savedFlags.get('commandLanguage')} /></span>
 				<span class="preference-desc">
 					{voiceSettings.voice_command_language === 'auto'
 						? $t('settings.voice.commandLanguageAutoDesc')
@@ -625,7 +888,7 @@
 		</div>
 		<label class="preference-row">
 			<span class="preference-copy">
-				<span class="preference-title">{$t('appSettings.prepareAudioAhead')}</span>
+				<span class="preference-title">{$t('appSettings.prepareAudioAhead')} <SavedFlag status={savedFlags.get('prepareAhead')} /></span>
 				<span class="preference-desc">{$t('appSettings.prepareAudioAheadDesc')}</span>
 			</span>
 			<input
@@ -638,210 +901,15 @@
 		</label>
 	</section>
 
-	<section class="section">
-		<h2>{$t('settings.apiKeys.title')}</h2>
-		<p class="section-desc">{$t('settings.apiKeys.description')}</p>
-
-		<h3 class="subsection-label">{$t('settings.apiKeys.voiceSection')}</h3>
-		{#each primaryServices as service}
-			<div class="key-row">
-				<div class="key-row-header">
-					<div class="key-row-info">
-						<span class="key-service-name">{serviceLabel(service)}</span>
-						<span class="key-service-desc">{serviceDesc(service)}</span>
-						<span class="key-service-cost">{serviceCost(service)}</span>
-					</div>
-					<div class="key-row-actions">
-						{#if keyStatus[service]}
-							<span class="badge badge--configured">{$t('settings.apiKeys.configured')}</span>
-						{:else}
-							<span class="badge badge--not-configured">{$t('settings.apiKeys.notConfigured')}</span>
-						{/if}
-						<button
-							class="action-btn icon-btn"
-							type="button"
-							onclick={() => toggleExpanded(service)}
-							aria-label={keyToggleLabel(service)}
-							title={keyToggleLabel(service)}
-						>
-							{#if expanded[service]}
-								{@render iconClose()}
-							{:else if keyStatus[service]}
-								{@render iconEdit()}
-							{:else}
-								{@render iconPlus()}
-							{/if}
-						</button>
-					</div>
-				</div>
-
-				{#if messages[service]}
-					<p class="key-message" class:key-message--ok={messages[service]!.ok} class:key-message--err={!messages[service]!.ok}>
-						{messages[service]!.text}
-					</p>
-				{/if}
-
-				{#if keyStatus[service] && !expanded[service]}
-					<div class="key-remove-row">
-						<button
-							class="btn-danger"
-							disabled={removing[service]}
-							onclick={() => removeKey(service)}
-						>
-							{#if removing[service]}<Spinner size={13} />{/if}
-							{removing[service] ? $t('settings.apiKeys.removing') : $t('settings.apiKeys.remove')}
-						</button>
-					</div>
-				{/if}
-
-				{#if expanded[service]}
-					<div class="key-input-area">
-						<input
-							class="key-input"
-							type="password"
-							placeholder={$t('settings.apiKeys.placeholder')}
-							bind:value={keyInputs[service]}
-							onkeydown={(e) => { if (e.key === 'Enter') saveKey(service); }}
-						/>
-						{#if service === 'elevenlabs'}
-							<div class="perm-hint">
-								<span class="perm-hint-title">{$t('settings.apiKeys.elevenlabsPerms.title')}</span>
-								<span class="perm-hint-intro">{$t('settings.apiKeys.elevenlabsPerms.intro')}</span>
-								<ul class="perm-list">
-									<li>{$t('settings.apiKeys.elevenlabsPerms.tts')}</li>
-									<li>{$t('settings.apiKeys.elevenlabsPerms.stt')}</li>
-									<li>{$t('settings.apiKeys.elevenlabsPerms.agents')}</li>
-									<li>{$t('settings.apiKeys.elevenlabsPerms.voices')}</li>
-									<li>{$t('settings.apiKeys.elevenlabsPerms.user')}</li>
-								</ul>
-							</div>
-						{/if}
-						<div class="key-input-footer">
-							<span class="key-link-hint">
-								{$t('settings.apiKeys.getKey')}
-								<a href={serviceHrefs[service]} target="_blank" rel="noopener noreferrer">
-									{serviceLinks[service]}
-								</a>
-							</span>
-							<button
-								class="btn-primary"
-								disabled={saving[service] || !keyInputs[service].trim()}
-								onclick={() => saveKey(service)}
-							>
-								{#if saving[service]}<Spinner size={13} />{/if}
-							{saving[service] ? $t('settings.apiKeys.validating') : $t('settings.apiKeys.save')}
-							</button>
-						</div>
-					</div>
-				{/if}
-			</div>
-		{/each}
-
-		<h3 class="subsection-label subsection-label--optional">{$t('settings.apiKeys.advancedSection')}</h3>
-		<p class="section-desc">{$t('settings.apiKeys.advancedDesc')}</p>
-		{#each advancedServices as service}
-			<div class="key-row">
-				<div class="key-row-header">
-					<div class="key-row-info">
-						<span class="key-service-name">{serviceLabel(service)}</span>
-						<span class="key-service-desc">{serviceDesc(service)}</span>
-						<span class="key-service-cost">{serviceCost(service)}</span>
-					</div>
-					<div class="key-row-actions">
-						{#if keyStatus[service]}
-							<span class="badge badge--configured">{$t('settings.apiKeys.configured')}</span>
-						{:else}
-							<span class="badge badge--not-configured">{$t('settings.apiKeys.notConfigured')}</span>
-						{/if}
-						<button
-							class="action-btn icon-btn"
-							type="button"
-							onclick={() => toggleExpanded(service)}
-							aria-label={keyToggleLabel(service)}
-							title={keyToggleLabel(service)}
-						>
-							{#if expanded[service]}
-								{@render iconClose()}
-							{:else if keyStatus[service]}
-								{@render iconEdit()}
-							{:else}
-								{@render iconPlus()}
-							{/if}
-						</button>
-					</div>
-				</div>
-
-				{#if messages[service]}
-					<p class="key-message" class:key-message--ok={messages[service]!.ok} class:key-message--err={!messages[service]!.ok}>
-						{messages[service]!.text}
-					</p>
-				{/if}
-
-				{#if keyStatus[service] && !expanded[service]}
-					<div class="key-remove-row">
-						<button
-							class="btn-danger"
-							disabled={removing[service]}
-							onclick={() => removeKey(service)}
-						>
-							{#if removing[service]}<Spinner size={13} />{/if}
-							{removing[service] ? $t('settings.apiKeys.removing') : $t('settings.apiKeys.remove')}
-						</button>
-					</div>
-				{/if}
-
-				{#if expanded[service]}
-					<div class="key-input-area">
-						<input
-							class="key-input"
-							type="password"
-							placeholder={$t('settings.apiKeys.placeholder')}
-							bind:value={keyInputs[service]}
-							onkeydown={(e) => { if (e.key === 'Enter') saveKey(service); }}
-						/>
-						{#if service === 'elevenlabs'}
-							<div class="perm-hint">
-								<span class="perm-hint-title">{$t('settings.apiKeys.elevenlabsPerms.title')}</span>
-								<span class="perm-hint-intro">{$t('settings.apiKeys.elevenlabsPerms.intro')}</span>
-								<ul class="perm-list">
-									<li>{$t('settings.apiKeys.elevenlabsPerms.tts')}</li>
-									<li>{$t('settings.apiKeys.elevenlabsPerms.stt')}</li>
-									<li>{$t('settings.apiKeys.elevenlabsPerms.voices')}</li>
-									<li>{$t('settings.apiKeys.elevenlabsPerms.user')}</li>
-								</ul>
-							</div>
-						{/if}
-						<div class="key-input-footer">
-							<span class="key-link-hint">
-								{$t('settings.apiKeys.getKey')}
-								<a href={serviceHrefs[service]} target="_blank" rel="noopener noreferrer">
-									{serviceLinks[service]}
-								</a>
-							</span>
-							<button
-								class="btn-primary"
-								disabled={saving[service] || !keyInputs[service].trim()}
-								onclick={() => saveKey(service)}
-							>
-								{#if saving[service]}<Spinner size={13} />{/if}
-							{saving[service] ? $t('settings.apiKeys.validating') : $t('settings.apiKeys.save')}
-							</button>
-						</div>
-					</div>
-				{/if}
-			</div>
-		{/each}
-	</section>
-
-	<section class="section">
+	<section class="section card" id="section-tutor">
 		<h2>
 			{$t('settings.agent.title')}
 			{#if loadingAgentConfiguration || checkingAgentReadiness}
-				<span class="badge badge--checking">{$t('settings.agent.readiness.checking')}</span>
+				<span class="badge">{$t('settings.agent.readiness.checking')}</span>
 			{:else if agentReadiness?.ready}
-				<span class="badge badge--configured">{$t('settings.apiKeys.configured')}</span>
+				<span class="badge badge--success">{$t('settings.apiKeys.configured')}</span>
 			{:else}
-				<span class="badge badge--not-configured">{$t('settings.apiKeys.notConfigured')}</span>
+				<span class="badge">{$t('settings.apiKeys.notConfigured')}</span>
 			{/if}
 		</h2>
 		<p class="section-desc">{$t('settings.agent.desc')}</p>
@@ -859,17 +927,13 @@
 		</details>
 
 		<label class="agent-field">
-			<span class="agent-label">{$t('settings.agent.agentIdLabel')}</span>
+			<span class="agent-label">{$t('settings.agent.agentIdLabel')} <SavedFlag status={savedFlags.get('agentId')} /></span>
 			<input
 				type="text"
 				class="agent-input"
 				placeholder={$t('settings.agent.agentIdPlaceholder')}
 				value={voiceSettings.elevenlabs_agent_id ?? ''}
-				onblur={(e) => {
-					const next = (e.currentTarget as HTMLInputElement).value.trim();
-					const previous = { ...voiceSettings };
-					void saveVoiceSettings({ ...voiceSettings, elevenlabs_agent_id: next || null }, previous);
-				}}
+				onblur={saveAgentId}
 			/>
 		</label>
 		<p class="agent-help">{$t('settings.agent.agentIdHelp')}</p>
@@ -885,25 +949,17 @@
 				</button>
 			</div>
 			{#if agentReadiness}
-				<ul class="agent-readiness-list">
-					<li class:ok={agentReadiness.agent.reachable}>{agentReadiness.agent.reachable ? '✓' : '○'} {$t('settings.agent.readiness.agent')}</li>
-					<li class:ok={agentReadiness.agent.authentication_enabled}>{agentReadiness.agent.authentication_enabled ? '✓' : '○'} {$t('settings.agent.readiness.security')}</li>
-					<li class:ok={agentReadiness.agent.missing_overrides.length === 0}>{agentReadiness.agent.missing_overrides.length === 0 ? '✓' : '○'} {$t('settings.agent.readiness.overrides')}</li>
-					<li class:ok={agentReadiness.agent.session_available}>{agentReadiness.agent.session_available ? '✓' : '○'} {$t('settings.agent.readiness.session')}</li>
-					<li class:ok={agentReadiness.mcp.server_found}>{agentReadiness.mcp.server_found ? '✓' : '○'} {$t('settings.agent.readiness.server')}</li>
-					<li class:ok={agentReadiness.mcp.authenticated}>{agentReadiness.mcp.authenticated ? '✓' : '○'} {$t('settings.agent.readiness.auth')}</li>
-					<li class:ok={agentReadiness.mcp.assigned_to_agent}>{agentReadiness.mcp.assigned_to_agent ? '✓' : '○'} {$t('settings.agent.readiness.assignment')}</li>
-					<li class:ok={agentReadiness.mcp.authenticated && agentReadiness.mcp.missing_tools.length === 0}>{agentReadiness.mcp.authenticated && agentReadiness.mcp.missing_tools.length === 0 ? '✓' : '○'} {$t('settings.agent.readiness.tools', { count: agentReadiness.mcp.tools_found.length })}</li>
-				</ul>
-				{#if agentReadiness.issues.length && !nextSetupAction}
-					<div class="agent-readiness-issues">
-						{#each agentReadiness.issues as issue}<p>{readinessIssueText(issue)}</p>{/each}
-					</div>
-				{:else if agentReadiness.issues.length > 1}
-					<div class="agent-readiness-issues">
-						{#each agentReadiness.issues.slice(1) as issue}<p>{readinessIssueText(issue)}</p>{/each}
-					</div>
-				{/if}
+				{@const checklist = readinessChecklist(agentReadiness)}
+				{@const stepsLeft = checklist.filter((step) => !step.ok).length}
+				<p class="readiness-status" class:readiness-status--ready={stepsLeft === 0}>
+					{#if stepsLeft === 0}
+						✓ {$t('settings.agent.readiness.ready')}
+					{:else}
+						{stepsLeft === 1
+							? $t('settings.agent.readiness.oneStepLeft')
+							: $t('settings.agent.readiness.stepsLeft', { count: stepsLeft })}
+					{/if}
+				</p>
 				{#if nextSetupAction}
 					<div class="agent-readiness-next">
 						<strong>{$t('settings.agent.readiness.nextStep')}</strong>
@@ -918,6 +974,23 @@
 						</a>
 					</div>
 				{/if}
+				{#if agentReadiness.issues.length && !nextSetupAction}
+					<div class="agent-readiness-issues">
+						{#each agentReadiness.issues as issue}<p>{readinessIssueText(issue)}</p>{/each}
+					</div>
+				{:else if agentReadiness.issues.length > 1}
+					<div class="agent-readiness-issues">
+						{#each agentReadiness.issues.slice(1) as issue}<p>{readinessIssueText(issue)}</p>{/each}
+					</div>
+				{/if}
+				<details class="disclosure">
+					<summary>{$t('settings.agent.readiness.showChecklist')}</summary>
+					<ul class="agent-readiness-list">
+						{#each checklist as step}
+							<li class:ok={step.ok}>{step.ok ? '✓' : '○'} {step.text}</li>
+						{/each}
+					</ul>
+				</details>
 			{/if}
 		</div>
 
@@ -953,7 +1026,7 @@
 		</div>
 	</section>
 
-	<section class="section" id="mcp-integration">
+	<section class="section card" id="mcp-integration">
 		<h2>{$t('settings.mcp.title')}</h2>
 		<p class="section-desc">{$t('settings.mcp.desc')}</p>
 
@@ -1033,17 +1106,21 @@
 				<!-- `tok` rather than `t` so the local variable doesn't shadow the i18n store. -->
 				{#each mcpTokens as tok (tok.id)}
 					<li class="mcp-token">
-						<div class="mcp-token-meta">
-							<code class="mcp-token-prefix">{tok.prefix}…</code>
-							{#if tok.label}<span class="mcp-token-label">{tok.label}</span>{/if}
-							<span class="mcp-token-when">{tok.scopes.includes('cards:write') ? $t('settings.mcp.profileAuthor') : $t('settings.mcp.profileStudy')}</span>
-							<span class="mcp-token-when">{$t('settings.mcp.createdAt', { date: tok.created_at })}</span>
-							{#if tok.expires_at}<span class="mcp-token-when">{$t('settings.mcp.expiresAt', { date: tok.expires_at })}</span>{/if}
-							{#if tok.last_used_at}
-								<span class="mcp-token-when">{$t('settings.mcp.lastUsedAt', { date: tok.last_used_at })}</span>
-							{:else}
-								<span class="mcp-token-when muted">{$t('settings.mcp.neverUsed')}</span>
-							{/if}
+						<div class="mcp-token-main">
+							<div class="mcp-token-line1">
+								<code class="mcp-token-prefix">{tok.prefix}…</code>
+								{#if tok.label}<span class="mcp-token-label">{tok.label}</span>{/if}
+								<span class="badge">{tok.scopes.includes('cards:write') ? $t('settings.mcp.profileAuthor') : $t('settings.mcp.profileStudy')}</span>
+							</div>
+							<div class="mcp-token-line2">
+								<span>{$t('settings.mcp.createdAt', { date: tok.created_at })}</span>
+								{#if tok.expires_at}<span>{$t('settings.mcp.expiresAt', { date: tok.expires_at })}</span>{/if}
+								{#if tok.last_used_at}
+									<span>{$t('settings.mcp.lastUsedAt', { date: tok.last_used_at })}</span>
+								{:else}
+									<span>{$t('settings.mcp.neverUsed')}</span>
+								{/if}
+							</div>
 						</div>
 						<button
 							class="action-btn icon-btn"
@@ -1060,7 +1137,7 @@
 		{/if}
 	</section>
 
-	<section class="section">
+	<section class="section card" id="section-usage">
 		<h2>{$t('settings.usage.title')}</h2>
 		{#if loadingUsage}
 			<div class="usage-loading"><Spinner size={22} /></div>
@@ -1078,16 +1155,16 @@
 					{#each usageServices as s}
 						<div class="usage-row">
 							<span class="usage-service">{serviceLabel(s as Service)}</span>
-							<span>{formatCost(usageData!.today[s as Service])}</span>
-							<span>{formatCost(usageData!.week[s as Service])}</span>
-							<span>{formatCost(usageData!.month[s as Service])}</span>
+							<span data-label={$t('settings.usage.today')}>{formatCost(usageData!.today[s as Service])}</span>
+							<span data-label={$t('settings.usage.week')}>{formatCost(usageData!.week[s as Service])}</span>
+							<span data-label={$t('settings.usage.month')}>{formatCost(usageData!.month[s as Service])}</span>
 						</div>
 					{/each}
 					<div class="usage-row usage-row--total">
-						<span>{$t('settings.usage.total')}</span>
-						<span>{formatCost(usageData!.today.total)}</span>
-						<span>{formatCost(usageData!.week.total)}</span>
-						<span>{formatCost(usageData!.month.total)}</span>
+						<span class="usage-service">{$t('settings.usage.total')}</span>
+						<span data-label={$t('settings.usage.today')}>{formatCost(usageData!.today.total)}</span>
+						<span data-label={$t('settings.usage.week')}>{formatCost(usageData!.week.total)}</span>
+						<span data-label={$t('settings.usage.month')}>{formatCost(usageData!.month.total)}</span>
 					</div>
 				</div>
 			</div>
@@ -1114,24 +1191,16 @@
 							<span>{$t('settings.ttsCache.saved', { chars: ttsCache.events.saved_chars })}</span>
 						</div>
 						<div class="cache-monitor-breakdown">
-							{#each ttsCache.events.by_status as s}
-								<span class="cache-tag cache-tag--{s.status}">{s.status}: {s.count}</span>
+							{#each cacheBreakdown(ttsCache.events.by_status) as group (group.label)}
+								<span class="badge {group.badge}">{group.label}: {group.count}</span>
 							{/each}
 						</div>
-						<button
-							type="button"
-							class="cache-monitor-toggle"
-							onclick={toggleTtsCacheDetails}
-							aria-expanded={ttsCacheDetailsOpen}
-							aria-controls="tts-cache-events"
-						>
-							{ttsCacheDetailsOpen ? $t('settings.ttsCache.hideRecent') : $t('settings.ttsCache.showRecent')}
-						</button>
-						{#if ttsCacheDetailsOpen}
+						<details class="disclosure" ontoggle={onCacheDetailsToggle}>
+							<summary>{$t('settings.ttsCache.diagnostics')}</summary>
 							{#if loadingTtsCacheDetails}
 								<div class="cache-monitor-loading">{$t('settings.ttsCache.loadingRecent')}</div>
 							{:else if ttsCache.events.recent.length > 0}
-								<div class="cache-monitor-table-wrap" id="tts-cache-events">
+								<div class="cache-monitor-table-wrap">
 									<table class="cache-monitor-table">
 										<thead>
 											<tr>
@@ -1144,7 +1213,7 @@
 											{#each ttsCache.events.recent as ev}
 												<tr>
 													<td>{formatEventTime(ev.created_at)}</td>
-													<td><span class="cache-tag cache-tag--{ev.status}">{ev.status}</span></td>
+													<td><span class="badge {cacheStatusBadge(ev.status)}">{cacheStatusLabel(ev.status)}</span></td>
 													<td class="num">{ev.chars}</td>
 												</tr>
 											{/each}
@@ -1152,15 +1221,16 @@
 									</table>
 								</div>
 							{/if}
-						{/if}
-						<p class="cache-monitor-note">{$t('settings.ttsCache.monitorNote')}</p>
+							<p class="cache-monitor-note">{$t('settings.ttsCache.monitorNote')}</p>
+						</details>
 					</div>
 				{/if}
 			</div>
 		{/if}
 	</section>
 
-	<section class="section account-section">
+	<section class="section card" id="section-account">
+		<h2>{$t('settings.account.title')}</h2>
 		<button class="logout-btn" type="button" onclick={logout} disabled={loggingOut}>
 			{#if loggingOut}<Spinner size={14} />{/if}
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -1173,7 +1243,7 @@
 
 <style>
 	.settings-page {
-		max-width: 500px;
+		max-width: 520px;
 		margin: 0 auto;
 		padding: 1rem;
 	}
@@ -1189,18 +1259,77 @@
 	}
 
 	h1 {
-		margin: 1rem 0 1.5rem;
+		margin: 1rem 0 0.75rem;
 		font-size: 1.4rem;
 	}
 
+	/* Sticky in-page section nav: a horizontally scrollable pill row that sits directly
+	   under the app's sticky top nav (offset measured into --nav-offset). */
+	.section-nav {
+		position: sticky;
+		top: var(--nav-offset, 61px);
+		z-index: 30;
+		display: flex;
+		gap: 0.35rem;
+		overflow-x: auto;
+		scrollbar-width: none;
+		margin: 0 -1rem 1.25rem;
+		padding: 0.5rem 1rem;
+		background: rgba(10, 10, 10, 0.85);
+		-webkit-backdrop-filter: blur(12px);
+		backdrop-filter: blur(12px);
+	}
+
+	.section-nav::-webkit-scrollbar {
+		display: none;
+	}
+
+	.section-nav a {
+		flex: 0 0 auto;
+		display: inline-flex;
+		align-items: center;
+		min-height: 44px;
+		padding: 0.35rem 0.9rem;
+		border: 1px solid transparent;
+		border-radius: var(--r-pill);
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--text-muted);
+		text-decoration: none;
+		white-space: nowrap;
+		touch-action: manipulation;
+		transition:
+			color var(--t-fast) var(--ease),
+			background var(--t-fast) var(--ease),
+			border-color var(--t-fast) var(--ease);
+	}
+
+	.section-nav a:hover {
+		color: var(--text);
+	}
+
+	.section-nav a.active {
+		color: var(--text);
+		background: var(--surface-elevated);
+		border-color: var(--border);
+	}
+
+	/* Grouped iOS-Settings-style cards; .card (app.css) supplies surface/border/radius.
+	   scroll-margin keeps anchored sections clear of both sticky bars. */
 	.section {
-		margin-bottom: 2rem;
+		padding: 1.1rem 1.15rem 1.2rem;
+		margin-bottom: 1rem;
+		scroll-margin-top: calc(var(--nav-offset, 61px) + 4.5rem);
 	}
 
 	.section h2 {
-		font-size: 1rem;
-		color: var(--text-muted);
-		margin-bottom: 0.75rem;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+		font-size: 1.02rem;
+		color: var(--text);
+		margin: 0 0 0.75rem;
 	}
 
 	.section-desc {
@@ -1223,58 +1352,19 @@
 		margin-top: 1.5rem;
 	}
 
-	.lang-options {
-		display: flex;
-		gap: 0.5rem;
-	}
-
-	.lang-btn {
-		padding: 0.6rem 1.5rem;
-		background: var(--surface);
-		border: 1px solid var(--border);
-		color: var(--text-muted);
-		border-radius: 8px;
-		cursor: pointer;
-		font-size: 1rem;
-		transition: all 0.15s;
-		touch-action: manipulation;
-	}
-
-	.lang-btn:hover {
-		border-color: var(--border-strong);
-		color: var(--text);
-	}
-
-	.lang-btn.active {
-		background: var(--primary);
-		border-color: var(--border-strong);
-		color: var(--text);
-		font-weight: 600;
-	}
-
-	.voice-provider-group {
-		background: var(--bg);
-		border: 1px solid var(--border-muted);
-		border-radius: 10px;
-		padding: 0.9rem 1rem;
-		margin-bottom: 0.75rem;
-	}
-
+	.voice-provider-group,
 	.voice-language-group {
-		background: var(--bg);
-		border: 1px solid var(--border-muted);
-		border-radius: 10px;
-		padding: 0.9rem 1rem;
-		margin-bottom: 0.75rem;
+		margin-bottom: 1rem;
 	}
 
 	.voice-provider-copy {
 		display: flex;
 		flex-direction: column;
 		gap: 0.2rem;
-		margin-bottom: 0.75rem;
+		margin-bottom: 0.6rem;
 	}
 
+	/* Radio-card idiom: descriptive, mutually exclusive options. */
 	.provider-options {
 		display: grid;
 		gap: 0.5rem;
@@ -1284,21 +1374,26 @@
 		display: flex;
 		align-items: flex-start;
 		gap: 0.65rem;
-		padding: 0.7rem;
-		border: 1px solid var(--surface-elevated);
-		border-radius: 8px;
+		padding: 0.75rem;
+		border: 1px solid var(--border-muted);
+		border-radius: var(--r-md);
 		cursor: pointer;
-		background: #17172a;
+		background: var(--surface-2);
+		transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+	}
+
+	.provider-option:hover {
+		border-color: var(--border-strong);
 	}
 
 	.provider-option.active {
-		border-color: #6666b8;
-		background: #202045;
+		border-color: var(--primary);
+		background: var(--surface-elevated);
 	}
 
 	.provider-option input {
 		margin-top: 0.15rem;
-		accent-color: #8b8bea;
+		accent-color: var(--primary);
 	}
 
 	.provider-option span {
@@ -1309,40 +1404,59 @@
 
 	.provider-option strong {
 		font-size: 0.9rem;
-		color: #dadaff;
+		color: var(--text);
 	}
 
 	.provider-option small {
 		font-size: 0.78rem;
 		line-height: 1.35;
-		color: #8d8db0;
+		color: var(--text-muted);
 	}
 
+	/* Segmented-control idiom: 2–3 short, mutually exclusive options. auto-fit lets long
+	   German labels wrap onto a second row instead of overflowing fixed thirds. */
 	.segmented-control {
 		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 0.35rem;
+		grid-template-columns: repeat(auto-fit, minmax(6rem, 1fr));
+		gap: 0.3rem;
 		padding: 0.25rem;
-		border: 1px solid var(--surface-elevated);
-		border-radius: 8px;
-		background: #151526;
+		border: 1px solid var(--border-muted);
+		border-radius: var(--r-md);
+		background: var(--surface-2);
 	}
 
 	.segment-option {
 		position: relative;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		min-width: 0;
-		padding: 0.55rem 0.3rem;
-		border-radius: 6px;
-		color: #a8a8c8;
+		min-height: 44px;
+		padding: 0.45rem 0.5rem;
+		border: 1px solid transparent;
+		border-radius: var(--r-sm);
+		background: none;
+		color: var(--text-muted);
 		text-align: center;
 		cursor: pointer;
+		font-family: inherit;
 		font-size: 0.85rem;
 		font-weight: 600;
+		touch-action: manipulation;
+		transition:
+			background var(--t-fast) var(--ease),
+			color var(--t-fast) var(--ease),
+			border-color var(--t-fast) var(--ease);
+	}
+
+	.segment-option:hover {
+		color: var(--text);
 	}
 
 	.segment-option.active {
-		background: #303060;
-		color: #f0f0ff;
+		background: var(--surface-elevated);
+		border-color: var(--primary);
+		color: var(--text);
 	}
 
 	.segment-option input {
@@ -1353,6 +1467,7 @@
 
 	.segment-option span {
 		display: block;
+		min-width: 0;
 		overflow-wrap: anywhere;
 	}
 
@@ -1361,9 +1476,9 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 1rem;
-		background: var(--bg);
+		background: var(--surface-2);
 		border: 1px solid var(--border-muted);
-		border-radius: 10px;
+		border-radius: var(--r-md);
 		padding: 0.85rem 1rem;
 		cursor: pointer;
 	}
@@ -1378,7 +1493,7 @@
 	.preference-title {
 		font-size: 0.95rem;
 		font-weight: 600;
-		color: #d0d0f0;
+		color: var(--text);
 	}
 
 	.preference-desc {
@@ -1391,15 +1506,15 @@
 		width: 2.7rem;
 		height: 1.5rem;
 		flex: 0 0 auto;
-		accent-color: #6b6bc8;
+		accent-color: var(--primary);
 		cursor: pointer;
 	}
 
 	/* Key rows */
 	.key-row {
-		background: var(--bg);
+		background: var(--surface-2);
 		border: 1px solid var(--border-muted);
-		border-radius: 10px;
+		border-radius: var(--r-md);
 		padding: 0.85rem 1rem;
 		margin-bottom: 0.6rem;
 	}
@@ -1422,7 +1537,7 @@
 	.key-service-name {
 		font-size: 0.95rem;
 		font-weight: 600;
-		color: #d0d0f0;
+		color: var(--text);
 	}
 
 	.key-service-desc {
@@ -1432,7 +1547,7 @@
 
 	.key-service-cost {
 		font-size: 0.78rem;
-		color: #5a5a7a;
+		color: var(--text-subtle);
 	}
 
 	.key-row-actions {
@@ -1442,36 +1557,25 @@
 		flex-shrink: 0;
 	}
 
-	.badge {
-		font-size: 0.72rem;
-		font-weight: 600;
-		padding: 0.2rem 0.55rem;
-		border-radius: 99px;
+	.key-badge-group {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
 	}
 
-	.badge--configured {
-		background: #1a3a2a;
-		color: #4aaa74;
-		border: 1px solid #2a5a3a;
-	}
-
-	.badge--not-configured {
-		background: var(--surface);
-		color: #6a6a8a;
-		border: 1px solid var(--border);
-	}
-
-	.badge--checking {
-		background: color-mix(in srgb, var(--primary) 14%, var(--surface));
-		color: var(--text-muted);
-		border: 1px solid color-mix(in srgb, var(--primary) 35%, var(--border));
+	/* Masked last-4 preview of the stored key, next to the Configured badge. */
+	.key-suffix {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		color: var(--text-subtle);
+		white-space: nowrap;
 	}
 
 	.action-btn {
-		background: var(--surface);
+		background: transparent;
 		border: 1px solid var(--border);
 		color: var(--text-muted);
-		border-radius: 6px;
+		border-radius: var(--r-sm);
 		cursor: pointer;
 		font-size: 0.82rem;
 		font-weight: 600;
@@ -1481,12 +1585,14 @@
 		align-items: center;
 		justify-content: center;
 		gap: 0.35rem;
-		transition: all 0.15s;
+		transition:
+			border-color var(--t-fast) var(--ease),
+			color var(--t-fast) var(--ease);
 		padding: 0 0.75rem;
 		max-width: 100%;
 		line-height: 1.2;
 		text-align: center;
-		-webkit-tap-highlight-color: rgba(90, 90, 142, 0.3);
+		-webkit-tap-highlight-color: rgba(255, 255, 255, 0.12);
 		touch-action: manipulation;
 	}
 
@@ -1519,17 +1625,17 @@
 		font-size: 0.82rem;
 		margin: 0.5rem 0 0;
 		padding: 0.4rem 0.6rem;
-		border-radius: 6px;
+		border-radius: var(--r-sm);
 	}
 
 	.key-message--ok {
-		background: #1a3a2a;
-		color: #4aaa74;
+		background: var(--success-tint);
+		color: var(--success);
 	}
 
 	.key-message--err {
-		background: #3a1a1a;
-		color: #cc6666;
+		background: var(--danger-tint);
+		color: var(--danger-soft);
 	}
 
 	.key-remove-row {
@@ -1546,19 +1652,20 @@
 	.key-input {
 		width: 100%;
 		padding: 0.55rem 0.75rem;
-		background: var(--surface-2);
+		background: var(--bg);
 		border: 1px solid var(--border);
-		border-radius: 7px;
+		border-radius: var(--r-sm);
 		color: var(--text);
 		font-size: 0.9rem;
-		font-family: monospace;
+		font-family: var(--font-mono);
 		box-sizing: border-box;
-		transition: border-color 0.15s;
+		transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
 	}
 
 	.key-input:focus {
 		outline: none;
-		border-color: #5a5a9e;
+		border-color: var(--border-strong);
+		box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
 	}
 
 	.key-input-footer {
@@ -1574,9 +1681,9 @@
 		flex-direction: column;
 		gap: 0.35rem;
 		padding: 0.6rem 0.75rem;
-		background: var(--surface-2);
-		border: 1px solid var(--surface-elevated);
-		border-radius: 7px;
+		background: var(--bg);
+		border: 1px solid var(--border-muted);
+		border-radius: var(--r-sm);
 	}
 
 	.perm-hint-title {
@@ -1601,17 +1708,17 @@
 
 	.perm-list li {
 		font-size: 0.76rem;
-		color: #9a9ac0;
+		color: var(--text-muted);
 		line-height: 1.35;
 	}
 
 	.key-link-hint {
 		font-size: 0.78rem;
-		color: #6a6a8a;
+		color: var(--text-subtle);
 	}
 
 	.key-link-hint a {
-		color: #7a7aaa;
+		color: var(--text-muted);
 		text-decoration: underline;
 		/* Long provider URLs (console.anthropic.com/..., elevenlabs.io/...) would otherwise
 		   force the whole settings page to scroll horizontally on a 320–375px viewport. */
@@ -1620,68 +1727,14 @@
 	}
 
 	.key-link-hint a:hover {
-		color: #a0a0e0;
+		color: var(--text);
 	}
 
 	.usage-loading {
 		display: flex;
 		justify-content: center;
 		padding: 1.5rem 0;
-		color: #8080c0;
-	}
-
-	.btn-primary {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.35rem;
-		padding: 0.5rem 1.1rem;
-		background: var(--primary);
-		border: 1px solid var(--border-strong);
-		color: var(--text);
-		border-radius: 7px;
-		cursor: pointer;
-		font-size: 0.88rem;
-		font-weight: 600;
-		transition: all 0.15s;
-		white-space: nowrap;
-		touch-action: manipulation;
-	}
-
-	.btn-primary:hover:not(:disabled) {
-		background: var(--primary);
-		border-color: #7a7aae;
-	}
-
-	.btn-primary:disabled {
-		opacity: 0.45;
-		cursor: not-allowed;
-	}
-
-	.btn-danger {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.35rem;
-		padding: 0.4rem 0.9rem;
-		background: #2a1a1a;
-		border: 1px solid #5a2a2a;
-		color: #cc6666;
-		border-radius: 7px;
-		cursor: pointer;
-		font-size: 0.82rem;
-		font-weight: 600;
-		transition: all 0.15s;
-		touch-action: manipulation;
-	}
-
-	.btn-danger:hover:not(:disabled) {
-		background: #3a1a1a;
-		border-color: #7a3a3a;
-		color: #e07070;
-	}
-
-	.btn-danger:disabled {
-		opacity: 0.45;
-		cursor: not-allowed;
+		color: var(--text-muted);
 	}
 
 	/* Usage table */
@@ -1689,12 +1742,12 @@
 		overflow-x: auto;
 		-webkit-overflow-scrolling: touch;
 		margin-bottom: 0.75rem;
-		border-radius: 10px;
+		border-radius: var(--r-md);
 	}
 
 	.usage-table {
 		border: 1px solid var(--border-muted);
-		border-radius: 10px;
+		border-radius: var(--r-md);
 		overflow: hidden;
 		min-width: 340px;
 	}
@@ -1717,7 +1770,7 @@
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
-		color: #6a6a8a;
+		color: var(--text-subtle);
 		text-align: right;
 	}
 
@@ -1725,12 +1778,8 @@
 		text-align: left;
 	}
 
-	.usage-row {
-		border-bottom: 1px solid #1e1e38;
-	}
-
-	.usage-row:last-child {
-		border-bottom: none;
+	.usage-row + .usage-row {
+		border-top: 1px solid var(--border-muted);
 	}
 
 	.usage-row span {
@@ -1740,35 +1789,89 @@
 		text-align: right;
 	}
 
-	.usage-service {
-		text-align: left !important;
-		color: #c0c0e0 !important;
-		font-size: 0.82rem !important;
+	.usage-row span.usage-service {
+		text-align: left;
+		color: var(--text);
+		font-size: 0.82rem;
 	}
 
 	.usage-row--total {
 		background: var(--surface-2);
-		border-top: 1px solid var(--border-muted) !important;
 	}
 
 	.usage-row--total span {
 		font-weight: 600;
-		color: #d0d0f0;
+		color: var(--text);
 	}
 
 	.usage-note {
 		font-size: 0.78rem;
-		color: #5a5a7a;
+		color: var(--text-subtle);
 		margin: 0;
 		line-height: 1.5;
+	}
+
+	/* Under 600px the four-column table becomes stacked per-service cards; the column
+	   headers are re-created from data-label attributes. */
+	@media (max-width: 600px) {
+		.usage-table-wrap {
+			overflow-x: visible;
+		}
+
+		.usage-table {
+			min-width: 0;
+			border: none;
+			border-radius: 0;
+			overflow: visible;
+			display: flex;
+			flex-direction: column;
+			gap: 0.6rem;
+		}
+
+		.usage-head {
+			display: none;
+		}
+
+		.usage-table .usage-row {
+			grid-template-columns: repeat(3, 1fr);
+			border: 1px solid var(--border-muted);
+			border-radius: var(--r-md);
+			background: var(--surface-2);
+			padding: 0.35rem 0.25rem 0.4rem;
+		}
+
+		.usage-table .usage-row span.usage-service {
+			grid-column: 1 / -1;
+			padding-bottom: 0.15rem;
+		}
+
+		.usage-table .usage-row span[data-label] {
+			text-align: left;
+			padding-top: 0.15rem;
+		}
+
+		.usage-table .usage-row span[data-label]::before {
+			content: attr(data-label);
+			display: block;
+			font-size: 0.66rem;
+			font-weight: 600;
+			text-transform: uppercase;
+			letter-spacing: 0.05em;
+			color: var(--text-subtle);
+			margin-bottom: 0.1rem;
+		}
+
+		.usage-table .usage-row--total {
+			background: var(--surface-elevated);
+		}
 	}
 
 	.tts-cache {
 		margin-top: 1rem;
 		padding: 0.75rem 1rem;
-		background: var(--surface);
-		border: 1px solid var(--border);
-		border-radius: 8px;
+		background: var(--surface-2);
+		border: 1px solid var(--border-muted);
+		border-radius: var(--r-md);
 	}
 
 	.tts-cache-head {
@@ -1785,7 +1888,7 @@
 
 	.tts-cache-note {
 		font-size: 0.78rem;
-		color: #5a5a7a;
+		color: var(--text-subtle);
 		margin: 0.4rem 0 0;
 		line-height: 1.5;
 	}
@@ -1793,7 +1896,7 @@
 	.cache-monitor {
 		margin-top: 0.85rem;
 		padding-top: 0.85rem;
-		border-top: 1px solid var(--border);
+		border-top: 1px solid var(--border-muted);
 	}
 
 	.cache-monitor-summary {
@@ -1810,24 +1913,42 @@
 		display: flex;
 		gap: 0.4rem;
 		flex-wrap: wrap;
-		margin-bottom: 0.7rem;
+		margin-bottom: 0.3rem;
 	}
 
-	.cache-monitor-toggle {
-		border: 1px solid var(--border);
-		background: transparent;
-		color: var(--text);
-		border-radius: 4px;
-		padding: 0.3rem 0.55rem;
-		font-size: 0.75rem;
-		font-weight: 600;
+	/* Plain-text disclosure used for the readiness checklist and cache diagnostics. */
+	.disclosure {
+		margin-top: 0.4rem;
+	}
+
+	.disclosure summary {
+		display: flex;
+		align-items: center;
+		min-height: 44px;
 		cursor: pointer;
-		margin-bottom: 0.6rem;
+		font-size: 0.8rem;
+		font-weight: 600;
+		color: var(--text-muted);
+		list-style: none;
+		-webkit-tap-highlight-color: rgba(255, 255, 255, 0.12);
 	}
 
-	.cache-monitor-toggle:hover {
-		border-color: var(--primary);
-		color: var(--primary);
+	.disclosure summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.disclosure summary::before {
+		content: '▸';
+		margin-right: 0.35rem;
+		color: var(--text-subtle);
+	}
+
+	.disclosure[open] summary::before {
+		content: '▾';
+	}
+
+	.disclosure summary:hover {
+		color: var(--text);
 	}
 
 	.cache-monitor-loading {
@@ -1850,14 +1971,14 @@
 	.cache-monitor-table th,
 	.cache-monitor-table td {
 		text-align: left;
-		padding: 0.25rem 0.4rem;
-		border-bottom: 1px solid var(--border);
+		padding: 0.3rem 0.4rem;
+		border-bottom: 1px solid var(--border-muted);
 		color: var(--text-muted);
 		white-space: nowrap;
 	}
 
 	.cache-monitor-table th {
-		color: #8080a0;
+		color: var(--text-subtle);
 		font-weight: 600;
 	}
 
@@ -1865,66 +1986,47 @@
 		text-align: right;
 	}
 
-	.cache-tag {
-		display: inline-block;
-		padding: 0.05rem 0.4rem;
-		border-radius: 4px;
-		font-size: 0.7rem;
-		font-weight: 600;
-	}
-
-	.cache-tag--edge-hit,
-	.cache-tag--r2-hit,
-	.cache-tag--inflight-hit {
-		background: rgba(67, 214, 146, 0.15);
-		color: var(--success);
-	}
-
-	.cache-tag--cache-only-miss {
-		background: rgba(255, 191, 102, 0.15);
-		color: #ffbf66;
-	}
-
-	.cache-tag--miss,
-	.cache-tag--no-bucket,
-	.cache-tag--miss-store-failed {
-		background: rgba(255, 102, 102, 0.15);
-		color: #ff8080;
-	}
-
 	.cache-monitor-note {
 		font-size: 0.72rem;
-		color: #5a5a7a;
+		color: var(--text-subtle);
 		margin: 0.5rem 0 0;
 		line-height: 1.5;
 	}
 
 	.muted {
-		color: #5a5a7a;
+		color: var(--text-subtle);
 		font-size: 0.88rem;
 	}
 
 	/* Conversational tutor (Lernen agent) settings block. */
 	.agent-field { display: block; margin: 0.8rem 0 0.4rem; }
-	.agent-label { display: block; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.3rem; font-weight: 600; }
+	.agent-label {
+		display: flex; align-items: center; gap: 0.5rem;
+		font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.3rem; font-weight: 600;
+	}
 	.agent-input {
 		width: 100%; box-sizing: border-box;
-		padding: 0.55rem 0.7rem; border-radius: 7px;
-		background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
-		font-size: 0.95rem; font-family: monospace;
+		padding: 0.55rem 0.7rem; border-radius: var(--r-sm);
+		background: var(--bg); border: 1px solid var(--border); color: var(--text);
+		font-size: 0.95rem; font-family: var(--font-mono);
+		transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
 	}
-	.agent-input:focus { outline: none; border-color: var(--border-strong); }
+	.agent-input:focus {
+		outline: none;
+		border-color: var(--border-strong);
+		box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
+	}
 	.agent-help { font-size: 0.78rem; color: var(--text-muted); margin: 0.3rem 0; line-height: 1.4; }
-	.agent-help a { color: var(--primary); text-decoration: underline; }
+	.agent-help a { color: var(--text); text-decoration: underline; }
 	.agent-usage {
 		margin-top: 1rem; padding: 0.7rem 0.85rem;
-		background: var(--surface); border: 1px solid var(--border-muted);
-		border-radius: 10px;
+		background: var(--surface-2); border: 1px solid var(--border-muted);
+		border-radius: var(--r-md);
 	}
 	.agent-tuning {
 		margin-top: 1rem; padding: 0.7rem 0.85rem;
-		background: var(--surface); border: 1px solid var(--border-muted);
-		border-radius: 10px;
+		background: var(--surface-2); border: 1px solid var(--border-muted);
+		border-radius: var(--r-md);
 		font-size: 0.9rem; color: var(--text);
 	}
 	.agent-tuning strong { display: block; margin-bottom: 0.35rem; }
@@ -1941,32 +2043,33 @@
 	/* Numbered setup checklist used by both the agent and MCP panels. */
 	.agent-setup {
 		margin: 0.6rem 0 0.8rem;
-		background: var(--surface);
+		background: var(--surface-2);
 		border: 1px solid var(--border-muted);
-		border-radius: 8px;
+		border-radius: var(--r-sm);
 		padding: 0.55rem 0.8rem;
 	}
 	.agent-setup summary {
 		cursor: pointer; font-size: 0.85rem; color: var(--text); font-weight: 600;
 		list-style: none;
+		min-height: 32px; display: flex; align-items: center;
 	}
 	.agent-setup summary::-webkit-details-marker { display: none; }
-	.agent-setup summary::before { content: '▸ '; color: var(--text-muted); }
-	.agent-setup[open] summary::before { content: '▾ '; }
+	.agent-setup summary::before { content: '▸'; margin-right: 0.35rem; color: var(--text-muted); }
+	.agent-setup[open] summary::before { content: '▾'; }
 	.agent-setup-steps {
 		margin: 0.6rem 0 0.3rem 1.1rem; padding: 0;
 		font-size: 0.84rem; color: var(--text-muted); line-height: 1.55;
 	}
 	.agent-setup-steps li { margin-bottom: 0.25rem; }
-	.agent-setup-steps a { color: var(--primary); text-decoration: underline; }
+	.agent-setup-steps a { color: var(--text); text-decoration: underline; }
 	.agent-help--warn { color: var(--warning); }
 
 	/* MCP-specific styling: endpoint URL field, tokens list. */
 	.mcp-oauth {
 		margin: 0.6rem 0 0.8rem;
-		background: var(--surface);
+		background: var(--surface-2);
 		border: 1px solid var(--border-muted);
-		border-radius: 8px;
+		border-radius: var(--r-sm);
 		padding: 0.7rem 0.85rem;
 	}
 	.mcp-oauth strong { font-size: 0.85rem; color: var(--text); }
@@ -1981,39 +2084,67 @@
 	.mcp-token-create-controls { display: flex; align-items: center; gap: 0.45rem; min-width: 0; }
 	.mcp-profile-select { width: auto; min-width: 150px; font-size: 0.78rem; padding: 0.42rem 0.55rem; }
 	.mcp-fresh {
-		background: var(--surface-2); border: 1px solid var(--warning);
-		border-radius: 8px; padding: 0.7rem; margin-bottom: 0.7rem;
+		background: var(--warning-tint); border: 1px solid var(--warning-border);
+		border-radius: var(--r-sm); padding: 0.7rem; margin-bottom: 0.7rem;
 		display: flex; flex-direction: column; gap: 0.5rem;
 	}
 	.mcp-fresh-warn { font-size: 0.82rem; color: var(--warning); margin: 0; font-weight: 600; }
 	.mcp-fresh-row { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
 	.mcp-fresh-token {
 		flex: 1; min-width: 0;
-		font-family: monospace; font-size: 0.78rem;
+		font-family: var(--font-mono); font-size: 0.78rem;
 		padding: 0.4rem 0.55rem;
-		background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+		background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-sm);
 		overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 	}
 	.mcp-tokens { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.45rem; }
+
+	/* Calm two-line token cards: identity on line 1, muted timestamps on line 2. */
 	.mcp-token {
-		display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem;
-		padding: 0.55rem 0.7rem;
-		background: var(--surface); border: 1px solid var(--border-muted); border-radius: 8px;
-		font-size: 0.85rem;
+		display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
+		padding: 0.6rem 0.75rem;
+		background: var(--surface-2); border: 1px solid var(--border-muted); border-radius: var(--r-md);
 	}
-	.mcp-token-meta { display: flex; flex-wrap: wrap; gap: 0.4rem 0.7rem; align-items: baseline; flex: 1; min-width: 0; }
-	.mcp-token-prefix { font-family: monospace; color: var(--text); }
-	.mcp-token-label { color: var(--text-muted); }
-	.mcp-token-when { font-size: 0.75rem; color: var(--text-subtle); }
-	.agent-readiness { margin: 1rem 0; padding: 0.9rem; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-subtle); }
-	.agent-readiness--ready { border-color: color-mix(in srgb, #34c759 55%, var(--border)); }
+	.mcp-token-main { display: flex; flex-direction: column; gap: 0.3rem; flex: 1; min-width: 0; }
+	.mcp-token-line1 { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+	.mcp-token-prefix { font-family: var(--font-mono); font-size: 0.85rem; color: var(--text); }
+	.mcp-token-label { color: var(--text-muted); font-size: 0.85rem; }
+	.mcp-token-line2 {
+		display: flex; flex-wrap: wrap; gap: 0.2rem 0.75rem;
+		font-size: 0.75rem; color: var(--text-subtle);
+	}
+
+	.agent-readiness { margin: 1rem 0; padding: 0.9rem; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-2); }
+	.agent-readiness--ready { border-color: var(--success-border); }
 	.agent-readiness-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; }
 	.agent-readiness-head p { margin: 0.2rem 0 0; color: var(--text-muted); font-size: 0.82rem; }
-	.agent-readiness-list { list-style: none; padding: 0; margin: 0.75rem 0 0; display: grid; gap: 0.35rem; font-size: 0.82rem; color: var(--text-muted); }
-	.agent-readiness-list li.ok { color: #25a244; }
-	.agent-readiness-issues { margin-top: 0.75rem; padding: 0.65rem; border-radius: var(--r-sm); background: color-mix(in srgb, var(--warning) 10%, transparent); }
+
+	/* One-line readiness summary replacing the always-open eight-row checklist. */
+	.readiness-status {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		margin: 0.75rem 0 0;
+		padding: 0.3rem 0.7rem;
+		border-radius: var(--r-pill);
+		font-size: 0.82rem;
+		font-weight: 600;
+		background: var(--warning-tint);
+		color: var(--warning);
+		border: 1px solid var(--warning-border);
+	}
+
+	.readiness-status--ready {
+		background: var(--success-tint);
+		color: var(--success);
+		border-color: var(--success-border);
+	}
+
+	.agent-readiness-list { list-style: none; padding: 0; margin: 0.5rem 0 0; display: grid; gap: 0.35rem; font-size: 0.82rem; color: var(--text-muted); }
+	.agent-readiness-list li.ok { color: var(--success); }
+	.agent-readiness-issues { margin-top: 0.75rem; padding: 0.65rem; border-radius: var(--r-sm); background: var(--warning-tint); }
 	.agent-readiness-issues p { margin: 0.2rem 0; font-size: 0.8rem; color: var(--text); }
-	.agent-readiness-next { margin-top: 0.75rem; padding: 0.75rem; border-radius: var(--r-sm); background: color-mix(in srgb, var(--primary) 9%, var(--surface)); }
+	.agent-readiness-next { margin-top: 0.75rem; padding: 0.75rem; border-radius: var(--r-sm); background: var(--surface-elevated); border: 1px solid var(--border); }
 	.agent-readiness-next p { margin: 0.25rem 0 0.65rem; font-size: 0.82rem; color: var(--text); line-height: 1.45; }
 	.agent-readiness-action { display: inline-flex; width: fit-content; text-decoration: none; }
 
@@ -2030,17 +2161,13 @@
 		.key-input-footer .btn-primary { width: 100%; justify-content: center; }
 	}
 
-	.account-section {
-		border-top: 1px solid var(--border-muted);
-		padding-top: 1.5rem;
-	}
 	.logout-btn {
 		display: inline-flex; align-items: center; gap: 0.5rem;
-		background: none; color: var(--danger-soft, var(--text-muted));
+		background: none; color: var(--danger-soft);
 		border: 1px solid var(--border-muted); border-radius: var(--r-pill);
 		padding: 0.6rem 1.1rem; font-size: 0.9rem; font-weight: 600;
 		cursor: pointer; min-height: 44px; touch-action: manipulation;
 	}
-	.logout-btn:hover:not(:disabled) { border-color: var(--danger-soft, var(--text-muted)); color: var(--text); }
+	.logout-btn:hover:not(:disabled) { border-color: var(--danger-soft); color: var(--text); }
 	.logout-btn:disabled { opacity: 0.6; cursor: default; }
 </style>

@@ -1,6 +1,6 @@
 import { error, json } from '@sveltejs/kit';
 import { encryptApiKey } from '$lib/server/crypto';
-import { getUserApiKeyStatus } from '$lib/server/user-keys';
+import { getUserApiKeyOverview } from '$lib/server/user-keys';
 import { getDb } from '$lib/server/db';
 import { validateElevenLabsKey, type ElevenLabsCapability } from '$lib/server/api-key-validation';
 import type { RequestHandler } from './$types';
@@ -89,9 +89,16 @@ export const GET: RequestHandler = async ({ platform, locals }) => {
 	if (!locals.userId) throw error(401, 'Unauthorized');
 
 	const db = getDb(platform!);
-	const status = await getUserApiKeyStatus(db, locals.userId);
+	// The masked suffix ("…abcd") lets users verify which key is stored; it requires the
+	// encryption key, which is always configured in deployed environments. Without it we
+	// degrade to configured-status only.
+	const { status, suffixes } = await getUserApiKeyOverview(
+		db,
+		locals.userId,
+		platform?.env.ENCRYPTION_KEY
+	);
 
-	return json(status);
+	return json({ ...status, suffixes });
 };
 
 export const PUT: RequestHandler = async ({ request, platform, locals }) => {

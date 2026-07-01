@@ -172,6 +172,17 @@ export const de: Record<string, string> = {
 	'appSettings.prepareAudioAheadDesc': 'Erzeugt Audio für kommende Karten, bevor du es abspielst, damit Wiederholungen schneller wirken. Das kann Credits für Karten nutzen, die du eventuell nicht anhörst.',
 	'appSettings.dashboard': '\u00dcbersicht',
 
+	// Abschnittsnavigation in den Einstellungen (kurze Pill-Labels)
+	'settings.nav.label': 'Einstellungsbereiche',
+	'settings.nav.language': 'Sprache',
+	'settings.nav.keys': 'Schl\u00fcssel',
+	'settings.nav.audio': 'Audio',
+	'settings.nav.tutor': 'Tutor',
+	'settings.nav.mcp': 'MCP',
+	'settings.nav.usage': 'Nutzung',
+	'settings.nav.account': 'Konto',
+	'settings.account.title': 'Konto',
+
 	// Voice provider
 	'settings.voice.title': 'Sprachanbieter',
 	'settings.voice.desc': 'Wähle, welcher Dienst Karten vorliest und Sprachbefehle erkennt.',
@@ -185,11 +196,9 @@ export const de: Record<string, string> = {
 	'settings.voice.commandLanguage.auto': 'Auto',
 	'settings.voice.commandLanguage.en': 'Englisch',
 	'settings.voice.commandLanguage.de': 'Deutsch',
-	'settings.voice.saved': 'Spracheinstellungen gespeichert',
-	'settings.voice.saveFailed': 'Spracheinstellungen konnten nicht gespeichert werden',
 
 	// ElevenLabs Sprach-Studio
-	'settings.elevenlabs.needKey': 'Füge unten deinen ElevenLabs-API-Schlüssel hinzu, um eine Stimme zu wählen, ein Modell auszuwählen und dein Credit-Guthaben zu sehen.',
+	'settings.elevenlabs.needKey': 'Füge oben im Bereich „API-Schlüssel" deinen ElevenLabs-API-Schlüssel hinzu, um eine Stimme zu wählen, ein Modell auszuwählen und dein Credit-Guthaben zu sehen.',
 	'settings.elevenlabs.credits': 'Credit-Guthaben',
 	'settings.elevenlabs.creditsError': 'Credit-Guthaben konnte nicht geladen werden — deinem ElevenLabs-Key fehlt evtl. die Berechtigung „User" (Read).',
 	'settings.elevenlabs.creditsUsed': '{used} / {limit} Zeichen verbraucht',
@@ -218,6 +227,10 @@ export const de: Record<string, string> = {
 	'settings.elevenlabs.retry': 'Erneut versuchen',
 	'settings.elevenlabs.searchVoices': 'Nach Name oder Voice-ID suchen…',
 	'settings.elevenlabs.preview': 'Stimme anhören',
+	'settings.elevenlabs.previewBtn': 'Anhören',
+	'settings.elevenlabs.previewStop': 'Stopp',
+	'settings.elevenlabs.allCategories': 'Alle',
+	'settings.elevenlabs.categoryFilter': 'Stimmen nach Kategorie filtern',
 	'settings.elevenlabs.noVoices': 'Keine Stimmen passen zu deiner Suche.',
 	'settings.elevenlabs.tuning': 'Erweiterte Stimmeinstellungen',
 	'settings.elevenlabs.speed': 'Geschwindigkeit',
@@ -289,13 +302,17 @@ export const de: Record<string, string> = {
 	'settings.ttsCache.pinned': '{count} bis zu einem Prüfungsdatum aufbewahrt.',
 	'settings.ttsCache.hitRate': 'Cache-Trefferquote: {pct}%',
 	'settings.ttsCache.saved': '~{chars} Zeichen aus dem Cache bedient',
-	'settings.ttsCache.showRecent': 'Letzte Anfragen anzeigen',
-	'settings.ttsCache.hideRecent': 'Letzte Anfragen ausblenden',
+	'settings.ttsCache.diagnostics': 'Letzte Anfragen (Diagnose)',
 	'settings.ttsCache.loadingRecent': 'Letzte Anfragen werden geladen...',
 	'settings.ttsCache.colWhen': 'Wann',
 	'settings.ttsCache.colStatus': 'Ergebnis',
 	'settings.ttsCache.colChars': 'Zeichen',
-	'settings.ttsCache.monitorNote': 'Letzte Sprachanfragen (14 Tage). edge-hit / r2-hit / inflight-hit wurden ohne Anbieteraufruf bedient; cache-only-miss wurde nicht berechnet.',
+	'settings.ttsCache.status.hit': 'Aus dem Cache bedient',
+	'settings.ttsCache.status.generated': 'Neu erzeugt',
+	'settings.ttsCache.status.noStore': 'Erzeugt (Cache nicht verfügbar)',
+	'settings.ttsCache.status.storeFailed': 'Erzeugt, Speichern fehlgeschlagen',
+	'settings.ttsCache.status.skipped': 'Nicht im Cache (nicht berechnet)',
+	'settings.ttsCache.monitorNote': 'Letzte Sprachanfragen (14 Tage). Aus dem Cache bediente Anfragen haben keine Anbieter-Credits verbraucht.',
 	'settings.usage.noUsage': 'Noch keine Nutzung aufgezeichnet',
 
 	// Card Browser
@@ -434,6 +451,8 @@ export const de: Record<string, string> = {
 	'common.confirm': 'Bestätigen',
 	'common.dismiss': 'Schließen',
 	'common.close': 'Schließen',
+	'common.savedFlag': 'Gespeichert ✓',
+	'common.saveFailedFlag': 'Speichern fehlgeschlagen',
 	'common.ok': 'OK',
 
 	// Card editor (modal)
@@ -538,6 +557,9 @@ export const de: Record<string, string> = {
 	'settings.agent.readiness.override.language': 'Language',
 	'settings.agent.readiness.override.voice': 'Voice ID',
 	'settings.agent.readiness.nextStep': 'Nächster Schritt',
+	'settings.agent.readiness.oneStepLeft': 'Noch 1 Schritt',
+	'settings.agent.readiness.stepsLeft': 'Noch {count} Schritte',
+	'settings.agent.readiness.showChecklist': 'Vollständige Checkliste anzeigen',
 	'settings.agent.readiness.action.apiKey': 'ElevenLabs-API-Schlüssel öffnen',
 	'settings.agent.readiness.action.agent': 'Agent in ElevenLabs öffnen',
 	'settings.agent.readiness.action.mcp': 'Unten mit MCP weitermachen',
