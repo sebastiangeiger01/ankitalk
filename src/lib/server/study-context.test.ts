@@ -41,4 +41,35 @@ describe('renderStudyCard', () => {
 		expect(card.answer).toContain('Mitosis and meiosis');
 		expect(card.tags).toEqual(['cells', 'exam']);
 	});
+
+	it('returns raw field values whole (no 2k clip) so read→patch round-trips losslessly', () => {
+		// A realistic Back with several images + captions easily exceeds 2000 chars of HTML.
+		const longBack =
+			'<img src="a.png"><p>caption</p>'.repeat(120) + '<p>Merksatz / Selbstcheck / Prüfungsanker</p>';
+		expect(longBack.length).toBeGreaterThan(2_000);
+		const card = renderStudyCard({
+			card_id: 'c1',
+			note_id: 'n1',
+			deck_id: 'd1',
+			deck_name: 'Vortrag',
+			card_type: 'basic',
+			ordinal: 0,
+			front_template: null,
+			back_template: null,
+			fields: JSON.stringify([
+				{ name: 'Front', value: 'Frage?' },
+				{ name: 'Back', value: longBack }
+			]),
+			tags: '',
+			fsrs_state: 0,
+			due_at: '2026-06-22T00:00:00Z',
+			fsrs_reps: 0,
+			fsrs_lapses: 0,
+			fsrs_stability: 0,
+			fsrs_difficulty: 0,
+			suspended: 0
+		});
+		const back = card.fields.find((f) => f.name === 'Back');
+		expect(back?.value).toBe(longBack); // full value, not clipped at 2000
+	});
 });
