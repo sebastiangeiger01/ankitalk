@@ -14,6 +14,7 @@
 	let currentPage = $state(1);
 	let pageSize = $state(20);
 	let loading = $state(true);
+	let loadError = $state(false);
 	let deckName = $state('');
 	let searchQuery = $state('');
 	let stateFilter = $state<'all' | 'new' | 'learning' | 'review' | 'suspended'>('all');
@@ -31,6 +32,7 @@
 
 	async function loadCards() {
 		loading = true;
+		loadError = false;
 		const params = new URLSearchParams({
 			page: String(currentPage),
 			pageSize: String(pageSize),
@@ -38,13 +40,16 @@
 		});
 		if (searchQuery) params.set('q', searchQuery);
 
-		const res = await fetch(`/api/decks/${deckId}/cards?${params}`);
-		if (res.ok) {
+		try {
+			const res = await fetch(`/api/decks/${deckId}/cards?${params}`);
+			if (!res.ok) throw new Error(`cards fetch failed: ${res.status}`);
 			const data = (await res.json()) as { cards: BrowseCard[]; total: number; page: number; pageSize: number };
 			cards = data.cards;
 			total = data.total;
 			currentPage = data.page;
 			pageSize = data.pageSize;
+		} catch {
+			loadError = true;
 		}
 		loading = false;
 	}
@@ -228,6 +233,11 @@
 
 	{#if loading}
 		<div class="loading-msg"><Spinner size={26} /></div>
+	{:else if loadError}
+		<div class="error-msg" role="alert">
+			<p>{$t('cards.loadError')}</p>
+			<button class="btn-secondary" onclick={loadCards}>{$t('cards.retry')}</button>
+		</div>
 	{:else if cards.length === 0}
 		<p class="empty-msg">{$t('cards.empty')}</p>
 	{:else}
@@ -399,11 +409,21 @@
 	}
 
 	.loading-msg, .empty-msg {
-		color: #8080c0;
+		color: var(--text-muted);
 		display: flex;
 		justify-content: center;
 		text-align: center;
 		padding: 2rem;
+	}
+
+	.error-msg {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 2rem;
+		color: var(--danger-soft);
+		text-align: center;
 	}
 
 	.card-list {

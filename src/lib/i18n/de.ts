@@ -48,6 +48,7 @@ export const de: Record<string, string> = {
 	'onboarding.dismiss': 'Ausblenden',
 
 	// Review - Start screen
+	'review.cardRegion': 'Lernkarte',
 	'review.readyTitle': 'Bereit zur Abfrage',
 	'review.startHint': 'Tippe auf den Button, um deine Abfragesitzung zu starten.',
 	'review.startReview': 'Abfrage starten',
@@ -297,6 +298,8 @@ export const de: Record<string, string> = {
 	'cards.newCard': 'Neue Karte',
 	'cards.loading': 'Laden...',
 	'cards.empty': 'Keine Karten gefunden.',
+	'cards.loadError': 'Karten konnten nicht geladen werden. Prüfe deine Verbindung und versuche es erneut.',
+	'cards.retry': 'Erneut versuchen',
 	'cards.selected': '{count} ausgew\u00e4hlt',
 	'cards.suspendAction': 'Aussetzen',
 	'cards.unsuspendAction': 'Fortsetzen',

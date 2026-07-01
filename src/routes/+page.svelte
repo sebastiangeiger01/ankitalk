@@ -37,8 +37,9 @@
 	async function loadDecks() {
 		const res = await fetch('/api/decks');
 		if (res.ok) {
-			const data = (await res.json()) as { decks: DeckWithDueCount[] };
+			const data = (await res.json()) as { decks: DeckWithDueCount[]; has_reviewed?: boolean };
 			decks = data.decks;
+			hasReviewed = Boolean(data.has_reviewed);
 			// Warm up TTS cache for the first due card of each deck with cards due.
 			// Limited to 3 decks to avoid hammering the TTS endpoint on large collections.
 			// The audioCache is module-level so these buffers are already decoded when
@@ -181,9 +182,6 @@
 				? keys.openai && keys.deepgram
 				: keys.elevenlabs;
 		}).catch(() => {});
-		// Check if user has any reviews (simple heuristic: check first deck's stats or use a lightweight query)
-		// For now, we'll consider "has reviewed" once they have decks with any due history
-		// This is a lightweight check via the decks endpoint — if any deck has reps > 0
 	});
 </script>
 

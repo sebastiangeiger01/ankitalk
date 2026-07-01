@@ -49,6 +49,17 @@
 	let genSpeed = $state(1);
 
 	let showSpeed = $state(false);
+	let speedWrapEl = $state<HTMLElement | null>(null);
+
+	/* The speed popover has no backdrop, so dismiss it like a native menu: Escape or any
+	 * pointer press outside its wrapper. */
+	function onWindowKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape' && showSpeed) showSpeed = false;
+	}
+
+	function onWindowPointerdown(e: PointerEvent) {
+		if (showSpeed && speedWrapEl && !speedWrapEl.contains(e.target as Node)) showSpeed = false;
+	}
 
 	// "Jump to current sentence" and "scroll to top" affordances. Both visibilities are derived
 	// from scroll position so the floating pills appear only when actually useful.
@@ -629,6 +640,8 @@
 	);
 </script>
 
+<svelte:window onkeydown={onWindowKeydown} onpointerdown={onWindowPointerdown} />
+
 <div class="reader">
 	<a href="/listen" class="back-link">&larr; {$t('listen.back')}</a>
 
@@ -747,7 +760,7 @@
 			       a non-default speed re-synthesizes (and re-bills) sentences that haven't
 			       been cached at that speed yet. Use this if the playback-rate audio sounds
 			       choppy or unnatural. -->
-			<div class="speed-wrap">
+			<div class="speed-wrap" bind:this={speedWrapEl}>
 				<button
 					class="speed-btn"
 					onclick={() => (showSpeed = !showSpeed)}

@@ -48,6 +48,7 @@ export const en: Record<string, string> = {
 	'onboarding.dismiss': 'Dismiss',
 
 	// Review - Start screen
+	'review.cardRegion': 'Flashcard',
 	'review.readyTitle': 'Ready to Review',
 	'review.startHint': 'Tap the button below to start your review session.',
 	'review.startReview': 'Start Review',
@@ -297,6 +298,8 @@ export const en: Record<string, string> = {
 	'cards.newCard': 'New Card',
 	'cards.loading': 'Loading...',
 	'cards.empty': 'No cards found.',
+	'cards.loadError': 'Couldn’t load cards. Check your connection and try again.',
+	'cards.retry': 'Try again',
 	'cards.selected': '{count} selected',
 	'cards.suspendAction': 'Suspend',
 	'cards.unsuspendAction': 'Unsuspend',

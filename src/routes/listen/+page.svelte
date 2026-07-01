@@ -30,7 +30,9 @@
 	const charCount = $derived(text.length);
 	const sentences = $derived(text.trim() ? splitIntoSentences(text) : []);
 	const credits = $derived(estimateCredits(sentences.reduce((n, c) => n + c.length, 0), modelId));
-	const insufficient = $derived(balanceRemaining !== null && charCount > balanceRemaining);
+	/* Compare estimated credits (chars × model multiplier — Flash/Turbo bill at 0.5×), not raw
+	 * characters, or cheap models trip the warning with plenty of balance left. */
+	const insufficient = $derived(balanceRemaining !== null && credits > balanceRemaining);
 
 	onMount(async () => {
 		try {

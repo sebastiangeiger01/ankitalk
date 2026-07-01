@@ -541,7 +541,7 @@
 		{#if status === 'waiting'}
 			<p class="waiting-text">{$t('review.waitingCard', { seconds: learningCountdown })}</p>
 		{:else}
-			<div class="card-content" role="region" aria-label="Flashcard">
+			<div class="card-content" role="region" aria-label={$t('review.cardRegion')}>
 				<div class="question-text">{@html frontHtml}</div>
 				{#if phase === 'rating'}
 					<hr class="card-divider" />
