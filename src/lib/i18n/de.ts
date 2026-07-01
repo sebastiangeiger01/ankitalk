@@ -25,6 +25,7 @@ export const de: Record<string, string> = {
 	'dashboard.delete': 'L\u00f6schen',
 	'dashboard.deleteConfirm': '"{name}" und alle Karten l\u00f6schen?',
 	'dashboard.exportFailed': 'Export fehlgeschlagen: {error}',
+	'dashboard.exportDone': '„{name}“ exportiert.',
 
 	// Dashboard - import status
 	'import.parsing': '.apkg-Datei wird analysiert...',

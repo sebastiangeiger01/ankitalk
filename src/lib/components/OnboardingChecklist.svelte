@@ -6,9 +6,11 @@
 		hasDecks: boolean;
 		hasReviewed: boolean;
 		onDismiss: () => void;
+		/** Triggers the dashboard's .apkg file picker so the import step is directly actionable. */
+		onImport?: () => void;
 	}
 
-	let { hasRequiredKeys, hasDecks, hasReviewed, onDismiss }: Props = $props();
+	let { hasRequiredKeys, hasDecks, hasReviewed, onDismiss, onImport }: Props = $props();
 
 	// "Start review" is only meaningful once keys + deck are both ready
 	let canStartReview = $derived(hasRequiredKeys && hasDecks);
@@ -78,7 +80,14 @@
 					</svg>
 				{/if}
 			</span>
-			<span class="step-label">{$t('onboarding.importDeck')}</span>
+			{#if hasDecks || !onImport}
+				<span class="step-label">{$t('onboarding.importDeck')}</span>
+			{:else}
+				<button type="button" class="step-link step-btn" onclick={onImport}>
+					<span class="step-label step-label--action">{$t('onboarding.importDeck')}</span>
+					<span class="step-arrow" aria-hidden="true">&rsaquo;</span>
+				</button>
+			{/if}
 		</li>
 
 		<!-- Step 4: Start first review -->
@@ -102,9 +111,10 @@
 
 <style>
 	.checklist-card {
-		background: #1e1e38;
-		border: 1px solid var(--primary);
-		border-radius: 12px;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--r-lg);
+		box-shadow: var(--shadow-sm);
 		padding: 1.25rem 1.5rem;
 		margin-bottom: 2rem;
 		position: relative;
@@ -133,7 +143,7 @@
 	.subtitle {
 		margin: 0;
 		font-size: 0.85rem;
-		color: #9090b8;
+		color: var(--text-muted);
 	}
 
 	.dismiss-btn {
@@ -143,18 +153,18 @@
 		justify-content: center;
 		width: 28px;
 		height: 28px;
-		border-radius: 6px;
+		border-radius: var(--r-sm);
 		border: none;
 		background: none;
-		color: #6868a8;
+		color: var(--text-subtle);
 		cursor: pointer;
-		transition: background 0.15s, color 0.15s;
+		transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
 		margin-top: -2px;
 	}
 
 	.dismiss-btn:hover {
-		background: var(--border-muted);
-		color: #c0c0e0;
+		background: var(--surface-elevated);
+		color: var(--text);
 	}
 
 	.steps {
@@ -180,24 +190,24 @@
 	}
 
 	.step-label {
-		color: #c8c8e8;
+		color: var(--text);
 	}
 
 	.step-label--action {
-		color: #a0a0e0;
+		color: var(--text);
 		text-decoration: underline;
 		text-decoration-color: var(--border-strong);
 		text-underline-offset: 2px;
 	}
 
 	.step.done .step-label {
-		color: #a0a0c8;
+		color: var(--text-subtle);
 		text-decoration: line-through;
 		text-decoration-color: var(--border-strong);
 	}
 
 	.step.disabled .step-label {
-		color: var(--border-strong);
+		color: var(--text-subtle);
 	}
 
 	.step-link {
@@ -209,18 +219,25 @@
 		flex: 1;
 		min-width: 0;
 		padding: 0.3rem 0;
-		-webkit-tap-highlight-color: rgba(90, 90, 142, 0.2);
+		-webkit-tap-highlight-color: rgba(255, 255, 255, 0.08);
+	}
+
+	.step-btn {
+		background: none;
+		border: none;
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
 	}
 
 	.step-link:hover .step-label--action,
 	.step-link:active .step-label--action {
-		color: #c0c0ff;
-		text-decoration-color: #8080c0;
+		text-decoration-color: var(--text);
 	}
 
 	.step-desc {
 		font-size: 0.78rem;
-		color: #6a6a9a;
+		color: var(--text-subtle);
 	}
 
 	.step-arrow {
@@ -232,6 +249,6 @@
 
 	.step-link:hover .step-arrow,
 	.step-link:active .step-arrow {
-		color: #a0a0e0;
+		color: var(--text);
 	}
 </style>
