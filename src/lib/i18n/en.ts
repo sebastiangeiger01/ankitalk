@@ -145,6 +145,8 @@ export const en: Record<string, string> = {
 	'settings.learningStepsHelper': 'Comma-separated. Cards walk through these steps before graduating. Default: 1, 10',
 	'settings.relearningSteps': 'Relearning steps (minutes)',
 	'settings.relearningStepsHelper': 'Steps for lapsed cards. Default: 10',
+	'settings.stepsInvalid': 'Enter comma-separated positive minutes, e.g. 1, 10',
+	'settings.stepsPreviewMin': '{n} min',
 	'settings.audioPinTitle': 'Keep audio ready until',
 	'settings.audioPinHelper': 'Pin this deck to an exam date to keep its spoken audio cached until then, so cards you study are not re-generated (and re-charged). Leave empty for the default — audio is kept while in use and cleared after a period of inactivity.',
 	'settings.audioPinClear': 'Clear',
@@ -353,6 +355,12 @@ export const en: Record<string, string> = {
 	'stats.noRetention': 'Not enough mature card reviews yet',
 	'stats.dailyReviews': 'Daily Reviews',
 	'stats.noReviews': 'No reviews in this period',
+	'stats.lastDays': 'Last {days} days',
+	'stats.totalReviews': 'Total reviews',
+	'stats.reviewsPerDay': 'Reviews per day',
+	'stats.avgAnswerTime': 'Avg. answer time',
+	'stats.retentionTarget': 'Target {pct}%',
+	'stats.periodLabel': 'Time period',
 
 	// Listen (text → audio)
 	'listen.title': 'Narrate your texts',

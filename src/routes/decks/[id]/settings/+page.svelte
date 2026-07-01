@@ -2,6 +2,7 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { t } from '$lib/i18n';
+	import { validateSteps } from '$lib/fsrs';
 	import Spinner from '$lib/components/Spinner.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
@@ -21,6 +22,16 @@
 	let relearningSteps = $state('10');
 	// Exam-pin: keep this deck's spoken audio cached (no regeneration) until this date. '' = off.
 	let audioKeepUntil = $state('');
+
+	// Client-side validation of the free-text step lists — the server would otherwise
+	// silently substitute defaults for junk input.
+	const learningStepsCheck = $derived(validateSteps(learningSteps));
+	const relearningStepsCheck = $derived(validateSteps(relearningSteps));
+	const stepsValid = $derived(learningStepsCheck.valid && relearningStepsCheck.valid);
+
+	function stepsPreview(steps: number[]): string {
+		return steps.map((n) => $t('settings.stepsPreviewMin', { n })).join(' · ');
+	}
 
 	async function loadSettings() {
 		try {
@@ -56,6 +67,7 @@
 	}
 
 	async function save() {
+		if (!stepsValid) return;
 		saving = true;
 		saveStatus = '';
 
@@ -170,13 +182,39 @@
 
 			<div class="field">
 				<label for="learningSteps">{$t('settings.learningSteps')}</label>
-				<input id="learningSteps" type="text" bind:value={learningSteps} placeholder="1, 10" />
+				<input
+					id="learningSteps"
+					type="text"
+					bind:value={learningSteps}
+					placeholder="1, 10"
+					class:invalid={!learningStepsCheck.valid}
+					aria-invalid={!learningStepsCheck.valid}
+					aria-describedby={learningStepsCheck.valid ? undefined : 'learningStepsError'}
+				/>
+				{#if learningStepsCheck.valid}
+					<span class="steps-preview">&rarr; {stepsPreview(learningStepsCheck.steps)}</span>
+				{:else}
+					<span class="field-error" id="learningStepsError">{$t('settings.stepsInvalid')}</span>
+				{/if}
 				<span class="helper">{$t('settings.learningStepsHelper')}</span>
 			</div>
 
 			<div class="field">
 				<label for="relearningSteps">{$t('settings.relearningSteps')}</label>
-				<input id="relearningSteps" type="text" bind:value={relearningSteps} placeholder="10" />
+				<input
+					id="relearningSteps"
+					type="text"
+					bind:value={relearningSteps}
+					placeholder="10"
+					class:invalid={!relearningStepsCheck.valid}
+					aria-invalid={!relearningStepsCheck.valid}
+					aria-describedby={relearningStepsCheck.valid ? undefined : 'relearningStepsError'}
+				/>
+				{#if relearningStepsCheck.valid}
+					<span class="steps-preview">&rarr; {stepsPreview(relearningStepsCheck.steps)}</span>
+				{:else}
+					<span class="field-error" id="relearningStepsError">{$t('settings.stepsInvalid')}</span>
+				{/if}
 				<span class="helper">{$t('settings.relearningStepsHelper')}</span>
 			</div>
 
@@ -193,7 +231,7 @@
 				<span class="helper">{$t('settings.audioPinHelper')}</span>
 			</div>
 
-			<button type="submit" class="save-btn" disabled={saving}>
+			<button type="submit" class="btn-primary save-btn" disabled={saving || !stepsValid}>
 				{#if saving}<Spinner size={14} />{/if}
 				{saving ? $t('settings.saving') : $t('settings.save')}
 			</button>
@@ -210,7 +248,7 @@
 					<strong>{$t('settings.resetTitle')}</strong>
 					<p class="helper">{$t('settings.resetHelper')}</p>
 				</div>
-				<button class="reset-btn" disabled={resetting} onclick={() => (confirmReset = true)}>
+				<button class="btn-danger reset-btn" disabled={resetting} onclick={() => (confirmReset = true)}>
 					{resetting ? $t('common.loading') : $t('settings.resetButton')}
 				</button>
 			</div>
@@ -219,7 +257,7 @@
 					<strong>{$t('settings.deleteTitle')}</strong>
 					<p class="helper">{$t('settings.deleteHelper')}</p>
 				</div>
-				<button class="reset-btn" disabled={deleting} onclick={() => (confirmDelete = true)}>
+				<button class="delete-btn" disabled={deleting} onclick={() => (confirmDelete = true)}>
 					{deleting ? $t('common.loading') : $t('settings.deleteButton')}
 				</button>
 			</div>
@@ -267,13 +305,17 @@
 	h1 {
 		margin: 1rem 0 1.5rem;
 		font-size: 1.4rem;
+		/* Deck names are user text and can be arbitrarily long — keep the heading to one line. */
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
 	.page-spinner {
 		display: flex;
 		justify-content: center;
 		padding: 3rem 0;
-		color: #8080c0;
+		color: var(--text-muted);
 	}
 
 	form {
@@ -298,12 +340,14 @@
 	input[type="text"],
 	input[type="date"] {
 		padding: 0.5rem 0.75rem;
-		background: var(--surface);
+		background: var(--surface-2);
 		border: 1px solid var(--border);
-		border-radius: 6px;
+		border-radius: var(--r-sm);
 		color: var(--text);
 		font-size: 1rem;
 		width: 120px;
+		font-family: inherit;
+		transition: border-color var(--t-fast) var(--ease);
 	}
 
 	input[type="text"],
@@ -316,6 +360,11 @@
 	input[type="date"]:focus {
 		outline: none;
 		border-color: var(--border-strong);
+	}
+
+	input.invalid,
+	input.invalid:focus {
+		border-color: var(--danger-border);
 	}
 
 	.audio-pin-row {
@@ -345,31 +394,23 @@
 
 	.helper {
 		font-size: 0.75rem;
-		color: #8080a0;
+		color: var(--text-subtle);
 	}
 
+	.steps-preview {
+		font-size: 0.8rem;
+		color: var(--text-muted);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.field-error {
+		font-size: 0.8rem;
+		color: var(--danger-soft);
+	}
+
+	/* Colors come from the global .btn-primary recipe; this only adds layout. */
 	.save-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.4rem;
-		padding: 0.6rem 1.5rem;
-		background: var(--primary);
-		color: var(--text);
-		border: none;
-		border-radius: 8px;
-		font-size: 1rem;
-		cursor: pointer;
 		align-self: flex-start;
-		touch-action: manipulation;
-	}
-
-	.save-btn:hover {
-		background: var(--primary-hover);
-	}
-
-	.save-btn:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
 	}
 
 	.save-status {
@@ -382,19 +423,22 @@
 	}
 
 	.save-status.error {
-		color: #ff6666;
+		color: var(--danger-soft);
 	}
 
+	/* Danger zone: a bordered card of its own, with destructive actions kept apart —
+	   Reset stays an outline .btn-danger, Delete is the solid filled one. */
 	.danger-zone {
 		margin-top: 3rem;
-		padding-top: 1.5rem;
-		border-top: 1px solid #3a2020;
+		padding: 1.25rem;
+		border: 1px solid var(--danger-border);
+		border-radius: var(--r-lg);
 	}
 
 	.danger-zone h2 {
 		font-size: 1rem;
-		color: #ff6666;
-		margin: 0 0 1rem;
+		color: var(--danger-soft);
+		margin: 0 0 1.25rem;
 	}
 
 	.danger-item {
@@ -404,28 +448,42 @@
 		gap: 1rem;
 	}
 
+	.danger-item + .danger-item {
+		margin-top: 1.25rem;
+		padding-top: 1.25rem;
+		border-top: 1px solid var(--border-muted);
+	}
+
 	.danger-item p {
 		margin: 0.25rem 0 0;
 	}
 
+	/* Colors come from the global .btn-danger recipe; this only adds layout. */
 	.reset-btn {
-		padding: 0.5rem 1.2rem;
-		background: transparent;
-		color: #ff6666;
-		border: 1px solid #ff6666;
-		border-radius: 8px;
-		font-size: 0.9rem;
+		white-space: nowrap;
+	}
+
+	.delete-btn {
+		padding: 0.55rem 1.1rem;
+		background: var(--danger);
+		color: var(--text-on-primary);
+		border: 1px solid transparent;
+		border-radius: var(--r-md);
+		font-size: 0.95rem;
+		font-weight: 600;
+		font-family: inherit;
 		cursor: pointer;
 		white-space: nowrap;
 		touch-action: manipulation;
+		transition: background var(--t-fast) var(--ease);
 	}
 
-	.reset-btn:hover {
-		background: #3a1515;
+	.delete-btn:hover:not(:disabled) {
+		background: var(--danger-hover);
 	}
 
-	.reset-btn:disabled {
-		opacity: 0.5;
+	.delete-btn:disabled {
+		opacity: 0.45;
 		cursor: not-allowed;
 	}
 </style>

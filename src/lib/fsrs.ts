@@ -27,6 +27,33 @@ export function parseSteps(s: string | null | undefined): number[] {
 	return s.split(',').map((v) => parseFloat(v.trim())).filter((v) => !isNaN(v) && v > 0);
 }
 
+export interface StepsValidation {
+	valid: boolean;
+	/** Parsed step delays in minutes. Empty when the input is invalid. */
+	steps: number[];
+}
+
+/**
+ * Strictly validate a user-typed steps string ("1, 10") as a comma-separated list of
+ * positive numbers (spaces around entries allowed). Unlike `parseSteps`, which silently
+ * drops junk entries, any empty, zero/negative, or non-numeric entry marks the whole
+ * input invalid — so forms can block saving and show an inline error instead of the
+ * server quietly substituting defaults.
+ */
+export function validateSteps(input: string): StepsValidation {
+	if (!input.trim()) return { valid: false, steps: [] };
+	const steps: number[] = [];
+	for (const part of input.split(',')) {
+		const entry = part.trim();
+		// Plain decimal numbers only ("1", "0.5", ".5") — no signs, exponents, or units.
+		if (!/^\d*\.?\d+$/.test(entry)) return { valid: false, steps: [] };
+		const minutes = parseFloat(entry);
+		if (!(minutes > 0)) return { valid: false, steps: [] };
+		steps.push(minutes);
+	}
+	return { valid: true, steps };
+}
+
 /**
  * Convert a D1 card row to a ts-fsrs Card object.
  */

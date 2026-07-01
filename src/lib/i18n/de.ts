@@ -145,6 +145,8 @@ export const de: Record<string, string> = {
 	'settings.learningStepsHelper': 'Kommagetrennt. Karten durchlaufen diese Schritte vor dem Abschluss. Standard: 1, 10',
 	'settings.relearningSteps': 'Wiederlernschritte (Minuten)',
 	'settings.relearningStepsHelper': 'Schritte f\u00fcr vergessene Karten. Standard: 10',
+	'settings.stepsInvalid': 'Kommagetrennte positive Minutenwerte eingeben, z. B. 1, 10',
+	'settings.stepsPreviewMin': '{n} Min.',
 	'settings.audioPinTitle': 'Audio bereithalten bis',
 	'settings.audioPinHelper': 'Diesen Stapel an ein Pr\u00fcfungsdatum binden, damit die gesprochene Audio bis dahin im Cache bleibt und gelernte Karten nicht neu erzeugt (und erneut berechnet) werden. Leer lassen f\u00fcr den Standard \u2013 Audio bleibt bei Nutzung erhalten und wird nach einer Zeit der Inaktivit\u00e4t gel\u00f6scht.',
 	'settings.audioPinClear': 'L\u00f6schen',
@@ -353,6 +355,12 @@ export const de: Record<string, string> = {
 	'stats.noRetention': 'Noch nicht gen\u00fcgend reife Karten-Abfragen',
 	'stats.dailyReviews': 'T\u00e4gliche Abfragen',
 	'stats.noReviews': 'Keine Abfragen in diesem Zeitraum',
+	'stats.lastDays': 'Letzte {days} Tage',
+	'stats.totalReviews': 'Abfragen gesamt',
+	'stats.reviewsPerDay': 'Abfragen pro Tag',
+	'stats.avgAnswerTime': '\u00d8 Antwortzeit',
+	'stats.retentionTarget': 'Ziel: {pct}%',
+	'stats.periodLabel': 'Zeitraum',
 
 	// Listen (Text → Audio)
 	'listen.title': 'Texte vertonen',
