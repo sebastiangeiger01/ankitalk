@@ -1,7 +1,13 @@
 import { renderCard } from '$lib/client/card-renderer';
 import { serverCardSanitizer } from './card-sanitize';
 
+// Cap for the rendered `question`/`answer` previews (images render to nothing there, so 2k of
+// plain text is plenty). NOT used for raw field values — see MAX_FIELD_VALUE_CHARS.
 const MAX_TEXT_CHARS = 2_000;
+// Raw field values are the source an agent reads to edit and write back via patch_note_fields /
+// update_note_fields, so they must round-trip losslessly. Match the write-side field-value cap
+// (fieldSchema in mcp/tools.ts) exactly: anything the API could have stored, a read returns whole.
+const MAX_FIELD_VALUE_CHARS = 20_000;
 const MAX_CONTEXT_FIELDS = 20;
 const MAX_CURSOR_OFFSET = 500;
 
@@ -69,7 +75,7 @@ function parseFields(value: string): Array<{ name: string; value: string }> {
 			.slice(0, MAX_CONTEXT_FIELDS)
 			.map((field) => ({
 				name: String(field.name ?? '').slice(0, 200),
-				value: String(field.value ?? '').slice(0, MAX_TEXT_CHARS)
+				value: String(field.value ?? '').slice(0, MAX_FIELD_VALUE_CHARS)
 			}));
 	} catch {
 		return [];
