@@ -65,6 +65,8 @@ export const en: Record<string, string> = {
 	'review.reviewOnly': 'Review only',
 	'review.showHelp': 'Show voice commands & shortcuts',
 	'review.hideHelp': 'Hide voice commands & shortcuts',
+	'review.nothingDueTitle': 'All caught up',
+	'review.nothingDueHint': 'No cards are due right now. Come back later, or keep practicing in cram mode.',
 	'review.missingKeys': 'You need API keys to start reviewing.',
 	'review.missingKeysDetail': 'Add your ElevenLabs key in Settings, or choose OpenAI + Deepgram under advanced voice providers.',
 	'review.goToSettings': 'Go to Settings',
@@ -109,6 +111,8 @@ export const en: Record<string, string> = {
 	'review.undo': 'undo',
 	'review.cardSuspended': 'Card suspended',
 	'review.waitingCard': 'Card returning in {seconds}s...',
+	'review.sessionProgress': 'Session progress',
+	'review.transcriptLabel': 'Live transcript',
 
 	// Review - Ratings
 	'rating.again': 'Again',
@@ -120,7 +124,9 @@ export const en: Record<string, string> = {
 	'session.completeTitle': 'Session Complete',
 	'session.cardsReviewed': 'Cards Reviewed',
 	'session.duration': 'Duration',
-	'session.backToDashboard': 'Back to Dashboard',
+	'session.cardsPerMinute': 'Cards/min',
+	'session.backToDashboard': 'Back to Decks',
+	'session.reviewAgain': 'Review Again',
 
 	// Deck Settings
 	'settings.title': 'Settings',

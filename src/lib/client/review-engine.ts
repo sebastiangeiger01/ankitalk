@@ -123,6 +123,11 @@ export interface ReviewEngine {
 	toggleMic(): void;
 	toggleAudio(): void;
 	undo(): void;
+	/**
+	 * The live STT microphone stream, when the speech client exposes one. Used by the UI
+	 * to drive a level meter; returns null when the mic is unavailable or paused.
+	 */
+	getMicStream(): MediaStream | null;
 }
 
 /** FSRS states */
@@ -270,6 +275,28 @@ export function createReviewEngine(): ReviewEngine {
 		return 'end';
 	}
 
+	function stateBucket(state: number): keyof QueueCounts {
+		if (state === STATE_NEW) return 'new';
+		if (state === STATE_REVIEW) return 'review';
+		return 'learning';
+	}
+
+	/**
+	 * Remaining queue counts, including the card currently on screen. Emitted on every card
+	 * change so the top-bar counts and the session progress bar stay live as queues drain.
+	 * Matches the server's initial counts: both count the fetched card set per FSRS state.
+	 */
+	function computeCounts(): QueueCounts {
+		const counts: QueueCounts = { new: 0, learning: 0, review: 0 };
+		if (currentCard) counts[stateBucket(currentCard.fsrs_state)]++;
+		for (const card of reviewQueue) {
+			if (studiedNoteIds.has(card.note_id)) continue; // sibling — will be skipped
+			counts[stateBucket(card.fsrs_state)]++;
+		}
+		for (const entry of learningQueue) counts[stateBucket(entry.card.fsrs_state)]++;
+		return counts;
+	}
+
 	function presentCard() {
 		if (sessionFinished) return;
 
@@ -312,6 +339,7 @@ export function createReviewEngine(): ReviewEngine {
 			reps: currentCard.fsrs_reps,
 			lapses: currentCard.fsrs_lapses
 		});
+		emit({ type: 'counts', counts: computeCounts() });
 		emit({ type: 'phase_change', phase: 'question' });
 
 		// Preload the answer audio while question is playing
@@ -583,6 +611,7 @@ export function createReviewEngine(): ReviewEngine {
 			reps: card.fsrs_reps,
 			lapses: card.fsrs_lapses
 		});
+		emit({ type: 'counts', counts: computeCounts() });
 		emit({ type: 'phase_change', phase: 'rating' });
 
 		if (micOn) emit({ type: 'listening' });
@@ -610,6 +639,12 @@ export function createReviewEngine(): ReviewEngine {
 		prepareAudioAhead = options?.prepareAudioAhead ?? true;
 		startTime = Date.now();
 		isCramMode = options?.mode === 'cram';
+
+		// Reset session stats so the same engine can run back-to-back sessions
+		// (the summary screen's "Review again") without carrying over totals.
+		stats.cardsReviewed = 0;
+		stats.ratings = { again: 0, hard: 0, good: 0, easy: 0 };
+		stats.durationMs = 0;
 
 		// Microphone setup is optional and must not block cards.
 		try {
@@ -779,6 +814,9 @@ export function createReviewEngine(): ReviewEngine {
 		toggleAudio,
 		undo() {
 			performUndo();
+		},
+		getMicStream() {
+			return speechClient?.getMediaStream?.() ?? null;
 		}
 	};
 }

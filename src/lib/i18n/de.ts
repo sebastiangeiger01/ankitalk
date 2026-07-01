@@ -65,6 +65,8 @@ export const de: Record<string, string> = {
 	'review.reviewOnly': 'Nur wiederholende',
 	'review.showHelp': 'Sprachbefehle & Tastenkombinationen anzeigen',
 	'review.hideHelp': 'Sprachbefehle & Tastenkombinationen ausblenden',
+	'review.nothingDueTitle': 'Alles gelernt',
+	'review.nothingDueHint': 'Gerade ist keine Karte fällig. Schau später wieder vorbei – oder übe weiter im Paukmodus.',
 	'review.missingKeys': 'Du benötigst API-Schlüssel, um mit der Wiederholung zu beginnen.',
 	'review.missingKeysDetail': 'Füge deinen ElevenLabs-Schlüssel in den Einstellungen hinzu oder wähle OpenAI + Deepgram unter den erweiterten Sprachanbietern.',
 	'review.goToSettings': 'Zu den Einstellungen',
@@ -109,6 +111,8 @@ export const de: Record<string, string> = {
 	'review.undo': 'R\u00fcckg\u00e4ngig',
 	'review.cardSuspended': 'Karte ausgesetzt',
 	'review.waitingCard': 'Karte kommt in {seconds}s zur\u00fcck...',
+	'review.sessionProgress': 'Fortschritt der Sitzung',
+	'review.transcriptLabel': 'Live-Transkript',
 
 	// Review - Ratings
 	'rating.again': 'Nochmal',
@@ -120,7 +124,9 @@ export const de: Record<string, string> = {
 	'session.completeTitle': 'Sitzung abgeschlossen',
 	'session.cardsReviewed': 'Karten abgefragt',
 	'session.duration': 'Dauer',
+	'session.cardsPerMinute': 'Karten/Min.',
 	'session.backToDashboard': 'Zur\u00fcck zur \u00dcbersicht',
+	'session.reviewAgain': 'Nochmal abfragen',
 
 	// Deck Settings
 	'settings.title': 'Einstellungen',
