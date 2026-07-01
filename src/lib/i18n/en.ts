@@ -498,6 +498,7 @@ export const en: Record<string, string> = {
 	'agent.agent': 'Tutor',
 	'agent.inputPlaceholder': 'Type a message…',
 	'agent.send': 'Send',
+	'agent.newMessages': 'New messages',
 	'agent.ptt.label': 'Push-to-talk',
 	'agent.ptt.switchHint': 'Toggle push-to-talk mode on or off',
 	'agent.ptt.hold': 'Hold to talk',
