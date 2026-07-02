@@ -64,7 +64,6 @@ export const en: Record<string, string> = {
 	'review.learningOnly': 'Learning only',
 	'review.reviewOnly': 'Review only',
 	'review.showHelp': 'Show voice commands & shortcuts',
-	'review.hideHelp': 'Hide voice commands & shortcuts',
 	'review.nothingDueTitle': 'All caught up',
 	'review.nothingDueHint': 'No cards are due right now. Come back later, or keep practicing in cram mode.',
 	'review.missingKeys': 'You need API keys to start reviewing.',
@@ -86,6 +85,7 @@ export const en: Record<string, string> = {
 	'help.stopDesc': 'end session',
 
 	// Review - Keyboard shortcuts overlay
+	'help.title': 'Help & Commands',
 	'help.keyboardTitle': 'Keyboard Shortcuts',
 	'help.voiceTitle': 'Voice Commands',
 	'help.keyAnswer': 'Show answer',

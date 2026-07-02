@@ -64,7 +64,6 @@ export const de: Record<string, string> = {
 	'review.learningOnly': 'Nur lernende',
 	'review.reviewOnly': 'Nur wiederholende',
 	'review.showHelp': 'Sprachbefehle & Tastenkombinationen anzeigen',
-	'review.hideHelp': 'Sprachbefehle & Tastenkombinationen ausblenden',
 	'review.nothingDueTitle': 'Alles gelernt',
 	'review.nothingDueHint': 'Gerade ist keine Karte fällig. Schau später wieder vorbei – oder übe weiter im Paukmodus.',
 	'review.missingKeys': 'Du benötigst API-Schlüssel, um mit der Wiederholung zu beginnen.',
@@ -86,6 +85,7 @@ export const de: Record<string, string> = {
 	'help.stopDesc': 'Sitzung beenden',
 
 	// Review - Keyboard shortcuts overlay
+	'help.title': 'Hilfe & Befehle',
 	'help.keyboardTitle': 'Tastenkombinationen',
 	'help.voiceTitle': 'Sprachbefehle',
 	'help.keyAnswer': 'Antwort zeigen',
