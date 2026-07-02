@@ -14,6 +14,7 @@
 	import AgentChat from '$lib/components/AgentChat.svelte';
 
 	let agentChatOpen = $state(false);
+	let agentIntent = $state<'hint' | 'explain' | null>(null);
 	let agentEnabled = $state(false);
 	let tutorPausedReviewMic = false;
 	// Tutor context — populated from each card_change emit so the agent receives current
@@ -134,7 +135,12 @@
 		errorMsg = '';
 	}
 
-	function openTutor() {
+	/**
+	 * `intent` records how the tutor was summoned: an explicit voice command or H/E shortcut
+	 * carries 'hint'/'explain' and makes the tutor answer immediately, while the generic
+	 * toolbar button passes null so the chat opens with the prompt picker instead.
+	 */
+	function openTutor(intent: 'hint' | 'explain' | null) {
 		if (!agentEnabled) {
 			showReviewError($t('agent.errors.noAgent'));
 			return;
@@ -143,15 +149,13 @@
 			tutorPausedReviewMic = true;
 			engine.toggleMic();
 		}
+		agentIntent = intent;
 		agentChatOpen = true;
-	}
-
-	function requestTutor() {
-		engine.executeCommand(phase === 'question' ? 'hint' : 'explain');
 	}
 
 	function closeTutor() {
 		agentChatOpen = false;
+		agentIntent = null;
 		if (tutorPausedReviewMic && !micOn) engine.toggleMic();
 		tutorPausedReviewMic = false;
 	}
@@ -275,7 +279,7 @@
 				break;
 			}
 			case 'command':
-				if (event.command === 'hint' || event.command === 'explain') openTutor();
+				if (event.command === 'hint' || event.command === 'explain') openTutor(event.command);
 				if (['again', 'hard', 'good', 'easy'].includes(event.command)) {
 					highlightRating = event.command;
 					if (highlightTimer) clearTimeout(highlightTimer);
@@ -438,10 +442,10 @@
 				if (phase === 'rating') engine.executeCommand('easy');
 				break;
 			case 'e':
-				if (phase === 'rating') requestTutor();
+				if (phase === 'rating') engine.executeCommand('explain');
 				break;
 			case 'h':
-				if (phase === 'question') requestTutor();
+				if (phase === 'question') engine.executeCommand('hint');
 				break;
 			case 'r':
 				engine.executeCommand('repeat');
@@ -674,7 +678,7 @@
 					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.5-.36 2.18"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
 				{/if}
 			</button>
-			<button class="toolbar-btn toolbar-btn--tutor" class:off={!agentEnabled} onclick={requestTutor} title="{$t('agent.openTutor')} (H/E)" aria-label={$t('agent.openTutor')}>
+			<button class="toolbar-btn toolbar-btn--tutor" class:off={!agentEnabled} onclick={() => openTutor(null)} title="{$t('agent.openTutor')} (H/E)" aria-label={$t('agent.openTutor')}>
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" y1="10" x2="15" y2="10"/></svg>
 				<span>{$t('agent.openTutor')}</span>
 			</button>
@@ -769,6 +773,7 @@
 	cardId={agentCardId}
 	answerRevealed={phase === 'rating'}
 	locale={$locale === 'de' ? 'de' : 'en'}
+	intent={agentIntent}
 	onclose={closeTutor}
 />
 

@@ -53,11 +53,18 @@ export function sanitizeAgentContext(value: string, max: number): string {
 	return value.replace(CONTROL_CHARS_REGEX, ' ').slice(0, max).trim();
 }
 
+/**
+ * The tutor always receives the real answer so its hints are grounded in what the card
+ * actually says — a placeholder made pre-reveal help generic guesswork. Secrecy is enforced
+ * by the `visibility` flag plus the system prompt's do-not-reveal instructions, not by
+ * withholding the text.
+ */
 export function getTutorAnswerContext(answer: string, answerRevealed: boolean, max: number): {
 	answer: string;
 	visibility: 'revealed' | 'hidden';
 } {
-	return answerRevealed
-		? { answer: sanitizeAgentContext(answer, max), visibility: 'revealed' }
-		: { answer: '[hidden until the student reveals the answer]', visibility: 'hidden' };
+	return {
+		answer: sanitizeAgentContext(answer, max),
+		visibility: answerRevealed ? 'revealed' : 'hidden'
+	};
 }
