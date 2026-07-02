@@ -4,6 +4,7 @@
 	// import/export, so they're dynamically imported inside those handlers to keep the
 	// home page's initial bundle small.
 	import OnboardingChecklist from '$lib/components/OnboardingChecklist.svelte';
+	import Spinner from '$lib/components/Spinner.svelte';
 	import { t } from '$lib/i18n';
 	import { preloadTTS } from '$lib/client/audio';
 	import { getPrepareAudioAhead } from '$lib/client/preferences';
@@ -18,7 +19,13 @@
 	let importing = $state(false);
 	let importStatus = $state('');
 	let exportError = $state('');
+	let exportSuccess = $state('');
 	let loading = $state(true);
+	let importInput = $state<HTMLInputElement | null>(null);
+
+	function triggerImport() {
+		importInput?.click();
+	}
 
 	// Onboarding state
 	let hasRequiredKeys = $state(false);
@@ -37,8 +44,9 @@
 	async function loadDecks() {
 		const res = await fetch('/api/decks');
 		if (res.ok) {
-			const data = (await res.json()) as { decks: DeckWithDueCount[] };
+			const data = (await res.json()) as { decks: DeckWithDueCount[]; has_reviewed?: boolean };
 			decks = data.decks;
+			hasReviewed = Boolean(data.has_reviewed);
 			// Warm up TTS cache for the first due card of each deck with cards due.
 			// Limited to 3 decks to avoid hammering the TTS endpoint on large collections.
 			// The audioCache is module-level so these buffers are already decoded when
@@ -159,6 +167,8 @@
 			a.download = `${deckName.replace(/[^a-zA-Z0-9]/g, '_')}.apkg`;
 			a.click();
 			URL.revokeObjectURL(url);
+			exportSuccess = $t('dashboard.exportDone', { name: deckName });
+			setTimeout(() => { exportSuccess = ''; }, 4000);
 		} catch (err) {
 			exportError = $t('dashboard.exportFailed', { error: err instanceof Error ? err.message : 'Unknown error' });
 			setTimeout(() => { exportError = ''; }, 6000);
@@ -181,13 +191,12 @@
 				? keys.openai && keys.deepgram
 				: keys.elevenlabs;
 		}).catch(() => {});
-		// Check if user has any reviews (simple heuristic: check first deck's stats or use a lightweight query)
-		// For now, we'll consider "has reviewed" once they have decks with any due history
-		// This is a lightweight check via the decks endpoint — if any deck has reps > 0
 	});
 </script>
 
 <h1>{$t('dashboard.title')}</h1>
+
+<input type="file" accept=".apkg" bind:this={importInput} onchange={handleFileUpload} disabled={importing} hidden />
 
 {#if showOnboarding && !loading}
 	<OnboardingChecklist
@@ -195,17 +204,26 @@
 		hasDecks={decks.length > 0}
 		{hasReviewed}
 		onDismiss={dismissOnboarding}
+		onImport={triggerImport}
 	/>
 {/if}
 
 <section class="upload">
-	<label class="upload-btn" class:disabled={importing} aria-label={importing ? $t('dashboard.importing') : $t('dashboard.import')}>
-		<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+	<button class="upload-btn" disabled={importing} onclick={triggerImport}>
+		{#if importing}
+			<Spinner size={16} />
+		{:else}
+			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+		{/if}
 		{importing ? $t('dashboard.importing') : $t('dashboard.import')}
-		<input type="file" accept=".apkg" onchange={handleFileUpload} disabled={importing} hidden />
-	</label>
+	</button>
 	{#if importStatus}
 		<p class="status">{importStatus}</p>
+	{/if}
+	{#if importing}
+		<div class="import-progress" role="progressbar" aria-label={$t('dashboard.importing')}>
+			<div class="import-progress-fill"></div>
+		</div>
 	{/if}
 
 	{#if exportError}
@@ -213,6 +231,9 @@
 			{exportError}
 			<button class="status-dismiss" aria-label={$t('common.dismiss')} onclick={() => (exportError = '')}>×</button>
 		</p>
+	{/if}
+	{#if exportSuccess}
+		<p class="status status-ok" role="status">{exportSuccess}</p>
 	{/if}
 </section>
 
@@ -240,10 +261,10 @@
 		<h2>{$t('onboarding.welcome')}</h2>
 		<p class="onboarding-desc">{$t('onboarding.desc')}</p>
 		<p class="onboarding-steps">{@html $t('onboarding.steps')}</p>
-		<label class="upload-btn primary-cta" class:disabled={importing} aria-label={importing ? $t('dashboard.importing') : $t('dashboard.import')}>
+		<button class="btn-primary primary-cta" disabled={importing} onclick={triggerImport}>
+			{#if importing}<Spinner size={18} />{/if}
 			{importing ? $t('dashboard.importing') : $t('dashboard.import')}
-			<input type="file" accept=".apkg" onchange={handleFileUpload} disabled={importing} hidden />
-		</label>
+		</button>
 	</div>
 {:else}
 	<ul class="deck-list">
@@ -297,36 +318,60 @@
 		align-items: center;
 		gap: 0.5rem;
 		padding: 0.65rem 1.25rem;
-		background: var(--border-muted);
-		color: #c0c0e0;
-		border-radius: 8px;
+		background: transparent;
+		color: var(--text-muted);
+		border-radius: var(--r-md);
 		cursor: pointer;
 		font-size: 0.9rem;
-		border: 1px solid #3a3a60;
-		transition: background 0.15s, border-color 0.15s;
+		font-family: inherit;
+		font-weight: 600;
+		border: 1px solid var(--border);
+		transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
 	}
 
-	.upload-btn:hover {
-		background: #333360;
+	.upload-btn:hover:not(:disabled) {
+		color: var(--text);
 		border-color: var(--border-strong);
 	}
 
-	.upload-btn.disabled {
+	.upload-btn:disabled {
 		opacity: 0.6;
 		cursor: not-allowed;
 	}
 
 	.status {
 		margin-top: 0.75rem;
-		color: #aaa;
+		color: var(--text-muted);
 		font-size: 0.9rem;
+	}
+
+	.import-progress {
+		margin-top: 0.6rem;
+		height: 3px;
+		max-width: 320px;
+		border-radius: var(--r-pill);
+		background: var(--border-muted);
+		overflow: hidden;
+	}
+
+	.import-progress-fill {
+		height: 100%;
+		width: 40%;
+		border-radius: var(--r-pill);
+		background: var(--primary);
+		animation: indeterminate 1.2s var(--ease) infinite;
+	}
+
+	@keyframes indeterminate {
+		0% { transform: translateX(-100%); }
+		100% { transform: translateX(350%); }
 	}
 
 	.status-err {
 		color: var(--danger-soft);
-		background: rgba(168, 52, 76, 0.12);
-		border: 1px solid rgba(168, 52, 76, 0.4);
-		border-radius: 7px;
+		background: var(--danger-tint);
+		border: 1px solid var(--danger-border);
+		border-radius: var(--r-md);
 		padding: 0.6rem 0.75rem;
 		display: flex;
 		align-items: center;
@@ -343,7 +388,11 @@
 		padding: 0 0.25rem;
 		line-height: 1;
 	}
-	.status-dismiss:hover { color: #fff; }
+	.status-dismiss:hover { color: var(--text); }
+
+	.status-ok {
+		color: var(--success);
+	}
 
 	.onboarding {
 		text-align: center;
@@ -361,7 +410,7 @@
 	}
 
 	.onboarding-desc {
-		color: #b0b0c0;
+		color: var(--text-muted);
 		font-size: 0.95rem;
 		line-height: 1.5;
 		margin-bottom: 1rem;
@@ -374,14 +423,11 @@
 		margin-bottom: 1.5rem;
 	}
 
+	/* Layout-only on top of the global .btn-primary recipe. */
 	.primary-cta {
-		padding: 0.9rem 2rem !important;
-		font-size: 1.1rem !important;
-		background: var(--primary) !important;
-	}
-
-	.primary-cta:hover {
-		background: var(--primary-hover) !important;
+		padding: 0.9rem 2rem;
+		font-size: 1.05rem;
+		border-radius: var(--r-lg);
 	}
 
 	.deck-list {
@@ -396,14 +442,21 @@
 		display: flex;
 		align-items: center;
 		background: var(--surface);
-		border-radius: 10px;
+		border: 1px solid var(--border-muted);
+		border-radius: var(--r-lg);
 		overflow: hidden;
 		flex-wrap: wrap;
 		border-left: 3px solid transparent;
-		transition: border-color 0.15s;
+		transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
 	}
 
-	.deck-card.has-due {
+	.deck-card:hover {
+		border-color: var(--border-strong);
+		box-shadow: var(--shadow-sm);
+	}
+
+	.deck-card.has-due,
+	.deck-card.has-due:hover {
 		border-left-color: var(--success);
 	}
 
@@ -416,7 +469,7 @@
 	}
 
 	.deck-link:hover {
-		background: var(--border-muted);
+		background: rgba(255, 255, 255, 0.03);
 	}
 
 	.deck-link h2 {
@@ -435,15 +488,15 @@
 	.due-badge {
 		display: inline-block;
 		padding: 0.15rem 0.55rem;
-		background: rgba(110, 203, 99, 0.15);
+		background: var(--success-tint);
 		color: var(--success);
 		font-weight: 600;
-		border-radius: 99px;
+		border-radius: var(--r-pill);
 		font-size: 0.8rem;
 	}
 
 	.due-zero {
-		color: #606070;
+		color: var(--text-subtle);
 	}
 
 	.deck-actions {
@@ -479,14 +532,14 @@
 		border: none;
 		background: none;
 		cursor: pointer;
-		color: #7070a0;
+		color: var(--text-subtle);
 		text-decoration: none;
-		transition: background 0.15s, color 0.15s;
+		transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
 	}
 
 	.deck-action-btn:hover {
-		background: var(--border-muted);
-		color: #c0c0e0;
+		background: var(--surface-elevated);
+		color: var(--text);
 	}
 
 	.deck-action-btn:disabled {
@@ -503,9 +556,9 @@
 	.skeleton-title,
 	.skeleton-meta {
 		border-radius: 4px;
-		background: linear-gradient(90deg, var(--border-muted) 25%, #353560 50%, var(--border-muted) 75%);
+		background: linear-gradient(90deg, var(--border-muted) 25%, var(--surface-elevated) 50%, var(--border-muted) 75%);
 		background-size: 200% 100%;
-		animation: skeleton-shimmer 1.4s ease-in-out infinite;
+		animation: shimmer 1.4s ease-in-out infinite;
 	}
 
 	.skeleton-title {
@@ -518,11 +571,6 @@
 		height: 0.75rem;
 		width: 28%;
 		animation-delay: 0.1s;
-	}
-
-	@keyframes skeleton-shimmer {
-		0% { background-position: 200% 0; }
-		100% { background-position: -200% 0; }
 	}
 
 </style>

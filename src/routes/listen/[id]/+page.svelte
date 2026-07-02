@@ -7,6 +7,7 @@
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import PromptDialog from '$lib/components/PromptDialog.svelte';
 	import { elevenLabsModelCreditMultiplier } from '$lib/voice';
+	import { estimateCredits } from '$lib/listen/estimate';
 	import type { ListenSentenceInfo, ListenSentencesResponse } from '$lib/listen/types';
 
 
@@ -24,6 +25,12 @@
 	let streamSrc = $state('');
 	let streamStartSeq = $state(0);
 	let playing = $state(false);
+	/**
+	 * True while the stream is buffering — most importantly during first-sentence synthesis
+	 * right after play, or after jumping to an uncached sentence. Drives the spinner inside
+	 * the play button and the "generating" shimmer on the active uncached sentence.
+	 */
+	let buffering = $state(false);
 	let curTime = $state(0); // seconds since stream start (relative to streamStartSeq)
 	let editingSeq = $state<number | null>(null);
 	let editingText = $state('');
@@ -49,6 +56,17 @@
 	let genSpeed = $state(1);
 
 	let showSpeed = $state(false);
+	let speedWrapEl = $state<HTMLElement | null>(null);
+
+	/* The speed popover has no backdrop, so dismiss it like a native menu: Escape or any
+	 * pointer press outside its wrapper. */
+	function onWindowKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape' && showSpeed) showSpeed = false;
+	}
+
+	function onWindowPointerdown(e: PointerEvent) {
+		if (showSpeed && speedWrapEl && !speedWrapEl.contains(e.target as Node)) showSpeed = false;
+	}
 
 	// "Jump to current sentence" and "scroll to top" affordances. Both visibilities are derived
 	// from scroll position so the floating pills appear only when actually useful.
@@ -110,6 +128,19 @@
 			.filter((s) => listenedInSession.has(s.seq) && cachedInitially.has(s.seq))
 			.reduce((sum, s) => sum + Math.ceil(s.char_count * multiplier), 0)
 	);
+
+	/**
+	 * Estimated credits still to be spent to finish the document from the current position:
+	 * everything at or after the active sentence that isn't cached yet will bill at the
+	 * model's per-character rate when reached. Hidden in the UI when zero.
+	 */
+	const creditsToFinish = $derived.by(() => {
+		if (!doc || !sentences.length) return 0;
+		const chars = sentences
+			.filter((s) => s.seq >= activeSeq && !s.cached)
+			.reduce((sum, s) => sum + s.char_count, 0);
+		return chars > 0 ? estimateCredits(chars, doc.tts_model) : 0;
+	});
 
 	onMount(async () => {
 		// Restore both speed prefs (per-user, persisted across docs) before mounting audio.
@@ -279,7 +310,13 @@
 			navigator.mediaSession.metadata = new MediaMetadata({
 				title: doc.title || $t('listen.title'),
 				artist: 'AnkiTalk',
-				album: sentences[activeSeq]?.text.slice(0, 60) ?? ''
+				album: sentences[activeSeq]?.text.slice(0, 60) ?? '',
+				// PWA icons double as the lock-screen / notification artwork.
+				artwork: [
+					{ src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+					{ src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+					{ src: '/icons/icon-512-maskable.png', sizes: '512x512', type: 'image/png' }
+				]
 			});
 			navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
 		} catch { /* no-op */ }
@@ -289,11 +326,17 @@
 		streamStartSeq = fromSeq;
 		curTime = 0;
 		errorMsg = '';
+		// Assume we're synthesizing until the element reports playable data — first-sentence
+		// generation takes a few seconds and this is what surfaces the spinner immediately.
+		buffering = true;
 		// Pass the generation speed so the server picks the right cache lane and (on misses)
 		// synthesizes at that tempo.
 		streamSrc = `/api/listen/${docId}/stream?from=${fromSeq}&speed=${genSpeed}`;
 		await tick();
-		if (!audioEl) return;
+		if (!audioEl) {
+			buffering = false;
+			return;
+		}
 		audioEl.load();
 		try {
 			await audioEl.play();
@@ -302,6 +345,7 @@
 			updateMediaMetadata();
 		} catch {
 			playing = false;
+			buffering = false;
 		}
 	}
 
@@ -312,6 +356,7 @@
 	 */
 	function closeStream() {
 		streamSrc = '';
+		buffering = false;
 		if (audioEl) {
 			audioEl.pause();
 			audioEl.removeAttribute('src');
@@ -334,6 +379,7 @@
 				return;
 			}
 			try {
+				buffering = true;
 				await audioEl?.play();
 				playing = true;
 				errorMsg = '';
@@ -344,10 +390,12 @@
 				// (e.g. a prior network error drained it). Open a fresh stream so the user
 				// isn't stuck pressing a dead play button.
 				playing = false;
+				buffering = false;
 				await startStream(activeSeq);
 			}
 		} else {
 			playing = false;
+			buffering = false;
 			stopPolling();
 			closeStream();
 			updateMediaMetadata();
@@ -375,6 +423,45 @@
 		for (let i = streamStartSeq; i < activeSeq && i < sentences.length; i++) streamOffset += sentences[i].duration_ms;
 		return acc + Math.max(0, curTime * 1000 - streamOffset);
 	});
+
+	const remainingMs = $derived(Math.max(0, totalDurationMs - elapsedMs));
+
+	/**
+	 * Buffered-style underlay for the seek bar: cached (free) regions paint as a faint white
+	 * wash, uncached (paid) regions stay transparent. Built as one linear-gradient with hard
+	 * stops from cumulative durations; consecutive same-state sentences merge into a single
+	 * run so the gradient stays small even for long documents. Recomputes whenever the
+	 * sentence poll refreshes cache flags.
+	 */
+	const cacheGradient = $derived.by(() => {
+		if (!sentences.length || totalDurationMs <= 0) return '';
+		const stops: string[] = [];
+		let runStart = 0;
+		let runCached = sentences[0].cached;
+		let acc = 0;
+		const flush = (endMs: number) => {
+			const from = ((runStart / totalDurationMs) * 100).toFixed(2);
+			const to = ((endMs / totalDurationMs) * 100).toFixed(2);
+			stops.push(`${runCached ? 'rgba(255, 255, 255, 0.14)' : 'transparent'} ${from}% ${to}%`);
+		};
+		for (const s of sentences) {
+			if (s.cached !== runCached) {
+				flush(acc);
+				runStart = acc;
+				runCached = s.cached;
+			}
+			acc += s.duration_ms;
+		}
+		flush(acc);
+		return `linear-gradient(to right, ${stops.join(', ')})`;
+	});
+
+	/**
+	 * Whether the user has an established position in the document (mid-playback pause or a
+	 * restored session). Gates the subdued paused-highlight so a freshly opened, never-played
+	 * document doesn't highlight its first sentence for no reason.
+	 */
+	const hasPosition = $derived(curTime > 0 || streamStartSeq > 0);
 
 	function formatTime(ms: number): string {
 		const total = Math.max(0, Math.round(ms / 1000));
@@ -445,6 +532,20 @@
 		updateMediaMetadata();
 	}
 
+	/**
+	 * Buffering feedback. `waiting`/`stalled` fire when the element runs out of decoded data —
+	 * with this streaming endpoint that means the server is synthesizing the next uncached
+	 * sentence. `canplay`/`playing` mean audio is flowing again. Guarded on `streamSrc` so the
+	 * teardown in `closeStream()` (which fires spurious events) can't re-light the spinner.
+	 */
+	function onAudioWaiting() {
+		if (streamSrc) buffering = true;
+	}
+
+	function onAudioReady() {
+		buffering = false;
+	}
+
 	function onRateChange(value: number) {
 		playbackRate = value;
 		if (audioEl) audioEl.playbackRate = value;
@@ -488,6 +589,7 @@
 	function onEnded() {
 		persistProgress();
 		playing = false;
+		buffering = false;
 		stopPolling();
 		updateMediaMetadata();
 		refreshSentences();
@@ -503,6 +605,7 @@
 		// Hard-reset the element so the next play attempt opens a fresh stream instead of
 		// retrying the dead source (which would silently no-op until reload).
 		playing = false;
+		buffering = false;
 		stopPolling();
 		const wasAt = activeSeq;
 		streamSrc = '';
@@ -629,11 +732,23 @@
 	);
 </script>
 
+<svelte:window onkeydown={onWindowKeydown} onpointerdown={onWindowPointerdown} />
+
 <div class="reader">
 	<a href="/listen" class="back-link">&larr; {$t('listen.back')}</a>
 
 	{#if loading}
-		<div class="center"><Spinner size={24} /></div>
+		<!-- Text-block skeleton mirroring the reader layout (title, meta line, paragraph card)
+		     so the page doesn't collapse to a lone spinner while the document loads. -->
+		<div class="doc-skeleton" role="status" aria-label={$t('common.loading')}>
+			<div class="skel skel-title" aria-hidden="true"></div>
+			<div class="skel skel-meta" aria-hidden="true"></div>
+			<div class="skel-block" aria-hidden="true">
+				{#each [97, 100, 92, 99, 88, 100, 95, 62] as w, i (i)}
+					<div class="skel skel-line" style={`width:${w}%`}></div>
+				{/each}
+			</div>
+		</div>
 	{:else if notFound || !doc}
 		<p class="muted">{$t('listen.notFound')}</p>
 	{:else}
@@ -674,8 +789,8 @@
 					<div class="sentence-edit">
 						<textarea class="edit-input" bind:value={editingText} rows="3"></textarea>
 						<div class="edit-actions">
-							<button class="edit-btn" onclick={() => saveEdit(s.seq)}>{$t('listen.saveEdit')}</button>
-							<button class="edit-btn ghost" onclick={cancelEdit}>{$t('listen.cancel')}</button>
+							<button class="btn-primary edit-btn" onclick={() => saveEdit(s.seq)}>{$t('listen.saveEdit')}</button>
+							<button class="btn-secondary edit-btn" onclick={cancelEdit}>{$t('listen.cancel')}</button>
 						</div>
 					</div>
 				{:else}
@@ -687,6 +802,8 @@
 						class:cached={s.cached}
 						class:listened={listenedInSession.has(s.seq) && !s.cached}
 						class:active={s.seq === activeSeq && playing}
+						class:paused={s.seq === activeSeq && !playing && hasPosition}
+						class:generating={s.seq === activeSeq && buffering && !s.cached}
 						onclick={() => jumpTo(s.seq)}
 						title={$t('listen.tapToJump')}
 					>{s.text}</button><button
@@ -729,8 +846,15 @@
 			<button class="skip-btn" onclick={() => jumpTo(activeSeq - 1)} aria-label={$t('listen.previous')} disabled={activeSeq <= 0}>
 				<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="19 20 9 12 19 4 19 20"/><rect x="4" y="4" width="2" height="16" rx="0.5"/></svg>
 			</button>
-			<button class="play-btn" onclick={() => togglePlay()} aria-label={playing ? $t('listen.pause') : $t('listen.play')}>
-				{#if playing}
+			<button
+				class="play-btn"
+				onclick={() => togglePlay()}
+				aria-label={buffering ? $t('listen.buffering') : playing ? $t('listen.pause') : $t('listen.play')}
+				aria-busy={buffering}
+			>
+				{#if buffering}
+					<Spinner size={20} />
+				{:else if playing}
 					<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
 				{:else}
 					<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"/></svg>
@@ -739,22 +863,27 @@
 			<button class="skip-btn" onclick={() => jumpTo(activeSeq + 1)} aria-label={$t('listen.next')} disabled={activeSeq >= sentences.length - 1}>
 				<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="5 4 15 12 5 20 5 4"/><rect x="18" y="4" width="2" height="16" rx="0.5"/></svg>
 			</button>
-			<!-- Speed control. Two distinct mechanisms surfaced side by side:
-			     - Playback rate (top section): client-side audio.playbackRate. Instant, free,
+			<!-- Speed control. Two distinct mechanisms:
+			     - Playback rate (always visible): client-side audio.playbackRate. Instant, free,
 			       applies to already-cached sentences. Use this for "I want this faster, now".
-			     - Generation speed (bottom section): ElevenLabs voice_settings.speed baked
+			     - Generation speed (behind the disclosure): ElevenLabs voice_settings.speed baked
 			       into the synthesized audio at generation time. Different cache lane → using
 			       a non-default speed re-synthesizes (and re-bills) sentences that haven't
-			       been cached at that speed yet. Use this if the playback-rate audio sounds
-			       choppy or unnatural. -->
-			<div class="speed-wrap">
+			       been cached at that speed yet. Expert control, so it's tucked away; a dot
+			       badge on the pill signals when it's active. -->
+			<div class="speed-wrap" bind:this={speedWrapEl}>
 				<button
 					class="speed-btn"
 					onclick={() => (showSpeed = !showSpeed)}
 					aria-haspopup="menu"
 					aria-expanded={showSpeed}
 					aria-label={$t('listen.speedAria')}
-				>{playbackRate}×{genSpeed !== 1 ? ` · ${genSpeed}×` : ''}</button>
+					title={genSpeed !== 1 ? $t('listen.genSpeedActive', { speed: genSpeed }) : undefined}
+				>
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 14.5A8.5 8.5 0 1 0 3.5 14.5"/><path d="M12 13.5 15.5 10"/></svg>
+					<span class="speed-val">{playbackRate}×</span>
+					{#if genSpeed !== 1}<span class="gen-dot" aria-hidden="true"></span>{/if}
+				</button>
 				{#if showSpeed}
 					<div class="speed-pop" role="menu">
 						<div class="speed-section">
@@ -763,7 +892,7 @@
 								<span class="speed-section-sub">{$t('listen.playbackSpeedSub')}</span>
 							</div>
 							<div class="speed-row">
-								{#each [0.75, 1, 1.25, 1.5, 1.75, 2] as r}
+								{#each [0.75, 1, 1.25, 1.5, 1.75, 2] as r (r)}
 									<button
 										class="speed-opt"
 										class:active={playbackRate === r}
@@ -774,13 +903,15 @@
 								{/each}
 							</div>
 						</div>
-						<div class="speed-section">
-							<div class="speed-section-head">
+						<details class="gen-disclosure" open={genSpeed !== 1}>
+							<summary>
 								<span class="speed-section-title">{$t('listen.genSpeed')}</span>
-								<span class="speed-section-sub speed-section-warn">{$t('listen.genSpeedSub')}</span>
-							</div>
-							<div class="speed-row">
-								{#each [0.7, 0.85, 1, 1.15, 1.2] as g}
+								{#if genSpeed !== 1}<span class="gen-badge">{genSpeed}×</span>{/if}
+								<svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+							</summary>
+							<p class="speed-section-sub speed-section-warn">{$t('listen.genSpeedSub')}</p>
+							<div class="speed-row gen-row">
+								{#each [0.7, 0.85, 1, 1.15, 1.2] as g (g)}
 									<button
 										class="speed-opt"
 										class:active={genSpeed === g}
@@ -790,7 +921,7 @@
 									>{g}×</button>
 								{/each}
 							</div>
-						</div>
+						</details>
 						<div class="speed-section">
 							<button class="speed-close" onclick={() => (showSpeed = false)}>{$t('common.close')}</button>
 						</div>
@@ -800,7 +931,10 @@
 			<div class="progress">
 				<div class="progress-line">
 					<span>{activeSeq + 1} / {sentenceCount}</span>
-					<span class="time" aria-hidden="true">{formatTime(elapsedMs)} / {formatTime(totalDurationMs)}</span>
+					<span class="time" aria-hidden="true">
+						{formatTime(elapsedMs)} / {formatTime(totalDurationMs)}
+						<span class="remaining" title={$t('listen.remainingTime')}>−{formatTime(remainingMs)}</span>
+					</span>
 				</div>
 				<!-- Slider semantics so screen readers announce position; click-to-seek and arrow keys
 				     for keyboard navigation. -->
@@ -817,12 +951,24 @@
 					onclick={onSeekClick}
 					onkeydown={onSeekKey}
 				>
+					{#if cacheGradient}
+						<div class="cache-layer" style={`background-image:${cacheGradient}`}></div>
+					{/if}
 					<div class="fill" style={`width:${(elapsedMs / Math.max(1, totalDurationMs)) * 100}%`}></div>
 				</button>
-				<div class="credit-line">
-					<span class="spent">−{spentEstimate.toLocaleString()} {$t('listen.creditsShort')}</span>
-					<span class="saved">{$t('listen.savedLabel', { count: savedEstimate.toLocaleString() })}</span>
-				</div>
+				{#if creditsToFinish > 0 || spentEstimate > 0 || savedEstimate > 0}
+					<div class="credit-line">
+						{#if creditsToFinish > 0}
+							<span class="to-finish">{$t('listen.creditsToFinish', { count: creditsToFinish.toLocaleString() })}</span>
+						{/if}
+						{#if spentEstimate > 0}
+							<span class="spent">−{spentEstimate.toLocaleString()} {$t('listen.creditsShort')}</span>
+						{/if}
+						{#if savedEstimate > 0}
+							<span class="saved">{$t('listen.savedLabel', { count: savedEstimate.toLocaleString() })}</span>
+						{/if}
+					</div>
+				{/if}
 			</div>
 		</div>
 
@@ -833,6 +979,10 @@
 			onended={onEnded}
 			onerror={onAudioError}
 			onloadeddata={onAudioLoaded}
+			onwaiting={onAudioWaiting}
+			onstalled={onAudioWaiting}
+			oncanplay={onAudioReady}
+			onplaying={onAudioReady}
 			preload="none"
 		></audio>
 	{/if}
@@ -859,26 +1009,43 @@
 />
 
 <style>
-	.reader { max-width: 720px; margin: 0 auto; padding-bottom: 7rem; }
+	.reader { max-width: 720px; margin: 0 auto; padding-bottom: 9rem; }
 	.back-link { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
 	.back-link:hover { color: var(--text); }
-	.center { display: flex; justify-content: center; padding: 2rem 0; color: #8080c0; }
-	.muted { color: #5a5a7a; }
+	.muted { color: var(--text-subtle); }
+
+	/* Loading skeleton (uses the global shimmer keyframes from app.css). */
+	.doc-skeleton { margin-top: 1rem; display: flex; flex-direction: column; gap: 0.6rem; }
+	.skel {
+		border-radius: var(--r-sm);
+		background: linear-gradient(90deg, var(--surface) 25%, var(--surface-elevated) 50%, var(--surface) 75%);
+		background-size: 200% 100%;
+		animation: shimmer 1.6s linear infinite;
+	}
+	.skel-title { height: 1.4rem; width: 55%; }
+	.skel-meta { height: 0.8rem; width: 38%; margin-bottom: 0.3rem; }
+	.skel-block {
+		border: 1px solid var(--border-muted);
+		border-radius: var(--r-lg);
+		padding: 1.1rem 1.05rem;
+		display: flex; flex-direction: column; gap: 0.85rem;
+	}
+	.skel-line { height: 0.9rem; }
 
 	.doc-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin: 1rem 0 0.5rem; }
 	.doc-head h1 { font-size: 1.3rem; margin: 0; min-width: 0; overflow-wrap: anywhere; }
 	.head-actions { display: flex; gap: 0.5rem; flex-shrink: 0; }
 	.text-btn {
-		background: none; border: none; color: #8d8db0; font-size: 0.82rem; cursor: pointer;
+		background: none; border: none; color: var(--text-muted); font-size: 0.82rem; cursor: pointer;
 		padding: 0.5rem 0.6rem;
 		min-height: 44px;
 		display: inline-flex; align-items: center;
 	}
 	.text-btn:hover { color: var(--text); }
-	.text-btn.danger:hover { color: #e07070; }
+	.text-btn.danger:hover { color: var(--danger-soft); }
 
-	.doc-sub { display: flex; flex-wrap: wrap; gap: 0.5rem 0.9rem; align-items: center; font-size: 0.8rem; color: #8d8db0; margin-bottom: 0.6rem; }
-	.expiry { color: #6a6a8a; }
+	.doc-sub { display: flex; flex-wrap: wrap; gap: 0.5rem 0.9rem; align-items: center; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.6rem; }
+	.expiry { color: var(--text-subtle); }
 
 	.legend {
 		display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1rem;
@@ -886,17 +1053,17 @@
 	}
 	.dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; display: inline-block; margin-right: 0.3rem; vertical-align: middle; }
 	.dot--cached { background: var(--success); }
-	.dot--listened { background: #7a8aa8; }
+	.dot--listened { background: var(--text-subtle); }
 	.dot--default { background: var(--border); }
 
 	.text-body {
 		background: var(--bg);
 		border: 1px solid var(--border-muted);
-		border-radius: 12px;
+		border-radius: var(--r-lg);
 		padding: 1rem 1.05rem;
 		font-size: 1rem;
 		line-height: 1.8;
-		color: #d6d6f2;
+		color: var(--text);
 	}
 
 	.sentence-wrap { display: inline; }
@@ -917,7 +1084,7 @@
 	.resume-text strong { font-size: 0.9rem; color: var(--text); }
 	.resume-text span { font-size: 0.78rem; color: var(--text-muted); }
 	.resume-btn {
-		background: var(--primary); color: var(--text);
+		background: var(--primary); color: var(--text-on-primary);
 		border: none; border-radius: var(--r-pill);
 		padding: 0.5rem 0.95rem;
 		font-size: 0.85rem; font-weight: 600;
@@ -942,28 +1109,47 @@
 		color: inherit;
 		text-align: left;
 		cursor: pointer;
-		border-radius: 4px;
+		border-radius: var(--r-sm);
 		border-bottom: 2px solid transparent;
-		transition: background 0.15s, border-color 0.15s;
+		transition: background var(--t-med) var(--ease), border-color var(--t-med) var(--ease);
 		-webkit-tap-highlight-color: transparent;
 	}
-	.sentence:hover { background: rgba(90, 90, 142, 0.18); }
+	.sentence:hover { background: rgba(255, 255, 255, 0.08); }
 
-	/* Listened-but-not-cached: dotted slate underline so it's never confused with the
+	/* Listened-but-not-cached: dotted underline so it's never confused with the
 	   solid green of cached sentences. */
 	.sentence.listened {
-		border-bottom: 2px dotted #7a8aa8;
+		border-bottom: 2px dotted var(--text-subtle);
 	}
 	.sentence.cached {
 		border-bottom: 2px solid var(--success);
 	}
+	/* Subdued position marker while paused — dimmer than the playing highlight so users
+	   keep their place without the page shouting "now playing". */
+	.sentence.paused {
+		background: rgba(255, 255, 255, 0.06);
+		border-bottom-color: var(--text-subtle);
+	}
 	.sentence.active {
-		background: rgba(200, 168, 90, 0.28);
-		border-bottom-color: #c8a85a;
+		background: rgba(255, 255, 255, 0.12);
+		border-bottom-color: var(--text);
+	}
+	/* Active-but-uncached sentence while the stream buffers: the server is synthesizing this
+	   sentence right now, so give it a gentle shimmer (global keyframes; compressed to a
+	   single pass under prefers-reduced-motion). */
+	.sentence.generating {
+		background-image: linear-gradient(
+			90deg,
+			rgba(255, 255, 255, 0.04) 25%,
+			rgba(255, 255, 255, 0.16) 50%,
+			rgba(255, 255, 255, 0.04) 75%
+		);
+		background-size: 200% 100%;
+		animation: shimmer 1.4s linear infinite;
 	}
 
 	.edit-pencil {
-		background: none; border: none; color: #5a5a7a;
+		background: none; border: none; color: var(--text-subtle);
 		margin-left: 0.05rem; padding: 0 0.2rem; cursor: pointer; opacity: 0.4;
 		display: inline-flex; align-items: center; vertical-align: middle;
 	}
@@ -973,21 +1159,19 @@
 		display: block;
 		background: var(--surface-2);
 		border: 1px solid var(--border-strong);
-		border-radius: 8px;
+		border-radius: var(--r-md);
 		padding: 0.5rem;
 		margin: 0.4rem 0;
 	}
 	.edit-input {
 		width: 100%; box-sizing: border-box;
-		background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+		background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-sm);
 		color: var(--text); font: inherit; padding: 0.4rem 0.55rem; resize: vertical;
 	}
+	.edit-input:focus { outline: none; border-color: var(--border-strong); }
 	.edit-actions { display: flex; gap: 0.4rem; margin-top: 0.4rem; }
-	.edit-btn {
-		padding: 0.35rem 0.7rem; border-radius: 6px; border: 1px solid var(--border-strong);
-		background: var(--primary); color: var(--text); font-size: 0.82rem; cursor: pointer; font-weight: 600;
-	}
-	.edit-btn.ghost { background: var(--surface); color: #a8a8c8; }
+	/* Compact variants of the global button recipes for the inline edit card. */
+	.edit-btn { padding: 0.4rem 0.8rem; font-size: 0.82rem; }
 
 	/* Sticky error toast above the player. Pinned so the user sees it regardless of where
 	   they've scrolled when playback fails — the previous inline `.error-text` was easy to
@@ -996,19 +1180,19 @@
 		position: fixed;
 		left: 0.6rem; right: 0.6rem;
 		bottom: calc(5.4rem + env(safe-area-inset-bottom));
-		background: #5a2a2a;
-		border: 1px solid #8a3a3a;
-		color: #ffe1e1;
+		background: var(--surface-elevated);
+		border: 1px solid var(--danger-border);
+		color: var(--text);
 		padding: 0.6rem 0.75rem;
 		border-radius: var(--r-md);
 		display: flex; align-items: center; gap: 0.6rem;
-		box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+		box-shadow: var(--shadow-md);
 		z-index: 23;
 		font-size: 0.85rem;
 	}
 	.error-toast-msg { flex: 1; min-width: 0; }
 	.error-toast-retry {
-		background: #c14a4a; color: white;
+		background: var(--danger); color: var(--text-on-primary);
 		border: none; border-radius: var(--r-pill);
 		padding: 0.4rem 0.85rem;
 		font-size: 0.8rem; font-weight: 600;
@@ -1016,20 +1200,25 @@
 		min-height: 36px;
 		touch-action: manipulation;
 	}
-	.error-toast-retry:hover { background: #d05858; }
+	.error-toast-retry:hover { background: var(--danger-hover); }
 	.error-toast-dismiss {
-		background: none; border: none; color: #ffe1e1;
+		background: none; border: none; color: var(--text-muted);
 		font-size: 1.2rem; line-height: 1; cursor: pointer;
 		padding: 0.25rem 0.4rem;
 	}
-	.error-toast-dismiss:hover { color: white; }
+	.error-toast-dismiss:hover { color: var(--text); }
 
+	/* Translucent player bar: content scrolls underneath the blur, ElevenLabs-style.
+	   flex-wrap + the narrow-viewport rules below reflow the progress block onto its own
+	   row under 420px so nothing overflows at 320px. */
 	.player-bar {
 		position: fixed; left: 0; right: 0; bottom: 0;
-		background: #16162a;
+		background: rgba(10, 10, 10, 0.9);
+		-webkit-backdrop-filter: blur(16px);
+		backdrop-filter: blur(16px);
 		border-top: 1px solid var(--border-muted);
 		padding: 0.7rem 0.9rem calc(0.7rem + env(safe-area-inset-bottom));
-		display: flex; align-items: center; gap: 0.6rem;
+		display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.6rem;
 		z-index: 20;
 	}
 
@@ -1053,13 +1242,14 @@
 		border-radius: var(--r-pill);
 		font-size: 0.82rem; font-weight: 600;
 		cursor: pointer;
-		box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+		box-shadow: var(--shadow-md);
 		min-height: 44px;
 		display: inline-flex; align-items: center; gap: 0.35rem;
 		touch-action: manipulation;
 	}
-	.float-pill.primary { background: var(--primary); border-color: var(--primary-hover); }
-	.float-pill:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+	.float-pill:hover { background: var(--surface-elevated); border-color: var(--border-strong); }
+	.float-pill.primary { background: var(--primary); border-color: transparent; color: var(--text-on-primary); }
+	.float-pill.primary:hover { background: var(--primary-hover); border-color: transparent; }
 	/* When the pill is only an icon (scroll-to-top) shrink horizontal padding so the icon
 	   sits in a square 44×44 target instead of an awkwardly wide pill. */
 	.float-pill.icon-only { padding: 0.55rem; min-width: 44px; justify-content: center; }
@@ -1067,6 +1257,7 @@
 	/* Speed control: the popover sits above the player bar to the right of the skip controls. */
 	.speed-wrap { position: relative; flex-shrink: 0; }
 	.speed-btn {
+		position: relative;
 		min-width: 44px; min-height: 44px;
 		padding: 0 0.7rem;
 		border-radius: var(--r-pill);
@@ -1077,8 +1268,15 @@
 		cursor: pointer;
 		font-variant-numeric: tabular-nums;
 		touch-action: manipulation;
+		display: inline-flex; align-items: center; gap: 0.35rem;
 	}
 	.speed-btn:hover { border-color: var(--border-strong); }
+	/* Dot badge signalling a non-default generation speed is active (details in the popover). */
+	.gen-dot {
+		position: absolute; top: 5px; right: 7px;
+		width: 6px; height: 6px; border-radius: 50%;
+		background: var(--warning);
+	}
 	/* Fixed to the viewport, not to the speed button. The button sits in the middle of the
 	   player bar, so anchoring `right: 0` to it pushed the 17rem popover off-screen on
 	   mobile. Docking to the bottom-right of the viewport keeps the whole panel visible
@@ -1093,17 +1291,40 @@
 		padding: 0.6rem;
 		display: flex; flex-direction: column; gap: 0.5rem;
 		width: 17rem; max-width: calc(100vw - 1.2rem);
-		box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+		box-shadow: var(--shadow-lg);
 		z-index: 24;
+		transform-origin: bottom right;
+		animation: pop var(--t-med) var(--ease);
 	}
 	.speed-section { display: flex; flex-direction: column; gap: 0.35rem; }
-	.speed-section + .speed-section { padding-top: 0.5rem; border-top: 1px solid var(--border-muted); }
 	.speed-section-head { display: flex; flex-direction: column; gap: 0.1rem; padding: 0 0.1rem; }
 	.speed-section-title { font-size: 0.85rem; font-weight: 600; color: var(--text); }
 	.speed-section-sub { font-size: 0.72rem; color: var(--text-subtle); line-height: 1.3; }
 	.speed-section-warn { color: var(--warning); }
+	/* Generation speed is an expert control (re-bills credits), so it lives behind a
+	   native disclosure instead of sitting next to the everyday playback rate. */
+	.gen-disclosure { border-top: 1px solid var(--border-muted); padding-top: 0.5rem; }
+	.gen-disclosure summary {
+		list-style: none;
+		display: flex; align-items: center; gap: 0.4rem;
+		cursor: pointer;
+		min-height: 32px;
+		padding: 0 0.1rem;
+	}
+	.gen-disclosure summary::-webkit-details-marker { display: none; }
+	.gen-disclosure .chevron { margin-left: auto; color: var(--text-subtle); transition: transform var(--t-fast) var(--ease); }
+	.gen-disclosure[open] .chevron { transform: rotate(180deg); }
+	.gen-badge {
+		font-size: 0.72rem; font-weight: 700;
+		color: var(--warning); background: var(--warning-tint);
+		border: 1px solid var(--warning-border);
+		border-radius: var(--r-pill);
+		padding: 0.05rem 0.4rem;
+		font-variant-numeric: tabular-nums;
+	}
+	.gen-disclosure .speed-section-sub { display: block; margin: 0.15rem 0.1rem 0.4rem; }
 	.speed-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.25rem; }
-	.speed-section:nth-of-type(2) .speed-row { grid-template-columns: repeat(5, 1fr); }
+	.speed-row.gen-row { grid-template-columns: repeat(5, 1fr); }
 	.speed-opt {
 		background: var(--surface-2); border: 1px solid transparent; color: var(--text);
 		padding: 0.5rem 0;
@@ -1114,7 +1335,7 @@
 		min-height: 38px;
 	}
 	.speed-opt:hover { background: var(--surface-elevated); }
-	.speed-opt.active { background: var(--primary); border-color: var(--primary-hover); color: var(--text); font-weight: 700; }
+	.speed-opt.active { background: var(--primary); border-color: transparent; color: var(--text-on-primary); font-weight: 700; }
 	.speed-close {
 		background: none; border: 1px solid var(--border); color: var(--text-muted);
 		padding: 0.4rem; border-radius: var(--r-sm);
@@ -1122,34 +1343,44 @@
 	}
 	.speed-close:hover { border-color: var(--border-strong); color: var(--text); }
 
+	/* The signature control: white circle, inverted icon. */
 	.play-btn {
 		flex-shrink: 0;
 		width: 3rem; height: 3rem; border-radius: 50%;
-		border: 1px solid var(--border-strong); background: var(--primary); color: var(--text);
-		font-size: 1rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
+		border: none;
+		background: var(--primary); color: var(--text-on-primary);
+		box-shadow: var(--shadow-sm);
+		cursor: pointer; display: flex; align-items: center; justify-content: center;
 		touch-action: manipulation;
+		transition: background var(--t-fast) var(--ease), transform 80ms var(--ease);
 	}
+	.play-btn:hover { background: var(--primary-hover); }
+	.play-btn:active { transform: scale(0.94); }
 	.skip-btn {
 		flex-shrink: 0;
 		/* 2.75rem ≈ 44px to clear the WCAG tap-target minimum. */
 		width: 2.75rem; height: 2.75rem; border-radius: 50%;
-		border: 1px solid var(--border); background: var(--surface); color: #c0c0e0;
+		border: 1px solid var(--border); background: var(--surface); color: var(--text);
 		font-size: 0.85rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
 		touch-action: manipulation;
 	}
+	.skip-btn:hover:not(:disabled) { border-color: var(--border-strong); }
 	.skip-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
 	.progress { flex: 1; display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
 	.progress-line {
 		font-size: 0.78rem; color: var(--text-muted);
 		display: flex; justify-content: space-between; gap: 0.5rem;
+		font-variant-numeric: tabular-nums;
 	}
-	.progress-line .time { font-variant-numeric: tabular-nums; color: var(--text-subtle); }
-	/* Seekable bar: button styling reset + a generous click target via vertical padding while the
-	   visible track stays thin. Padding doesn't grow the bar visually (height is fixed on .fill via
-	   the parent's actual height) — it just makes the tap area easier to hit on mobile. */
+	.progress-line .time { color: var(--text-subtle); white-space: nowrap; }
+	.progress-line .remaining { color: var(--text-muted); margin-left: 0.35rem; }
+	/* Seekable bar: button styling reset + a thin visible track. The layered children paint,
+	   bottom to top: cached-region underlay (faint white = free replay), then the white
+	   progress fill. */
 	.bar {
 		appearance: none;
+		position: relative;
 		display: block;
 		width: 100%;
 		height: 10px;
@@ -1161,10 +1392,29 @@
 		cursor: pointer;
 		touch-action: manipulation;
 	}
-	.bar:focus-visible { outline: 2px solid var(--border-strong); outline-offset: 2px; }
-	.bar:hover .fill { background: #8181d0; }
-	.fill { height: 100%; background: #6b6bc8; transition: width 0.15s linear, background 0.15s; pointer-events: none; }
-	.credit-line { display: flex; gap: 0.7rem; font-size: 0.7rem; color: var(--text-subtle); }
-	.spent { color: #c8a85a; }
-	.saved { color: #5aba84; }
+	.bar:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+	.cache-layer { position: absolute; inset: 0; pointer-events: none; }
+	.fill {
+		position: relative;
+		height: 100%;
+		background: var(--primary);
+		color: var(--text-on-primary);
+		transition: width 0.15s linear;
+		pointer-events: none;
+	}
+	.credit-line { display: flex; flex-wrap: wrap; gap: 0.15rem 0.7rem; font-size: 0.7rem; color: var(--text-subtle); }
+	.to-finish { color: var(--text-muted); }
+	.spent { color: var(--warning); }
+	.saved { color: var(--success); }
+
+	/* Narrow phones (<420px): the row of controls + inline progress overflows at 320px, so
+	   the progress block (counts, seek bar, credits) reflows onto its own full-width row and
+	   the speed pill docks right. Fixed overlays shift up to clear the now-taller bar. */
+	@media (max-width: 419px) {
+		.progress { flex-basis: 100%; }
+		.speed-wrap { margin-left: auto; }
+		.speed-pop { bottom: calc(9.2rem + env(safe-area-inset-bottom)); }
+		.error-toast { bottom: calc(9rem + env(safe-area-inset-bottom)); }
+		.float-bar { bottom: calc(9.2rem + env(safe-area-inset-bottom)); }
+	}
 </style>

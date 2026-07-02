@@ -204,6 +204,9 @@ export function createDeepgramClient(options?: DeepgramOptions): SpeechClient {
 		},
 		onError(cb: ErrorCallback) {
 			errorCb = cb;
+		},
+		getMediaStream() {
+			return stream;
 		}
 	};
 }

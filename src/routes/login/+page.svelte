@@ -3,6 +3,7 @@
 	import { page } from '$app/stores';
 	import { env } from '$env/dynamic/public';
 	import { t } from '$lib/i18n';
+	import Spinner from '$lib/components/Spinner.svelte';
 
 	let mounted = $state(false);
 
@@ -36,18 +37,22 @@
 	<h1>{$t('login.title')}</h1>
 	<p class="subtitle">{$t('login.subtitle')}</p>
 
-	{#if mounted}
-		<hanko-auth></hanko-auth>
-	{:else}
-		<p>{$t('login.loading')}</p>
-	{/if}
+	<div class="auth-card">
+		{#if mounted}
+			<hanko-auth></hanko-auth>
+		{:else}
+			<div class="auth-loading" role="status" aria-label={$t('login.loading')}>
+				<Spinner size={28} />
+			</div>
+		{/if}
+	</div>
 </div>
 
 <style>
 	.login-container {
 		max-width: 400px;
 		margin: 4rem auto;
-		padding: 2rem;
+		padding: 0 1rem;
 		text-align: center;
 	}
 
@@ -60,5 +65,50 @@
 	.subtitle {
 		color: var(--text-muted);
 		margin-bottom: 2rem;
+	}
+
+	.auth-card {
+		background: var(--surface);
+		border: 1px solid var(--border-muted);
+		border-radius: var(--r-lg);
+		box-shadow: var(--shadow-md);
+		padding: 1.75rem 1.5rem;
+		text-align: left;
+	}
+
+	.auth-loading {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 200px;
+		color: var(--text-muted);
+	}
+
+	/*
+	 * Theme the Hanko web component. Its shadow DOM styles itself entirely from these CSS
+	 * custom properties (names verified against @teamhanko/hanko-elements README "CSS
+	 * Variables"), which inherit through the shadow boundary. Brand = white primary with the
+	 * inverted dark contrast color; the surrounding card supplies background and padding.
+	 */
+	hanko-auth {
+		--color: var(--text);
+		--color-shade-1: var(--text-muted);
+		--color-shade-2: var(--border-strong);
+
+		--brand-color: var(--primary);
+		--brand-color-shade-1: var(--primary-hover);
+		--brand-contrast-color: var(--text-on-primary);
+
+		--background-color: transparent;
+		--error-color: var(--danger);
+		--link-color: var(--text);
+
+		--font-family: var(--font-sans);
+
+		--border-radius: 10px;
+		--item-height: 44px;
+
+		--container-padding: 0;
+		--container-max-width: 100%;
 	}
 </style>

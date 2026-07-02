@@ -18,5 +18,11 @@ export const GET: RequestHandler = async ({ platform, locals }) => {
 		.bind(locals.userId)
 		.all();
 
-	return json({ decks: decks.results });
+	// The onboarding checklist needs to know whether the user has ever reviewed a card.
+	const reviewed = await db
+		.prepare(`SELECT EXISTS(SELECT 1 FROM reviews WHERE user_id = ?) as has_reviewed`)
+		.bind(locals.userId)
+		.first<{ has_reviewed: number }>();
+
+	return json({ decks: decks.results, has_reviewed: Boolean(reviewed?.has_reviewed) });
 };

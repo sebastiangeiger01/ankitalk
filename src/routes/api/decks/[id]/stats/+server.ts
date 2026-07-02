@@ -76,6 +76,14 @@ export const GET: RequestHandler = async ({ params, url, platform, locals }) => 
 	const totalMature = retention?.total_mature_reviews ?? 0;
 	const retentionRate = totalMature > 0 ? (retention?.passed ?? 0) / totalMature : null;
 
+	// 4. Desired retention from deck settings, so the client can show actual vs target
+	// without a second round-trip. Falls back to the FSRS default when unset.
+	const settingsRow = await db
+		.prepare('SELECT desired_retention FROM deck_settings WHERE deck_id = ?')
+		.bind(params.id)
+		.first<{ desired_retention: number | null }>();
+	const desiredRetention = settingsRow?.desired_retention ?? 0.9;
+
 	return json({
 		cardStates: {
 			new: stateBreakdown?.new_count ?? 0,
@@ -86,6 +94,7 @@ export const GET: RequestHandler = async ({ params, url, platform, locals }) => 
 		},
 		dailyReviews: dailyReviews.results,
 		retentionRate,
+		desiredRetention,
 		days
 	});
 };

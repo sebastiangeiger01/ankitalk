@@ -283,6 +283,9 @@ export function createElevenLabsClient(options?: ElevenLabsOptions): SpeechClien
 		},
 		onError(cb: ErrorCallback) {
 			errorCb = cb;
+		},
+		getMediaStream() {
+			return stream;
 		}
 	};
 }

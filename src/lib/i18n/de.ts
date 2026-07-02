@@ -25,6 +25,7 @@ export const de: Record<string, string> = {
 	'dashboard.delete': 'L\u00f6schen',
 	'dashboard.deleteConfirm': '"{name}" und alle Karten l\u00f6schen?',
 	'dashboard.exportFailed': 'Export fehlgeschlagen: {error}',
+	'dashboard.exportDone': '„{name}“ exportiert.',
 
 	// Dashboard - import status
 	'import.parsing': '.apkg-Datei wird analysiert...',
@@ -48,6 +49,7 @@ export const de: Record<string, string> = {
 	'onboarding.dismiss': 'Ausblenden',
 
 	// Review - Start screen
+	'review.cardRegion': 'Lernkarte',
 	'review.readyTitle': 'Bereit zur Abfrage',
 	'review.startHint': 'Tippe auf den Button, um deine Abfragesitzung zu starten.',
 	'review.startReview': 'Abfrage starten',
@@ -63,6 +65,8 @@ export const de: Record<string, string> = {
 	'review.reviewOnly': 'Nur wiederholende',
 	'review.showHelp': 'Sprachbefehle & Tastenkombinationen anzeigen',
 	'review.hideHelp': 'Sprachbefehle & Tastenkombinationen ausblenden',
+	'review.nothingDueTitle': 'Alles gelernt',
+	'review.nothingDueHint': 'Gerade ist keine Karte fällig. Schau später wieder vorbei – oder übe weiter im Paukmodus.',
 	'review.missingKeys': 'Du benötigst API-Schlüssel, um mit der Wiederholung zu beginnen.',
 	'review.missingKeysDetail': 'Füge deinen ElevenLabs-Schlüssel in den Einstellungen hinzu oder wähle OpenAI + Deepgram unter den erweiterten Sprachanbietern.',
 	'review.goToSettings': 'Zu den Einstellungen',
@@ -107,6 +111,8 @@ export const de: Record<string, string> = {
 	'review.undo': 'R\u00fcckg\u00e4ngig',
 	'review.cardSuspended': 'Karte ausgesetzt',
 	'review.waitingCard': 'Karte kommt in {seconds}s zur\u00fcck...',
+	'review.sessionProgress': 'Fortschritt der Sitzung',
+	'review.transcriptLabel': 'Live-Transkript',
 
 	// Review - Ratings
 	'rating.again': 'Nochmal',
@@ -118,7 +124,9 @@ export const de: Record<string, string> = {
 	'session.completeTitle': 'Sitzung abgeschlossen',
 	'session.cardsReviewed': 'Karten abgefragt',
 	'session.duration': 'Dauer',
+	'session.cardsPerMinute': 'Karten/Min.',
 	'session.backToDashboard': 'Zur\u00fcck zur \u00dcbersicht',
+	'session.reviewAgain': 'Nochmal abfragen',
 
 	// Deck Settings
 	'settings.title': 'Einstellungen',
@@ -137,6 +145,8 @@ export const de: Record<string, string> = {
 	'settings.learningStepsHelper': 'Kommagetrennt. Karten durchlaufen diese Schritte vor dem Abschluss. Standard: 1, 10',
 	'settings.relearningSteps': 'Wiederlernschritte (Minuten)',
 	'settings.relearningStepsHelper': 'Schritte f\u00fcr vergessene Karten. Standard: 10',
+	'settings.stepsInvalid': 'Kommagetrennte positive Minutenwerte eingeben, z. B. 1, 10',
+	'settings.stepsPreviewMin': '{n} Min.',
 	'settings.audioPinTitle': 'Audio bereithalten bis',
 	'settings.audioPinHelper': 'Diesen Stapel an ein Pr\u00fcfungsdatum binden, damit die gesprochene Audio bis dahin im Cache bleibt und gelernte Karten nicht neu erzeugt (und erneut berechnet) werden. Leer lassen f\u00fcr den Standard \u2013 Audio bleibt bei Nutzung erhalten und wird nach einer Zeit der Inaktivit\u00e4t gel\u00f6scht.',
 	'settings.audioPinClear': 'L\u00f6schen',
@@ -164,6 +174,17 @@ export const de: Record<string, string> = {
 	'appSettings.prepareAudioAheadDesc': 'Erzeugt Audio für kommende Karten, bevor du es abspielst, damit Wiederholungen schneller wirken. Das kann Credits für Karten nutzen, die du eventuell nicht anhörst.',
 	'appSettings.dashboard': '\u00dcbersicht',
 
+	// Abschnittsnavigation in den Einstellungen (kurze Pill-Labels)
+	'settings.nav.label': 'Einstellungsbereiche',
+	'settings.nav.language': 'Sprache',
+	'settings.nav.keys': 'Schl\u00fcssel',
+	'settings.nav.audio': 'Audio',
+	'settings.nav.tutor': 'Tutor',
+	'settings.nav.mcp': 'MCP',
+	'settings.nav.usage': 'Nutzung',
+	'settings.nav.account': 'Konto',
+	'settings.account.title': 'Konto',
+
 	// Voice provider
 	'settings.voice.title': 'Sprachanbieter',
 	'settings.voice.desc': 'Wähle, welcher Dienst Karten vorliest und Sprachbefehle erkennt.',
@@ -177,11 +198,9 @@ export const de: Record<string, string> = {
 	'settings.voice.commandLanguage.auto': 'Auto',
 	'settings.voice.commandLanguage.en': 'Englisch',
 	'settings.voice.commandLanguage.de': 'Deutsch',
-	'settings.voice.saved': 'Spracheinstellungen gespeichert',
-	'settings.voice.saveFailed': 'Spracheinstellungen konnten nicht gespeichert werden',
 
 	// ElevenLabs Sprach-Studio
-	'settings.elevenlabs.needKey': 'Füge unten deinen ElevenLabs-API-Schlüssel hinzu, um eine Stimme zu wählen, ein Modell auszuwählen und dein Credit-Guthaben zu sehen.',
+	'settings.elevenlabs.needKey': 'Füge oben im Bereich „API-Schlüssel" deinen ElevenLabs-API-Schlüssel hinzu, um eine Stimme zu wählen, ein Modell auszuwählen und dein Credit-Guthaben zu sehen.',
 	'settings.elevenlabs.credits': 'Credit-Guthaben',
 	'settings.elevenlabs.creditsError': 'Credit-Guthaben konnte nicht geladen werden — deinem ElevenLabs-Key fehlt evtl. die Berechtigung „User" (Read).',
 	'settings.elevenlabs.creditsUsed': '{used} / {limit} Zeichen verbraucht',
@@ -210,6 +229,10 @@ export const de: Record<string, string> = {
 	'settings.elevenlabs.retry': 'Erneut versuchen',
 	'settings.elevenlabs.searchVoices': 'Nach Name oder Voice-ID suchen…',
 	'settings.elevenlabs.preview': 'Stimme anhören',
+	'settings.elevenlabs.previewBtn': 'Anhören',
+	'settings.elevenlabs.previewStop': 'Stopp',
+	'settings.elevenlabs.allCategories': 'Alle',
+	'settings.elevenlabs.categoryFilter': 'Stimmen nach Kategorie filtern',
 	'settings.elevenlabs.noVoices': 'Keine Stimmen passen zu deiner Suche.',
 	'settings.elevenlabs.tuning': 'Erweiterte Stimmeinstellungen',
 	'settings.elevenlabs.speed': 'Geschwindigkeit',
@@ -281,13 +304,17 @@ export const de: Record<string, string> = {
 	'settings.ttsCache.pinned': '{count} bis zu einem Prüfungsdatum aufbewahrt.',
 	'settings.ttsCache.hitRate': 'Cache-Trefferquote: {pct}%',
 	'settings.ttsCache.saved': '~{chars} Zeichen aus dem Cache bedient',
-	'settings.ttsCache.showRecent': 'Letzte Anfragen anzeigen',
-	'settings.ttsCache.hideRecent': 'Letzte Anfragen ausblenden',
+	'settings.ttsCache.diagnostics': 'Letzte Anfragen (Diagnose)',
 	'settings.ttsCache.loadingRecent': 'Letzte Anfragen werden geladen...',
 	'settings.ttsCache.colWhen': 'Wann',
 	'settings.ttsCache.colStatus': 'Ergebnis',
 	'settings.ttsCache.colChars': 'Zeichen',
-	'settings.ttsCache.monitorNote': 'Letzte Sprachanfragen (14 Tage). edge-hit / r2-hit / inflight-hit wurden ohne Anbieteraufruf bedient; cache-only-miss wurde nicht berechnet.',
+	'settings.ttsCache.status.hit': 'Aus dem Cache bedient',
+	'settings.ttsCache.status.generated': 'Neu erzeugt',
+	'settings.ttsCache.status.noStore': 'Erzeugt (Cache nicht verfügbar)',
+	'settings.ttsCache.status.storeFailed': 'Erzeugt, Speichern fehlgeschlagen',
+	'settings.ttsCache.status.skipped': 'Nicht im Cache (nicht berechnet)',
+	'settings.ttsCache.monitorNote': 'Letzte Sprachanfragen (14 Tage). Aus dem Cache bediente Anfragen haben keine Anbieter-Credits verbraucht.',
 	'settings.usage.noUsage': 'Noch keine Nutzung aufgezeichnet',
 
 	// Card Browser
@@ -297,6 +324,8 @@ export const de: Record<string, string> = {
 	'cards.newCard': 'Neue Karte',
 	'cards.loading': 'Laden...',
 	'cards.empty': 'Keine Karten gefunden.',
+	'cards.loadError': 'Karten konnten nicht geladen werden. Prüfe deine Verbindung und versuche es erneut.',
+	'cards.retry': 'Erneut versuchen',
 	'cards.selected': '{count} ausgew\u00e4hlt',
 	'cards.suspendAction': 'Aussetzen',
 	'cards.unsuspendAction': 'Fortsetzen',
@@ -326,6 +355,12 @@ export const de: Record<string, string> = {
 	'stats.noRetention': 'Noch nicht gen\u00fcgend reife Karten-Abfragen',
 	'stats.dailyReviews': 'T\u00e4gliche Abfragen',
 	'stats.noReviews': 'Keine Abfragen in diesem Zeitraum',
+	'stats.lastDays': 'Letzte {days} Tage',
+	'stats.totalReviews': 'Abfragen gesamt',
+	'stats.reviewsPerDay': 'Abfragen pro Tag',
+	'stats.avgAnswerTime': '\u00d8 Antwortzeit',
+	'stats.retentionTarget': 'Ziel: {pct}%',
+	'stats.periodLabel': 'Zeitraum',
 
 	// Listen (Text → Audio)
 	'listen.title': 'Texte vertonen',
@@ -367,6 +402,7 @@ export const de: Record<string, string> = {
 	'listen.scrollToTop': 'Nach oben',
 	'listen.jumpToCurrent': 'Aktueller Satz',
 	'listen.speedAria': 'Wiedergabegeschwindigkeit',
+	'listen.genSpeedActive': 'Generierungsgeschwindigkeit {speed}×',
 	'listen.playbackSpeed': 'Wiedergabegeschwindigkeit',
 	'listen.playbackSpeedSub': 'Sofort und kostenlos. Wirkt auch auf bereits zwischengespeicherte Audios.',
 	'listen.genSpeed': 'Generierungsgeschwindigkeit',
@@ -388,6 +424,7 @@ export const de: Record<string, string> = {
 	'listen.cancel': 'Abbrechen',
 	'listen.historyTitle': 'Deine Audios',
 	'listen.empty': 'Noch keine Audios angelegt.',
+	'listen.emptyHint': 'Füge oben einen Text ein und AnkiTalk liest ihn dir Satz für Satz vor — du zahlst nur, was du wirklich hörst.',
 	'listen.expiresIn': 'läuft in {days} T ab',
 	'listen.status.pending': 'Ausstehend',
 	'listen.status.generating': 'Wird erzeugt',
@@ -403,6 +440,9 @@ export const de: Record<string, string> = {
 	'listen.downloading': 'Wird vorbereitet…',
 	'listen.play': 'Abspielen',
 	'listen.pause': 'Pause',
+	'listen.buffering': 'Audio wird erzeugt…',
+	'listen.remainingTime': 'Verbleibende Zeit',
+	'listen.creditsToFinish': '≈ {count} Credits bis zum Ende',
 	'listen.back': 'Alle Audios',
 	'listen.notFound': 'Dieses Audio existiert nicht mehr oder ist abgelaufen.',
 	'listen.charsLabel': '{count} Zeichen',
@@ -419,6 +459,8 @@ export const de: Record<string, string> = {
 	'common.confirm': 'Bestätigen',
 	'common.dismiss': 'Schließen',
 	'common.close': 'Schließen',
+	'common.savedFlag': 'Gespeichert ✓',
+	'common.saveFailedFlag': 'Speichern fehlgeschlagen',
 	'common.ok': 'OK',
 
 	// Card editor (modal)
@@ -456,6 +498,7 @@ export const de: Record<string, string> = {
 	'agent.agent': 'Tutor',
 	'agent.inputPlaceholder': 'Nachricht eingeben…',
 	'agent.send': 'Senden',
+	'agent.newMessages': 'Neue Nachrichten',
 	'agent.ptt.label': 'Push-to-Talk',
 	'agent.ptt.switchHint': 'Push-to-Talk-Modus ein- oder ausschalten',
 	'agent.ptt.hold': 'Zum Sprechen halten',
@@ -523,6 +566,9 @@ export const de: Record<string, string> = {
 	'settings.agent.readiness.override.language': 'Language',
 	'settings.agent.readiness.override.voice': 'Voice ID',
 	'settings.agent.readiness.nextStep': 'Nächster Schritt',
+	'settings.agent.readiness.oneStepLeft': 'Noch 1 Schritt',
+	'settings.agent.readiness.stepsLeft': 'Noch {count} Schritte',
+	'settings.agent.readiness.showChecklist': 'Vollständige Checkliste anzeigen',
 	'settings.agent.readiness.action.apiKey': 'ElevenLabs-API-Schlüssel öffnen',
 	'settings.agent.readiness.action.agent': 'Agent in ElevenLabs öffnen',
 	'settings.agent.readiness.action.mcp': 'Unten mit MCP weitermachen',

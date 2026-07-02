@@ -6,7 +6,10 @@
 
 	// Default the card-authoring toggle on when the client asked for it, so the common case
 	// (connect Claude, start making cards) is one click — but it stays visible and revocable.
-	let allowWrite = $state(data.invalid ? false : data.writeRequested);
+	// The request-derived default is a $derived (not a $state initializer, which would only
+	// capture the initial `data`); once the user touches the toggle their explicit choice wins.
+	let allowWriteChoice = $state<boolean | null>(null);
+	const allowWrite = $derived(allowWriteChoice ?? (data.invalid ? false : data.writeRequested));
 
 	const clientName = $derived(data.invalid ? '' : data.client.name || $t('oauth.genericClient'));
 </script>
@@ -22,20 +25,28 @@
 
 		<ul class="scopes">
 			<li>
-				<span class="scope-icon" aria-hidden="true">📖</span>
+				<span class="scope-icon" aria-hidden="true">
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+				</span>
 				<div>
 					<strong>{$t('oauth.scopeReadTitle')}</strong>
 					<span class="muted">{$t('oauth.scopeReadDesc')}</span>
 				</div>
 			</li>
 			<li class="scope-toggle">
-				<span class="scope-icon" aria-hidden="true">✍️</span>
+				<span class="scope-icon" aria-hidden="true">
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+				</span>
 				<div>
 					<strong>{$t('oauth.scopeWriteTitle')}</strong>
 					<span class="muted">{$t('oauth.scopeWriteDesc')}</span>
 				</div>
 				<label class="switch">
-					<input type="checkbox" bind:checked={allowWrite} />
+					<input
+						type="checkbox"
+						checked={allowWrite}
+						onchange={(e) => (allowWriteChoice = e.currentTarget.checked)}
+					/>
 					<span class="slider"></span>
 				</label>
 			</li>
@@ -58,11 +69,13 @@
 	{/if}
 </div>
 
+<!-- Buttons use the global .btn-primary/.btn-secondary recipes from app.css; only layout
+     (sizing within this page) is added below. -->
 <style>
 	.oauth-consent {
 		max-width: 460px;
 		margin: 4rem auto;
-		padding: 2rem;
+		padding: 2rem 1rem;
 	}
 	h1 {
 		font-size: 1.6rem;
@@ -89,9 +102,10 @@
 		gap: 0.75rem;
 		align-items: flex-start;
 		padding: 0.9rem;
-		border: 1px solid var(--border, #e2e2e2);
-		border-radius: 12px;
-		background: var(--surface, #fafafa);
+		border: 1px solid var(--border-muted);
+		border-radius: var(--r-lg);
+		background: var(--surface);
+		box-shadow: var(--shadow-sm);
 	}
 	.scopes li.scope-toggle {
 		align-items: center;
@@ -105,8 +119,9 @@
 		flex: 1;
 	}
 	.scope-icon {
-		font-size: 1.25rem;
-		line-height: 1.4;
+		display: inline-flex;
+		color: var(--text-muted);
+		margin-top: 0.1rem;
 	}
 	.fineprint {
 		font-size: 0.85rem;
@@ -118,25 +133,9 @@
 		justify-content: flex-end;
 		gap: 0.75rem;
 	}
-	.btn-primary,
-	.btn-secondary {
-		padding: 0.6rem 1.25rem;
-		border-radius: 10px;
-		font-size: 1rem;
-		font-weight: 600;
-		cursor: pointer;
-		border: 1px solid transparent;
-		text-decoration: none;
-		display: inline-block;
-	}
-	.btn-primary {
-		background: var(--accent, #4f46e5);
-		color: #fff;
-	}
-	.btn-secondary {
-		background: transparent;
-		color: var(--text);
-		border-color: var(--border, #d0d0d0);
+	.actions button,
+	a.btn-secondary {
+		min-height: 44px;
 	}
 	/* iOS-style toggle, matching the consent's "off is meaningful" intent. */
 	.switch {
@@ -154,9 +153,9 @@
 	.slider {
 		position: absolute;
 		inset: 0;
-		background: var(--border, #ccc);
-		border-radius: 26px;
-		transition: background 0.2s;
+		background: var(--border-strong);
+		border-radius: var(--r-pill);
+		transition: background var(--t-med) var(--ease);
 	}
 	.slider::before {
 		content: '';
@@ -165,12 +164,17 @@
 		width: 20px;
 		left: 3px;
 		top: 3px;
-		background: #fff;
+		background: var(--text);
 		border-radius: 50%;
-		transition: transform 0.2s;
+		transition: transform var(--t-med) var(--ease);
 	}
+	.switch input:focus-visible + .slider {
+		outline: 2px solid var(--focus-ring);
+		outline-offset: 2px;
+	}
+	/* Checked = granting a permission → semantic success green, white thumb. */
 	.switch input:checked + .slider {
-		background: var(--accent, #4f46e5);
+		background: var(--success);
 	}
 	.switch input:checked + .slider::before {
 		transform: translateX(20px);
