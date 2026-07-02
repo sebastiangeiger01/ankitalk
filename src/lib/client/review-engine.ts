@@ -5,7 +5,7 @@ import type { SpeechClient } from './speech';
 import { renderCard } from './card-renderer';
 import { clientCardSanitizer } from './card-sanitize';
 import { matchCommand } from '../commands';
-import type { VoiceProvider } from '../voice';
+import type { SttProvider } from '../voice';
 import type { ReviewPhase, VoiceCommand, RatingName } from '../types';
 
 export interface IntervalLabels {
@@ -112,7 +112,11 @@ export interface StartOptions {
 	prepareAudioAhead?: boolean;
 	/** Language code for STT (e.g. 'en', 'de'). Defaults to 'multi'. */
 	sttLanguage?: string;
-	voiceProvider?: VoiceProvider;
+	sttProvider?: SttProvider;
+	/** Start the session with the microphone muted (STT stays untouched until unmuted). */
+	micOn?: boolean;
+	/** Start the session with card audio muted. */
+	audioOn?: boolean;
 }
 
 export interface ReviewEngine {
@@ -160,6 +164,10 @@ export function createReviewEngine(): ReviewEngine {
 	let undoTimer: ReturnType<typeof setTimeout> | null = null;
 	let learningTimer: ReturnType<typeof setTimeout> | null = null;
 	let isCramMode = false;
+	// Whether speechClient.start() has run for this session. Starting muted skips it
+	// entirely (no getUserMedia, no socket), so the first unmute must start — not
+	// resume — the client (Deepgram's resume() is a no-op without a live socket).
+	let speechStarted = false;
 	let ratingInFlight = false;
 	let undoInFlight = false;
 	let sessionFinished = false;
@@ -632,11 +640,28 @@ export function createReviewEngine(): ReviewEngine {
 		emit({ type: 'session_end', stats });
 	}
 
+	function startListening(client: SpeechClient) {
+		speechStarted = true;
+		void client.start().catch((err: unknown) => {
+			if (destroyed || sessionFinished || speechClient !== client) return;
+			client.stop();
+			micOn = false;
+			emit({ type: 'mic_change', micOn: false });
+			emit({
+				type: 'error',
+				message: `Microphone error: ${err instanceof Error ? err.message : 'Unknown'}`
+			});
+		});
+	}
+
 	async function start(deckId: string, options?: StartOptions) {
 		destroyed = false;
 		sessionFinished = false;
 		activeDeckId = deckId;
 		prepareAudioAhead = options?.prepareAudioAhead ?? true;
+		micOn = options?.micOn ?? true;
+		audioOn = options?.audioOn ?? true;
+		speechStarted = false;
 		startTime = Date.now();
 		isCramMode = options?.mode === 'cram';
 
@@ -648,7 +673,7 @@ export function createReviewEngine(): ReviewEngine {
 
 		// Microphone setup is optional and must not block cards.
 		try {
-			const client = options?.voiceProvider === 'openai_deepgram'
+			const client = options?.sttProvider === 'deepgram'
 				? createDeepgramClient({ language: options?.sttLanguage })
 				: createElevenLabsClient({ language: options?.sttLanguage });
 			speechClient = client;
@@ -663,16 +688,7 @@ export function createReviewEngine(): ReviewEngine {
 			client.onError((err) => {
 				emit({ type: 'error', message: err.message });
 			});
-			void client.start().catch((err: unknown) => {
-				if (destroyed || sessionFinished || speechClient !== client) return;
-				client.stop();
-				micOn = false;
-				emit({ type: 'mic_change', micOn: false });
-				emit({
-					type: 'error',
-					message: `Microphone error: ${err instanceof Error ? err.message : 'Unknown'}`
-				});
-			});
+			if (micOn) startListening(client);
 		} catch (err) {
 			speechClient = null;
 			micOn = false;
@@ -784,7 +800,8 @@ export function createReviewEngine(): ReviewEngine {
 	function toggleMic() {
 		micOn = !micOn;
 		if (micOn) {
-			speechClient?.resume();
+			if (speechClient && !speechStarted) startListening(speechClient);
+			else speechClient?.resume();
 		} else {
 			speechClient?.pause();
 		}

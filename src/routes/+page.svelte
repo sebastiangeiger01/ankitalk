@@ -186,10 +186,10 @@
 			fetch('/api/settings/voice').then(async (r): Promise<{ settings: UserVoiceSettings } | null> => r.ok ? await r.json() as { settings: UserVoiceSettings } : null)
 		]).then(([keys, voice]) => {
 			if (!keys) return;
-			const provider = voice?.settings.voice_provider ?? 'elevenlabs';
-			hasRequiredKeys = provider === 'openai_deepgram'
-				? keys.openai && keys.deepgram
-				: keys.elevenlabs;
+			// TTS and STT providers are independent choices; each needs its own key.
+			const tts = voice?.settings.tts_provider ?? 'elevenlabs';
+			const stt = voice?.settings.stt_provider ?? 'elevenlabs';
+			hasRequiredKeys = keys[tts] && keys[stt];
 		}).catch(() => {});
 	});
 </script>

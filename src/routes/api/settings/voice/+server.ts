@@ -4,8 +4,9 @@ import { getUserVoiceSettings, saveUserVoiceSettings } from '$lib/server/voice-s
 import {
 	DEFAULT_VOICE_SETTINGS,
 	defaultVoiceCommandLanguageForLocale,
+	isSttProvider,
+	isTtsProvider,
 	isVoiceCommandLanguage,
-	isVoiceProvider,
 	normalizeVoiceSettings
 } from '$lib/voice';
 import type { RequestHandler } from './$types';
@@ -24,7 +25,8 @@ export const PUT: RequestHandler = async ({ request, platform, locals }) => {
 	if (!locals.userId) throw error(401, 'Unauthorized');
 
 	const body = (await request.json()) as {
-		voice_provider?: unknown;
+		tts_provider?: unknown;
+		stt_provider?: unknown;
 		voice_command_language?: unknown;
 		elevenlabs_voice_id?: unknown;
 		elevenlabs_tts_model?: unknown;
@@ -37,8 +39,11 @@ export const PUT: RequestHandler = async ({ request, platform, locals }) => {
 		elevenlabs_agent_id?: unknown;
 	};
 
-	if (!isVoiceProvider(body.voice_provider)) {
-		throw error(400, 'Invalid voice provider');
+	if (!isTtsProvider(body.tts_provider)) {
+		throw error(400, 'Invalid text-to-speech provider');
+	}
+	if (!isSttProvider(body.stt_provider)) {
+		throw error(400, 'Invalid speech-to-text provider');
 	}
 
 	if (
@@ -51,7 +56,8 @@ export const PUT: RequestHandler = async ({ request, platform, locals }) => {
 	// normalizeVoiceSettings clamps numeric tuning to valid ranges and falls back to
 	// defaults for anything unrecognized, so we can pass the raw body through safely.
 	const settings = normalizeVoiceSettings({
-		voice_provider: body.voice_provider,
+		tts_provider: body.tts_provider,
+		stt_provider: body.stt_provider,
 		voice_command_language: isVoiceCommandLanguage(body.voice_command_language)
 			? body.voice_command_language
 			: DEFAULT_VOICE_SETTINGS.voice_command_language,

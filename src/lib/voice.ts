@@ -1,8 +1,19 @@
+/**
+ * Legacy all-or-nothing provider choice. Kept only to interpret rows saved before the
+ * TTS/STT split: 'elevenlabs' meant ElevenLabs for both, 'openai_deepgram' meant OpenAI
+ * TTS + Deepgram STT. New code reads {@link TtsProvider}/{@link SttProvider} instead.
+ */
 export type VoiceProvider = 'elevenlabs' | 'openai_deepgram';
+/** Who reads cards aloud. */
+export type TtsProvider = 'elevenlabs' | 'openai';
+/** Who listens for voice commands during review. Independent of TTS so a user can
+ *  keep ElevenLabs voices while running the always-on mic through Deepgram. */
+export type SttProvider = 'elevenlabs' | 'deepgram';
 export type VoiceCommandLanguage = 'auto' | 'en' | 'de';
 
 export interface UserVoiceSettings {
-	voice_provider: VoiceProvider;
+	tts_provider: TtsProvider;
+	stt_provider: SttProvider;
 	voice_command_language: VoiceCommandLanguage;
 	elevenlabs_voice_id: string;
 	elevenlabs_tts_model: string;
@@ -26,7 +37,8 @@ export const DEFAULT_ELEVENLABS_TTS_MODEL = 'eleven_flash_v2_5';
 export const DEFAULT_ELEVENLABS_STT_MODEL = 'scribe_v2_realtime';
 
 export const DEFAULT_VOICE_SETTINGS: UserVoiceSettings = {
-	voice_provider: 'elevenlabs',
+	tts_provider: 'elevenlabs',
+	stt_provider: 'elevenlabs',
 	voice_command_language: 'en',
 	elevenlabs_voice_id: DEFAULT_ELEVENLABS_VOICE_ID,
 	elevenlabs_tts_model: DEFAULT_ELEVENLABS_TTS_MODEL,
@@ -68,6 +80,14 @@ export function isVoiceProvider(value: unknown): value is VoiceProvider {
 	return value === 'elevenlabs' || value === 'openai_deepgram';
 }
 
+export function isTtsProvider(value: unknown): value is TtsProvider {
+	return value === 'elevenlabs' || value === 'openai';
+}
+
+export function isSttProvider(value: unknown): value is SttProvider {
+	return value === 'elevenlabs' || value === 'deepgram';
+}
+
 export function isVoiceCommandLanguage(value: unknown): value is VoiceCommandLanguage {
 	return value === 'auto' || value === 'en' || value === 'de';
 }
@@ -100,6 +120,9 @@ function toBoolean(value: unknown, fallback: boolean): boolean {
  * settings object from a request body.
  */
 export interface VoiceSettingsInput {
+	tts_provider?: unknown;
+	stt_provider?: unknown;
+	/** Legacy combined provider, still present on rows saved before the TTS/STT split. */
 	voice_provider?: unknown;
 	voice_command_language?: unknown;
 	elevenlabs_voice_id?: string | null;
@@ -130,10 +153,16 @@ export function normalizeVoiceSettings(
 	defaultVoiceCommandLanguage: VoiceCommandLanguage = DEFAULT_VOICE_SETTINGS.voice_command_language
 ): UserVoiceSettings {
 	const model = row?.elevenlabs_tts_model?.trim();
+	// Rows saved before the TTS/STT split only carry `voice_provider`; derive the two
+	// axes from it so legacy "OpenAI + Deepgram" users keep their setup untouched.
+	const legacy = isVoiceProvider(row?.voice_provider) ? row.voice_provider : 'elevenlabs';
 	return {
-		voice_provider: isVoiceProvider(row?.voice_provider)
-			? row.voice_provider
-			: DEFAULT_VOICE_SETTINGS.voice_provider,
+		tts_provider: isTtsProvider(row?.tts_provider)
+			? row.tts_provider
+			: legacy === 'openai_deepgram' ? 'openai' : 'elevenlabs',
+		stt_provider: isSttProvider(row?.stt_provider)
+			? row.stt_provider
+			: legacy === 'openai_deepgram' ? 'deepgram' : 'elevenlabs',
 		voice_command_language: isVoiceCommandLanguage(row?.voice_command_language)
 			? row.voice_command_language
 			: defaultVoiceCommandLanguage,
