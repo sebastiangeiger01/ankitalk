@@ -26,8 +26,16 @@ export function createDeepgramClient(options?: DeepgramOptions): SpeechClient {
 		}
 		const { token } = (await tokenRes.json()) as { token: string };
 
-		// 2. Get microphone access
-		stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+		// 2. Get microphone access. Echo cancellation matters here: the mic stays open
+		// while cards play aloud, so without it the TTS audio feeds back into STT and
+		// can trigger false voice commands (matches the ElevenLabs client's constraints).
+		stream = await navigator.mediaDevices.getUserMedia({
+			audio: {
+				echoCancellation: true,
+				noiseSuppression: true,
+				autoGainControl: true
+			}
+		});
 
 		if (!token) {
 			throw new Error('Deepgram token is empty');

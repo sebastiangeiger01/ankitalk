@@ -31,7 +31,8 @@
 
 	--text: #f5f5f5;
 	--text-muted: #a3a3a3;
-	--text-subtle: #6e6e6e;
+	/* Lightest legible grey: ≥4.5:1 (WCAG AA) on --bg and all surface tints. */
+	--text-subtle: #8a8a8a;
 	--text-on-primary: #0a0a0a;
 
 	--primary: #ffffff;

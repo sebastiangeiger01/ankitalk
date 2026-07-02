@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { onDestroy } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import { createReviewEngine, type ReviewEvent, type SessionStats, type StartOptions, type IntervalLabels, type QueueCounts, type PrefetchedCards } from '$lib/client/review-engine';
 	import { preloadTTS, unlockAudioForGesture } from '$lib/client/audio';
@@ -495,10 +495,13 @@
 
 	// Prefetch cards + deck name on mount so engine.start() is instant
 	$effect(() => {
+		// Read the locale without subscribing: this effect must run once on mount, not
+		// refetch keys/settings/cards every time the user switches language.
+		const currentLocale = untrack(() => $locale);
 		// Check API key status first
 		Promise.all([
 			fetch('/api/settings/api-keys').then((r) => r.ok ? r.json() : null),
-			fetch(`/api/settings/voice?locale=${encodeURIComponent($locale)}`).then((r) => r.ok ? r.json() : null)
+			fetch(`/api/settings/voice?locale=${encodeURIComponent(currentLocale)}`).then((r) => r.ok ? r.json() : null)
 		])
 			.then(([keys, voice]) => {
 				if (keys) keyStatus = keys as ApiKeyStatus;
@@ -513,17 +516,14 @@
 			.catch(() => {})
 			.finally(() => { keyStatusLoading = false; });
 
-		fetch(`/api/decks/${deckId}`)
-			.then((r) => r.json())
-			.then((data) => { deckName = (data as { deck: { name: string } }).deck.name; })
-			.catch(() => {});
-
-		// Prefetch the full card set (reused by engine.start to skip duplicate fetch)
+		// Prefetch the full card set (reused by engine.start to skip duplicate fetch).
+		// It also carries deckName, so no separate /api/decks/[id] request is needed.
 		fetch(`/api/cards/next?${new URLSearchParams({ deckId: deckId!, limit: '50' })}`)
 			.then((r) => r.ok ? r.json() : null)
 			.then((data) => {
 				if (!data) { reviewPrepared = true; return; }
 				prefetchedCards = data as PrefetchedCards;
+				if (prefetchedCards.deckName) deckName = prefetchedCards.deckName;
 				// Enable Start the moment the cards are here — no longer blocked on a TTS round
 				// trip. The first card's front is still preloaded in the background so playback is
 				// instant when it lands; if the user clicks Start before it does, the
@@ -570,7 +570,7 @@
 			</div>
 			<h2>{$t('review.missingKeys')}</h2>
 			<p>{$t('review.missingKeysDetail')}</p>
-			<a href="/settings" class="settings-btn">{$t('review.goToSettings')}</a>
+			<a href="/settings" class="btn-primary">{$t('review.goToSettings')}</a>
 		</div>
 	</div>
 {:else if !started}
@@ -596,7 +596,12 @@
 					<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
 					<p class="nothing-due-title">{$t('review.nothingDueTitle')}</p>
 					<p class="nothing-due-hint">{$t('review.nothingDueHint')}</p>
-					<a href="/" class="btn-secondary">{$t('session.backToDashboard')}</a>
+					<div class="nothing-due-actions">
+						<a href="/" class="btn-secondary">{$t('session.backToDashboard')}</a>
+						<!-- Direct path to cram: without it, keeping on studying requires spotting
+						     the cram checkbox further down — undiscoverable when the Start button is gone. -->
+						<button class="btn-ghost" onclick={() => cramMode = true}>{$t('review.cramAnyway')}</button>
+					</div>
 				</div>
 			{:else}
 				<button class="start-btn" onclick={startReview} disabled={!reviewPrepared || startingReview} aria-busy={!reviewPrepared || startingReview}>{!reviewPrepared ? $t('common.loading') : cramMode ? $t('review.startCram') : $t('review.startReview')}</button>
@@ -752,12 +757,12 @@
 			{/if}
 		</div>
 		<div class="top-right">
-			<div class="counts">
-				<span class="count count-new" class:active={cardState === 'new'}>{counts.new}</span>
-				<span class="count-sep">+</span>
-				<span class="count count-learning" class:active={cardState === 'learning'}>{counts.learning}</span>
-				<span class="count-sep">+</span>
-				<span class="count count-review" class:active={cardState === 'review'}>{counts.review}</span>
+			<div class="counts" role="status" aria-label="{counts.new} {$t('state.new')}, {counts.learning} {$t('state.learning')}, {counts.review} {$t('state.review')}">
+				<span class="count count-new" class:active={cardState === 'new'} title={$t('state.new')}>{counts.new}</span>
+				<span class="count-sep" aria-hidden="true">+</span>
+				<span class="count count-learning" class:active={cardState === 'learning'} title={$t('state.learning')}>{counts.learning}</span>
+				<span class="count-sep" aria-hidden="true">+</span>
+				<span class="count count-review" class:active={cardState === 'review'} title={$t('state.review')}>{counts.review}</span>
 			</div>
 			<button class="toolbar-btn stop" onclick={() => engine.executeCommand('stop')} title="{$t('review.stop')} (Esc)" aria-label={$t('review.stop')}>
 				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -862,24 +867,6 @@
 		line-height: 1.6;
 		margin: 0;
 		max-width: 360px;
-	}
-
-	.settings-btn {
-		display: inline-block;
-		margin-top: 0.5rem;
-		padding: 0.75rem 1.75rem;
-		background: var(--primary);
-		color: var(--text-on-primary);
-		border: none;
-		border-radius: var(--r-md);
-		font-size: 1rem;
-		font-weight: 600;
-		text-decoration: none;
-		transition: background var(--t-fast) var(--ease);
-	}
-
-	.settings-btn:hover {
-		background: var(--primary-hover);
 	}
 
 	/* ========== Start Screen ========== */
@@ -1003,6 +990,13 @@
 		color: var(--text-muted);
 		line-height: 1.5;
 		margin: 0 0 0.5rem;
+	}
+
+	.nothing-due-actions {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 0.5rem;
 	}
 
 	.start-toggles {

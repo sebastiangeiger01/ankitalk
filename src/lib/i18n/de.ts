@@ -63,7 +63,8 @@ export const de: Record<string, string> = {
 	'review.newOnly': 'Nur neue',
 	'review.learningOnly': 'Nur lernende',
 	'review.reviewOnly': 'Nur wiederholende',
-	'review.showHelp': 'Sprachbefehle & Tastenkombinationen anzeigen',
+	'review.showHelp': 'Hilfe & Befehle anzeigen',
+	'review.cramAnyway': 'Trotzdem üben (Pauken)',
 	'review.startTogglesLabel': 'Audio & Mikrofon',
 	'review.startAudioOn': 'Audio an',
 	'review.startAudioOff': 'Audio aus',
@@ -103,6 +104,10 @@ export const de: Record<string, string> = {
 	'help.keyStop': 'Sitzung beenden',
 	'help.keyHelp': 'Dieses Overlay zeigen / ausblenden',
 	'help.closeOverlay': 'Schlie\u00dfen',
+	'help.queueTitle': 'Z\u00e4hler in der oberen Leiste',
+	'help.queueNewDesc': 'neue Karten heute \u00fcbrig',
+	'help.queueLearningDesc': 'Karten in der Lernschleife',
+	'help.queueReviewDesc': 'f\u00e4llige Wiederholungen',
 
 	// Review - Active session
 	'review.muteAudio': 'Audio stumm',

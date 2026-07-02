@@ -63,7 +63,8 @@ export const en: Record<string, string> = {
 	'review.newOnly': 'New only',
 	'review.learningOnly': 'Learning only',
 	'review.reviewOnly': 'Review only',
-	'review.showHelp': 'Show voice commands & shortcuts',
+	'review.showHelp': 'Show help & commands',
+	'review.cramAnyway': 'Practice anyway (cram)',
 	'review.startTogglesLabel': 'Audio & microphone',
 	'review.startAudioOn': 'Audio on',
 	'review.startAudioOff': 'Audio off',
@@ -103,6 +104,10 @@ export const en: Record<string, string> = {
 	'help.keyStop': 'End session',
 	'help.keyHelp': 'Show / hide this overlay',
 	'help.closeOverlay': 'Close',
+	'help.queueTitle': 'Counter in the top bar',
+	'help.queueNewDesc': 'new cards left today',
+	'help.queueLearningDesc': 'cards in the learning loop',
+	'help.queueReviewDesc': 'reviews due',
 
 	// Review - Active session
 	'review.muteAudio': 'Mute audio',

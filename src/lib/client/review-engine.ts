@@ -316,7 +316,9 @@ export function createReviewEngine(): ReviewEngine {
 		}
 
 		if (result === 'wait') {
-			// Wait for next learning card
+			// Wait for next learning card. Clear the current card so commands arriving
+			// during the hold can't act on the just-rated card (e.g. re-rate it).
+			currentCard = null;
 			const waitMs = learningQueue[0].dueAt - Date.now();
 			scheduleNextLearningCard(waitMs);
 			return;
@@ -373,9 +375,9 @@ export function createReviewEngine(): ReviewEngine {
 		if (sessionFinished && command !== 'stop') return;
 
 		interruptTTS();
-		clearLearningTimer();
 
-		// Undo must be handled before clearUndo() wipes the undo info
+		// Undo must be handled before clearUndo() wipes the undo info. It works during
+		// the learning hold too (performUndo clears the hold timer itself).
 		if (command === 'undo') {
 			if (undoInfo) {
 				emit({ type: 'command', command });
@@ -384,11 +386,21 @@ export function createReviewEngine(): ReviewEngine {
 			return;
 		}
 
+		// Stop must work even during the learning hold, when no card is current.
+		if (command === 'stop') {
+			emit({ type: 'command', command });
+			endSession();
+			return;
+		}
+
+		// No current card means we're in the learning hold: ignore everything else so a
+		// stray key or transcript can't re-rate the just-rated card or, by falling
+		// through, kill the hold timer and strand the session.
+		if (!currentCard) return;
+
 		clearUndo();
 
 		emit({ type: 'command', command });
-
-		if (!currentCard) return;
 
 		switch (command) {
 			case 'answer':
@@ -429,10 +441,6 @@ export function createReviewEngine(): ReviewEngine {
 
 			case 'suspend':
 				handleSuspend();
-				break;
-
-			case 'stop':
-				endSession();
 				break;
 		}
 	}
