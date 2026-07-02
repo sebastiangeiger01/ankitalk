@@ -6,7 +6,7 @@
 	import { preloadTTS, unlockAudioForGesture } from '$lib/client/audio';
 	import { getPrepareAudioAhead } from '$lib/client/preferences';
 	import { locale, t } from '$lib/i18n';
-	import { focusTrap } from '$lib/actions/focusTrap';
+	import ReviewHelp from '$lib/components/ReviewHelp.svelte';
 	import { clientCardSanitizer } from '$lib/client/card-sanitize';
 	import { renderCard } from '$lib/client/card-renderer';
 	import type { ReviewPhase } from '$lib/types';
@@ -14,6 +14,7 @@
 	import AgentChat from '$lib/components/AgentChat.svelte';
 
 	let agentChatOpen = $state(false);
+	let agentIntent = $state<'hint' | 'explain' | null>(null);
 	let agentEnabled = $state(false);
 	let tutorPausedReviewMic = false;
 	// Tutor context — populated from each card_change emit so the agent receives current
@@ -58,7 +59,6 @@
 	let cramState = $state<'' | 'new' | 'learning' | 'review'>('');
 	let intervals = $state<IntervalLabels>({ again: '', hard: '', good: '', easy: '' });
 	let counts = $state<QueueCounts>({ new: 0, learning: 0, review: 0 });
-	let helpOpen = $state(false);
 	let shortcutsOpen = $state(false);
 	let prefetchedCards = $state<PrefetchedCards | null>(null);
 	let reviewPrepared = $state(false);
@@ -135,7 +135,12 @@
 		errorMsg = '';
 	}
 
-	function openTutor() {
+	/**
+	 * `intent` records how the tutor was summoned: an explicit voice command or H/E shortcut
+	 * carries 'hint'/'explain' and makes the tutor answer immediately, while the generic
+	 * toolbar button passes null so the chat opens with the prompt picker instead.
+	 */
+	function openTutor(intent: 'hint' | 'explain' | null) {
 		if (!agentEnabled) {
 			showReviewError($t('agent.errors.noAgent'));
 			return;
@@ -144,15 +149,13 @@
 			tutorPausedReviewMic = true;
 			engine.toggleMic();
 		}
+		agentIntent = intent;
 		agentChatOpen = true;
-	}
-
-	function requestTutor() {
-		engine.executeCommand(phase === 'question' ? 'hint' : 'explain');
 	}
 
 	function closeTutor() {
 		agentChatOpen = false;
+		agentIntent = null;
 		if (tutorPausedReviewMic && !micOn) engine.toggleMic();
 		tutorPausedReviewMic = false;
 	}
@@ -276,7 +279,7 @@
 				break;
 			}
 			case 'command':
-				if (event.command === 'hint' || event.command === 'explain') openTutor();
+				if (event.command === 'hint' || event.command === 'explain') openTutor(event.command);
 				if (['again', 'hard', 'good', 'easy'].includes(event.command)) {
 					highlightRating = event.command;
 					if (highlightTimer) clearTimeout(highlightTimer);
@@ -439,10 +442,10 @@
 				if (phase === 'rating') engine.executeCommand('easy');
 				break;
 			case 'e':
-				if (phase === 'rating') requestTutor();
+				if (phase === 'rating') engine.executeCommand('explain');
 				break;
 			case 'h':
-				if (phase === 'question') requestTutor();
+				if (phase === 'question') engine.executeCommand('hint');
 				break;
 			case 'r':
 				engine.executeCommand('repeat');
@@ -532,7 +535,7 @@
 	<div class="review-container">
 		<div class="missing-keys-banner">
 			<div class="missing-keys-icon">
-				<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><circle cx="12" cy="16" r="0.5" fill="currentColor" stroke="none"/></svg>
+				<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
 			</div>
 			<h2>{$t('review.missingKeys')}</h2>
 			<p>{$t('review.missingKeysDetail')}</p>
@@ -592,23 +595,10 @@
 				{/if}
 			</div>
 
-			<button class="help-toggle" onclick={() => helpOpen = !helpOpen}>
-				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-				<span class="help-toggle-text">{helpOpen ? $t('review.hideHelp') : $t('review.showHelp')}</span>
-				<svg class="help-chevron" class:open={helpOpen} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+			<button class="help-toggle" onclick={() => shortcutsOpen = true} aria-haspopup="dialog">
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+				<span class="help-toggle-text">{$t('review.showHelp')}</span>
 			</button>
-			{#if helpOpen}
-				<div class="commands-help">
-					<ul>
-						<li><strong>{$t('help.answer')}</strong> — {$t('help.answerDesc')} <kbd>Space</kbd></li>
-						<li><strong>{$t('help.hint')}</strong> — {$t('help.hintDesc')} <kbd>H</kbd></li>
-						<li><strong>{$t('help.ratings')}</strong> — {$t('help.ratingsDesc')} <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></li>
-						<li><strong>{$t('help.repeat')}</strong> — {$t('help.repeatDesc')} <kbd>R</kbd></li>
-						<li><strong>{$t('help.explain')}</strong> — {$t('help.explainDesc')} <kbd>E</kbd></li>
-						<li><strong>{$t('help.stop')}</strong> — {$t('help.stopDesc')} <kbd>Esc</kbd></li>
-					</ul>
-				</div>
-			{/if}
 		</div>
 	</div>
 {:else if sessionEnded && stats}
@@ -688,12 +678,14 @@
 					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.5-.36 2.18"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
 				{/if}
 			</button>
-			<button class="toolbar-btn toolbar-btn--tutor" class:off={!agentEnabled} onclick={requestTutor} title="{$t('agent.openTutor')} (H/E)" aria-label={$t('agent.openTutor')}>
+			<button class="toolbar-btn toolbar-btn--tutor" class:off={!agentEnabled} onclick={() => openTutor(null)} title="{$t('agent.openTutor')} (H/E)" aria-label={$t('agent.openTutor')}>
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" y1="10" x2="15" y2="10"/></svg>
 				<span>{$t('agent.openTutor')}</span>
 			</button>
-			<button class="toolbar-btn" onclick={() => shortcutsOpen = !shortcutsOpen} title="{$t('help.keyHelp')} (?)" aria-label={$t('help.keyboardTitle')} aria-pressed={shortcutsOpen}>
-				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor" stroke="none"/></svg>
+			<button class="toolbar-btn" onclick={() => shortcutsOpen = !shortcutsOpen} title="{$t('help.keyHelp')} (?)" aria-label={$t('help.title')} aria-pressed={shortcutsOpen}>
+				<!-- Feather help-circle: the dot must be a stroked zero-length line (round cap),
+				     not a tiny filled circle — r=0.5 renders sub-pixel and disappears. -->
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
 			</button>
 			{#if status === 'loading' || status === 'speaking'}
 				<span class="voice-dot" class:loading={status === 'loading'} class:speaking={status === 'speaking'}></span>
@@ -772,56 +764,16 @@
 		{/if}
 	</div>
 
-	<!-- Keyboard shortcuts overlay -->
-	{#if shortcutsOpen}
-		<button class="shortcuts-backdrop" onclick={() => shortcutsOpen = false} aria-label={$t('help.closeOverlay')}></button>
-		<div class="shortcuts-wrap">
-			<div
-				class="shortcuts-overlay"
-				role="dialog"
-				aria-modal="true"
-				aria-label={$t('help.keyboardTitle')}
-				tabindex="-1"
-				onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); shortcutsOpen = false; } }}
-				use:focusTrap
-			>
-				<div class="shortcuts-header">
-					<span class="shortcuts-title">{$t('help.keyboardTitle')}</span>
-					<button class="shortcuts-close" onclick={() => shortcutsOpen = false} aria-label={$t('help.closeOverlay')}>
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-					</button>
-				</div>
-				<table class="shortcuts-table">
-					<tbody>
-						<tr><td><kbd>Space</kbd> / <kbd>Enter</kbd></td><td>{$t('help.keyAnswer')}</td></tr>
-						<tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></td><td>{$t('help.keyRatings')}</td></tr>
-						<tr><td><kbd>R</kbd></td><td>{$t('help.keyRepeat')}</td></tr>
-						<tr><td><kbd>E</kbd></td><td>{$t('help.keyExplain')}</td></tr>
-						<tr><td><kbd>H</kbd></td><td>{$t('help.keyHint')}</td></tr>
-						<tr><td><kbd>Z</kbd></td><td>{$t('help.keyUndo')}</td></tr>
-						<tr><td><kbd>Esc</kbd></td><td>{$t('help.keyStop')}</td></tr>
-						<tr><td><kbd>?</kbd></td><td>{$t('help.keyHelp')}</td></tr>
-					</tbody>
-				</table>
-				<div class="shortcuts-section-title">{$t('help.voiceTitle')}</div>
-				<ul class="shortcuts-voice">
-					<li><strong>{$t('help.answer')}</strong> — {$t('help.answerDesc')}</li>
-					<li><strong>{$t('help.ratings')}</strong> — {$t('help.ratingsDesc')}</li>
-					<li><strong>{$t('help.repeat')}</strong> — {$t('help.repeatDesc')}</li>
-					<li><strong>{$t('help.explain')}</strong> — {$t('help.explainDesc')}</li>
-					<li><strong>{$t('help.hint')}</strong> — {$t('help.hintDesc')}</li>
-					<li><strong>{$t('help.stop')}</strong> — {$t('help.stopDesc')}</li>
-				</ul>
-			</div>
-		</div>
-	{/if}
 {/if}
+
+<ReviewHelp open={shortcutsOpen} onclose={() => shortcutsOpen = false} />
 
 <AgentChat
 	open={agentChatOpen}
 	cardId={agentCardId}
 	answerRevealed={phase === 'rating'}
 	locale={$locale === 'de' ? 'de' : 'en'}
+	intent={agentIntent}
 	onclose={closeTutor}
 />
 
@@ -1079,45 +1031,6 @@
 		border-color: var(--border-strong);
 		color: var(--text);
 		background: var(--surface);
-	}
-
-	.help-chevron {
-		transition: transform var(--t-med) var(--ease);
-		opacity: 0.7;
-	}
-
-	.help-chevron.open {
-		transform: rotate(180deg);
-	}
-
-	.commands-help {
-		text-align: left;
-		max-width: 400px;
-		margin: 0.75rem auto 0;
-		color: var(--text-muted);
-		font-size: 0.9rem;
-		background: var(--surface);
-		border: 1px solid var(--border);
-		border-radius: var(--r-md);
-		padding: 0.75rem 1rem;
-	}
-
-	.commands-help ul {
-		padding-left: 0;
-		list-style: none;
-		margin: 0;
-	}
-
-	.commands-help li {
-		margin-bottom: 0.4rem;
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.commands-help li:last-child {
-		margin-bottom: 0;
 	}
 
 	/* ========== Session Complete ========== */
@@ -1793,127 +1706,4 @@
 		kbd { display: none; }
 	}
 
-	/* ========== Keyboard Shortcuts Overlay ========== */
-	.shortcuts-backdrop {
-		position: fixed;
-		inset: 0;
-		background: rgba(0, 0, 0, 0.55);
-		border: 0;
-		padding: 0;
-		z-index: 200;
-		animation: fade-in var(--t-fast) var(--ease);
-	}
-
-	/* Flex-centering wrapper: keeps the dialog centered while the global `pop` keyframes
-	   animate its transform (a translate(-50%,-50%) self-center would fight them). */
-	.shortcuts-wrap {
-		position: fixed;
-		inset: 0;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: 2rem 1rem;
-		z-index: 201;
-		pointer-events: none;
-	}
-
-	.shortcuts-overlay {
-		pointer-events: auto;
-		background: var(--surface-elevated);
-		border: 1px solid var(--border);
-		border-radius: var(--r-lg);
-		box-shadow: var(--shadow-lg);
-		padding: 1.25rem 1.5rem;
-		/* No min-width: at 320px viewport, 300px > calc(100vw - 2rem) (288px) and pushes the
-		   overlay past the right edge. Let the content (table + kbd labels) drive the width. */
-		max-width: min(480px, calc(100vw - 2rem));
-		max-height: 100%;
-		overflow-y: auto;
-		animation: pop var(--t-med) var(--ease);
-	}
-
-	.shortcuts-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-bottom: 1rem;
-	}
-
-	.shortcuts-title {
-		font-size: 1rem;
-		font-weight: 700;
-		color: var(--text);
-	}
-
-	.shortcuts-close {
-		background: transparent;
-		border: none;
-		color: var(--text-subtle);
-		cursor: pointer;
-		padding: 0.25rem;
-		border-radius: var(--r-sm);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition: color var(--t-fast) var(--ease);
-	}
-
-	.shortcuts-close:hover {
-		color: var(--text);
-	}
-
-	.shortcuts-table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: 0.875rem;
-		margin-bottom: 1.25rem;
-	}
-
-	.shortcuts-table td {
-		padding: 0.3rem 0;
-		vertical-align: middle;
-		color: var(--text-muted);
-	}
-
-	.shortcuts-table td:first-child {
-		white-space: nowrap;
-		padding-right: 1.25rem;
-		color: var(--text);
-	}
-
-	.shortcuts-table tr + tr td {
-		border-top: 1px solid var(--border-muted);
-		padding-top: 0.35rem;
-	}
-
-	.shortcuts-section-title {
-		font-size: 0.8rem;
-		font-weight: 700;
-		color: var(--text-subtle);
-		text-transform: uppercase;
-		letter-spacing: 0.07em;
-		margin-bottom: 0.6rem;
-	}
-
-	.shortcuts-voice {
-		list-style: none;
-		padding: 0;
-		margin: 0;
-		font-size: 0.875rem;
-		color: var(--text-muted);
-	}
-
-	.shortcuts-voice li {
-		padding: 0.25rem 0;
-		border-top: 1px solid var(--border-muted);
-	}
-
-	.shortcuts-voice li:first-child {
-		border-top: none;
-	}
-
-	/* On touch/mobile devices keep the overlay fully usable */
-	@media (hover: none), (max-width: 640px) {
-		.shortcuts-overlay kbd { display: inline; }
-	}
 </style>

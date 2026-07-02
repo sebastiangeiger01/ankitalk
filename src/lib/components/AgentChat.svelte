@@ -14,6 +14,12 @@
 		cardId: string;
 		answerRevealed: boolean;
 		locale: 'en' | 'de';
+		/**
+		 * Why the tutor was opened. An explicit intent ('hint'/'explain' — voice command or
+		 * H/E shortcut) makes the agent answer immediately via the kickoff turn. null (the
+		 * generic Tutor button) shows the prompt picker instead and the agent waits silently.
+		 */
+		intent?: 'hint' | 'explain' | null;
 		onclose: () => void;
 	}
 
@@ -22,6 +28,7 @@
 		cardId,
 		answerRevealed,
 		locale,
+		intent = null,
 		onclose
 	}: Props = $props();
 
@@ -47,11 +54,16 @@
 	// New content arrived while the student was scrolled up — drives the "new messages" pill.
 	let hasUnseen = $state(false);
 	let sessionStartMs = 0;
-	// The agent opens the conversation itself: we suppress the dashboard greeting (firstMessage
-	// override) and inject a hidden intent message so its first spoken turn is a real,
-	// card-specific hint or explanation instead of a generic "what brings you here?" greeting.
+	// With an explicit intent the agent opens the conversation itself: we suppress the
+	// dashboard greeting (firstMessage override) and inject a hidden intent message so its
+	// first spoken turn is a real, card-specific hint or explanation instead of a generic
+	// "what brings you here?" greeting. Without an intent there is no kickoff — the prompt
+	// picker below leads.
 	let kickoffMessage = '';
 	let kickoffShown = false;
+	// A picker chip tapped while the WebRTC session is still connecting: queued here and sent
+	// the moment the session is live, so choosing a prompt during the connect window "just works".
+	let pendingPrompt = '';
 
 	// Mic gating. `agentSpeaking` tracks whose turn it is (from onModeChange). In the default
 	// half-duplex mode the mic is muted whenever the agent talks, so it can't hear and react to
@@ -72,8 +84,61 @@
 		conversation !== null && (phase === 'thinking' || phase === 'listening' || phase === 'speaking')
 	);
 	// The chat "typing" bubble is the loading indicator while we connect / wait for the first
-	// turn. Once the agent's reply starts streaming, the growing bubble takes over.
-	const showTyping = $derived((phase === 'connecting' || phase === 'thinking') && streamingIndex < 0);
+	// turn. Once the agent's reply starts streaming, the growing bubble takes over. Without a
+	// kickoff and before any prompt is chosen there is nothing to wait for — the picker leads
+	// and a typing bubble would wrongly suggest the agent is preparing a reply.
+	const showTyping = $derived(
+		(phase === 'connecting' || phase === 'thinking') &&
+		streamingIndex < 0 &&
+		(intent !== null || messages.length > 0)
+	);
+
+	// Prompt picker: shown for generic opens (no explicit intent) until the first user turn.
+	// Chips are stage-dependent — pre-reveal they must not spoil the answer, post-reveal they
+	// deepen understanding.
+	const showPicker = $derived(
+		intent === null &&
+		messages.length === 0 &&
+		(phase === 'connecting' || phase === 'thinking' || phase === 'listening')
+	);
+
+	const promptChips = $derived(
+		answerRevealed
+			? [
+				$t('agent.prompts.explainAnswer'),
+				$t('agent.prompts.whyAnswer'),
+				$t('agent.prompts.mnemonic'),
+				$t('agent.prompts.example')
+			]
+			: [
+				$t('agent.prompts.hint'),
+				$t('agent.prompts.approach'),
+				$t('agent.prompts.term'),
+				$t('agent.prompts.recognize')
+			]
+	);
+
+	/**
+	 * Send a predefined prompt. The user bubble appears immediately; if the WebRTC session is
+	 * still connecting the text is queued and flushed right after connect, so tapping a chip
+	 * during the connect window is the intended fast path, not an error.
+	 */
+	function pickPrompt(text: string) {
+		if (messages.length > 0) return; // picker already consumed
+		messages = [...messages, { role: 'user', text }];
+		pendingUserEchoes = [...pendingUserEchoes, text];
+		liveAnnouncement = text;
+		if (canSend) {
+			try {
+				conversation?.sendUserMessage(text);
+				if (phase === 'listening') phase = 'thinking';
+			} catch {
+				/* a closed session will surface via onDisconnect/onError */
+			}
+		} else {
+			pendingPrompt = text;
+		}
+	}
 
 	// Auto-scroll: whenever the transcript content changes, stick to the bottom (unless the
 	// student scrolled up — then surface the "new messages" pill instead). Reading `messages`
@@ -251,6 +316,7 @@
 			agentSpeaking = false;
 			liveAnnouncement = '';
 			pendingUserEchoes = [];
+			pendingPrompt = '';
 		}
 	});
 
@@ -263,11 +329,12 @@
 		hasUnseen = false;
 		talking = false;
 		pendingUserEchoes = [];
+		pendingPrompt = '';
 		liveAnnouncement = $t('agent.status.connecting');
 		pushToTalk = getPushToTalk();
-		// The agent opens with the kickoff turn, so treat the connect window as its turn: the mic
-		// stays muted until onModeChange flips to "listening". (In push-to-talk this is moot — the
-		// mic only opens while the button is held.)
+		// Treat the connect window as the agent's turn: the mic stays muted until onModeChange
+		// flips to "listening". (In push-to-talk this is moot — the mic only opens while the
+		// talk button is held.)
 		agentSpeaking = true;
 		try {
 			const res = await fetch('/api/agent/session', {
@@ -293,9 +360,11 @@
 				language: 'en' | 'de';
 			};
 
-			// Before the answer is revealed the student wants a hint; afterwards they want the
-			// idea explained. We send this as the opening turn so the agent leads with help.
-			kickoffMessage = answerRevealed ? $t('agent.kickoffExplain') : $t('agent.kickoffHint');
+			// Only an explicit intent (voice command / H,E shortcut) auto-starts the agent's
+			// first turn. The generic Tutor button opens with the prompt picker instead, and
+			// the agent waits silently until the student chooses, types, or talks.
+			kickoffMessage =
+				intent === null ? '' : intent === 'explain' ? $t('agent.kickoffExplain') : $t('agent.kickoffHint');
 			kickoffShown = false;
 
 			const { Conversation } = await import('@elevenlabs/client');
@@ -312,10 +381,13 @@
 					agent: { prompt: { prompt: data.systemPrompt }, language: data.language, firstMessage: '' },
 					tts: { voiceId: data.voiceId }
 				},
-				// After connecting we immediately kick off the agent's first turn, so show a
-				// "thinking" state until it replies rather than a silent "listening" that reads
-				// as if we're waiting on the student.
-				onConnect: () => (phase = kickoffMessage ? 'thinking' : 'listening'),
+				// With a kickoff or a chip picked mid-connect, the agent's first turn is already
+				// in flight — show "thinking" until it replies. Otherwise the session opens
+				// silently listening, with the prompt picker leading.
+				onConnect: () => {
+					phase = kickoffMessage || pendingPrompt ? 'thinking' : 'listening';
+					if (!kickoffMessage && !pendingPrompt) agentSpeaking = false;
+				},
 				onDisconnect: () => onSessionEnded(),
 				onMessage: ({ message, role }) => {
 					if (!message) return;
@@ -394,6 +466,16 @@
 				} catch {
 					/* ignore — fall back to the student speaking first */
 				}
+			}
+			// Flush a prompt-picker choice made while the session was still connecting (its
+			// user bubble is already in the transcript from pickPrompt).
+			if (pendingPrompt) {
+				try {
+					conversation.sendUserMessage(pendingPrompt);
+				} catch {
+					/* ignore — the student can re-send by typing or speaking */
+				}
+				pendingPrompt = '';
 			}
 		} catch (e) {
 			errorMsg = e instanceof Error ? e.message : $t('agent.error');
@@ -538,6 +620,18 @@
 							<span class="who">{$t('agent.agent')}</span>
 							{@render dots()}
 							<span class="visually-hidden">{$t('agent.status.thinking')}</span>
+						</div>
+					{:else if showPicker}
+						<!-- Generic open: the student picks what they need. Visible from the first
+						     connecting frame so choosing a prompt overlaps the WebRTC handshake. -->
+						<div class="prompt-picker" in:fade={{ duration: 150 }}>
+							<p class="picker-title">{$t('agent.prompts.title')}</p>
+							<div class="picker-chips">
+								{#each promptChips as chip (chip)}
+									<button type="button" class="picker-chip" onclick={() => pickPrompt(chip)}>{chip}</button>
+								{/each}
+							</div>
+							<p class="picker-hint">{pushToTalk ? $t('agent.prompts.orHintPtt') : $t('agent.prompts.orHint')}</p>
 						</div>
 					{:else if messages.length === 0 && phase !== 'speaking' && phase !== 'error'}
 						<p class="hint" in:fade={{ duration: 150 }}>
@@ -791,6 +885,52 @@
 	.who { font-size: 0.7rem; color: var(--text-subtle); text-transform: uppercase; letter-spacing: 0.05em; }
 	.text { color: var(--text); overflow-wrap: anywhere; }
 	.hint { color: var(--text-subtle); font-size: 0.85rem; margin: 0; text-align: center; padding: 1rem; }
+
+	/* ===== Prompt picker (generic tutor opens) ===== */
+	.prompt-picker {
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+		padding: 0.5rem 0.25rem;
+	}
+	.picker-title {
+		margin: 0;
+		font-size: 0.85rem;
+		color: var(--text-muted);
+	}
+	.picker-chips {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.45rem;
+	}
+	.picker-chip {
+		background: var(--surface-2);
+		color: var(--text);
+		border: 1px solid var(--border);
+		border-radius: var(--r-lg);
+		border-bottom-left-radius: 5px; /* mirrors the agent bubble shape — "this becomes a message" */
+		padding: 0.55rem 0.85rem;
+		font-size: 0.9rem;
+		font-family: inherit;
+		text-align: left;
+		max-width: 86%;
+		cursor: pointer;
+		touch-action: manipulation;
+		transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease), transform 80ms var(--ease);
+	}
+	.picker-chip:hover {
+		border-color: var(--border-strong);
+		background: var(--surface-elevated);
+	}
+	.picker-chip:active {
+		transform: scale(0.98);
+	}
+	.picker-hint {
+		margin: 0;
+		font-size: 0.78rem;
+		color: var(--text-subtle);
+	}
 
 	.composer { display: flex; gap: 0.5rem; align-items: center; }
 	.composer-input {
