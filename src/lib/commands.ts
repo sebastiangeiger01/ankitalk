@@ -26,14 +26,17 @@ const COMMANDS: CommandDef[] = [
 	{
 		command: 'repeat',
 		aliases: [
+			// ElevenLabs STT often writes German "nochmal" as two words ("noch mal"), so both
+			// spellings are listed. Repeat is matched before the ratings, which keeps
+			// "noch(m)al bitte" → repeat while the bare word rates Again (see matchCommand).
 			'repeat', 'say again', 'again please', 'say it again', 'one more time',
-			'wiederholen', 'nochmal bitte', 'noch einmal', 'nochmals'
+			'wiederholen', 'nochmal bitte', 'noch mal bitte', 'noch einmal', 'nochmals'
 		],
 		phases: ['question', 'rating']
 	},
 	{
 		command: 'again',
-		aliases: ['again', 'nochmal'],
+		aliases: ['again', 'nochmal', 'noch mal'],
 		phases: ['rating']
 	},
 	{

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import { fade, fly } from 'svelte/transition';
 	// Type-only import (erased at build) so the heavy livekit/WebRTC runtime is NOT bundled into
 	// the review route — it's loaded on demand in start() when the tutor actually opens. This
@@ -14,6 +14,12 @@
 		cardId: string;
 		answerRevealed: boolean;
 		locale: 'en' | 'de';
+		/**
+		 * Why the tutor was opened. An explicit intent ('hint'/'explain' — voice command or
+		 * H/E shortcut) makes the agent answer immediately via the kickoff turn. null (the
+		 * generic Tutor button) shows the prompt picker instead and the agent waits silently.
+		 */
+		intent?: 'hint' | 'explain' | null;
 		onclose: () => void;
 	}
 
@@ -22,6 +28,7 @@
 		cardId,
 		answerRevealed,
 		locale,
+		intent = null,
 		onclose
 	}: Props = $props();
 
@@ -43,13 +50,20 @@
 	// assistive tech hears each message once, in full.
 	let liveAnnouncement = $state('');
 	// Keep the transcript pinned to the newest message unless the student has scrolled up to read.
-	let stickToBottom = true;
+	let stickToBottom = $state(true);
+	// New content arrived while the student was scrolled up — drives the "new messages" pill.
+	let hasUnseen = $state(false);
 	let sessionStartMs = 0;
-	// The agent opens the conversation itself: we suppress the dashboard greeting (firstMessage
-	// override) and inject a hidden intent message so its first spoken turn is a real,
-	// card-specific hint or explanation instead of a generic "what brings you here?" greeting.
+	// With an explicit intent the agent opens the conversation itself: we suppress the
+	// dashboard greeting (firstMessage override) and inject a hidden intent message so its
+	// first spoken turn is a real, card-specific hint or explanation instead of a generic
+	// "what brings you here?" greeting. Without an intent there is no kickoff — the prompt
+	// picker below leads.
 	let kickoffMessage = '';
 	let kickoffShown = false;
+	// A picker chip tapped while the WebRTC session is still connecting: queued here and sent
+	// the moment the session is live, so choosing a prompt during the connect window "just works".
+	let pendingPrompt = '';
 
 	// Mic gating. `agentSpeaking` tracks whose turn it is (from onModeChange). In the default
 	// half-duplex mode the mic is muted whenever the agent talks, so it can't hear and react to
@@ -70,12 +84,66 @@
 		conversation !== null && (phase === 'thinking' || phase === 'listening' || phase === 'speaking')
 	);
 	// The chat "typing" bubble is the loading indicator while we connect / wait for the first
-	// turn. Once the agent's reply starts streaming, the growing bubble takes over.
-	const showTyping = $derived((phase === 'connecting' || phase === 'thinking') && streamingIndex < 0);
+	// turn. Once the agent's reply starts streaming, the growing bubble takes over. Without a
+	// kickoff and before any prompt is chosen there is nothing to wait for — the picker leads
+	// and a typing bubble would wrongly suggest the agent is preparing a reply.
+	const showTyping = $derived(
+		(phase === 'connecting' || phase === 'thinking') &&
+		streamingIndex < 0 &&
+		(intent !== null || messages.length > 0)
+	);
+
+	// Prompt picker: shown for generic opens (no explicit intent) until the first user turn.
+	// Chips are stage-dependent — pre-reveal they must not spoil the answer, post-reveal they
+	// deepen understanding.
+	const showPicker = $derived(
+		intent === null &&
+		messages.length === 0 &&
+		(phase === 'connecting' || phase === 'thinking' || phase === 'listening')
+	);
+
+	const promptChips = $derived(
+		answerRevealed
+			? [
+				$t('agent.prompts.explainAnswer'),
+				$t('agent.prompts.whyAnswer'),
+				$t('agent.prompts.mnemonic'),
+				$t('agent.prompts.example')
+			]
+			: [
+				$t('agent.prompts.hint'),
+				$t('agent.prompts.approach'),
+				$t('agent.prompts.term'),
+				$t('agent.prompts.recognize')
+			]
+	);
+
+	/**
+	 * Send a predefined prompt. The user bubble appears immediately; if the WebRTC session is
+	 * still connecting the text is queued and flushed right after connect, so tapping a chip
+	 * during the connect window is the intended fast path, not an error.
+	 */
+	function pickPrompt(text: string) {
+		if (messages.length > 0) return; // picker already consumed
+		messages = [...messages, { role: 'user', text }];
+		pendingUserEchoes = [...pendingUserEchoes, text];
+		liveAnnouncement = text;
+		if (canSend) {
+			try {
+				conversation?.sendUserMessage(text);
+				if (phase === 'listening') phase = 'thinking';
+			} catch {
+				/* a closed session will surface via onDisconnect/onError */
+			}
+		} else {
+			pendingPrompt = text;
+		}
+	}
 
 	// Auto-scroll: whenever the transcript content changes, stick to the bottom (unless the
-	// student scrolled up). Reading `messages` here makes the effect re-run on every new
-	// message and every streamed delta.
+	// student scrolled up — then surface the "new messages" pill instead). Reading `messages`
+	// makes the effect re-run on every new message and every streamed delta; `stickToBottom` is
+	// read via untrack so merely scrolling up (no new content) doesn't trip the pill.
 	$effect(() => {
 		// Track both new messages (length) and streamed deltas (the last bubble's text) so this
 		// re-runs on every content change, then pin to the bottom.
@@ -83,7 +151,11 @@
 		const lastText = n > 0 ? messages[n - 1].text : '';
 		void lastText;
 		const el = transcriptEl;
-		if (!el || !stickToBottom) return;
+		if (!el) return;
+		if (!untrack(() => stickToBottom)) {
+			if (n > 0) hasUnseen = true;
+			return;
+		}
 		requestAnimationFrame(() => {
 			el.scrollTop = el.scrollHeight;
 		});
@@ -93,7 +165,82 @@
 		const el = transcriptEl;
 		if (!el) return;
 		stickToBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+		if (stickToBottom) hasUnseen = false;
 	}
+
+	function prefersReducedMotion(): boolean {
+		return typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+	}
+
+	function scrollToLatest() {
+		const el = transcriptEl;
+		if (!el) return;
+		stickToBottom = true;
+		hasUnseen = false;
+		el.scrollTo({ top: el.scrollHeight, behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+	}
+
+	// ---- Voice orb -------------------------------------------------------------------------
+	// The central orb breathes with the *real* audio level: the tutor's output while speaking,
+	// the mic input while listening. @elevenlabs/client exposes byte frequency data (0–255,
+	// voice band) on live sessions; we average it to a 0–1 level and drive a compositor-only
+	// transform via a CSS custom property from one rAF loop. If the API is missing (or the user
+	// prefers reduced motion) `orbLive` stays false and the orb falls back to a CSS pulse
+	// (compressed to a static frame by the global reduced-motion rule).
+	let orbEl = $state<HTMLDivElement | null>(null);
+	let orbLive = $state(false);
+	const orbDim = $derived(phase === 'ended' || phase === 'error');
+	const orbPulse = $derived(!orbDim && (!orbLive || phase === 'connecting' || phase === 'thinking'));
+
+	function audioLevel(data: Uint8Array): number {
+		if (data.length === 0) return 0;
+		let sum = 0;
+		for (let i = 0; i < data.length; i++) sum += data[i];
+		// Spoken audio rarely fills the whole band — boost so normal speech reads near full glow.
+		return Math.min(1, (sum / data.length / 255) * 1.8);
+	}
+
+	$effect(() => {
+		const conv = conversation;
+		const el = orbEl;
+		if (!open || !conv || !el || prefersReducedMotion()) {
+			orbLive = false;
+			return;
+		}
+		// Feature-detect: fall back to the CSS pulse if a future SDK drops the analyser API.
+		if (
+			typeof conv.getOutputByteFrequencyData !== 'function' ||
+			typeof conv.getInputByteFrequencyData !== 'function'
+		) {
+			orbLive = false;
+			return;
+		}
+		orbLive = true;
+		let raf = 0;
+		let level = 0;
+		const tick = () => {
+			let target = 0;
+			try {
+				if (phase === 'speaking') {
+					target = audioLevel(conv.getOutputByteFrequencyData());
+				} else if (phase === 'listening' && (!pushToTalk || talking)) {
+					target = audioLevel(conv.getInputByteFrequencyData());
+				}
+			} catch {
+				/* session tearing down mid-frame — hold the last level */
+			}
+			// Asymmetric smoothing: fast attack so the orb feels live, slow release so it breathes.
+			level += (target - level) * (target > level ? 0.35 : 0.1);
+			el.style.setProperty('--orb-level', level.toFixed(3));
+			raf = requestAnimationFrame(tick);
+		};
+		raf = requestAnimationFrame(tick);
+		return () => {
+			cancelAnimationFrame(raf);
+			el.style.removeProperty('--orb-level');
+			orbLive = false;
+		};
+	});
 
 	function sendText() {
 		const text = draft.trim();
@@ -164,10 +311,12 @@
 			messages = [];
 			streamingIndex = -1;
 			stickToBottom = true;
+			hasUnseen = false;
 			talking = false;
 			agentSpeaking = false;
 			liveAnnouncement = '';
 			pendingUserEchoes = [];
+			pendingPrompt = '';
 		}
 	});
 
@@ -177,13 +326,15 @@
 		messages = [];
 		streamingIndex = -1;
 		stickToBottom = true;
+		hasUnseen = false;
 		talking = false;
 		pendingUserEchoes = [];
+		pendingPrompt = '';
 		liveAnnouncement = $t('agent.status.connecting');
 		pushToTalk = getPushToTalk();
-		// The agent opens with the kickoff turn, so treat the connect window as its turn: the mic
-		// stays muted until onModeChange flips to "listening". (In push-to-talk this is moot — the
-		// mic only opens while the button is held.)
+		// Treat the connect window as the agent's turn: the mic stays muted until onModeChange
+		// flips to "listening". (In push-to-talk this is moot — the mic only opens while the
+		// talk button is held.)
 		agentSpeaking = true;
 		try {
 			const res = await fetch('/api/agent/session', {
@@ -209,9 +360,11 @@
 				language: 'en' | 'de';
 			};
 
-			// Before the answer is revealed the student wants a hint; afterwards they want the
-			// idea explained. We send this as the opening turn so the agent leads with help.
-			kickoffMessage = answerRevealed ? $t('agent.kickoffExplain') : $t('agent.kickoffHint');
+			// Only an explicit intent (voice command / H,E shortcut) auto-starts the agent's
+			// first turn. The generic Tutor button opens with the prompt picker instead, and
+			// the agent waits silently until the student chooses, types, or talks.
+			kickoffMessage =
+				intent === null ? '' : intent === 'explain' ? $t('agent.kickoffExplain') : $t('agent.kickoffHint');
 			kickoffShown = false;
 
 			const { Conversation } = await import('@elevenlabs/client');
@@ -228,10 +381,13 @@
 					agent: { prompt: { prompt: data.systemPrompt }, language: data.language, firstMessage: '' },
 					tts: { voiceId: data.voiceId }
 				},
-				// After connecting we immediately kick off the agent's first turn, so show a
-				// "thinking" state until it replies rather than a silent "listening" that reads
-				// as if we're waiting on the student.
-				onConnect: () => (phase = kickoffMessage ? 'thinking' : 'listening'),
+				// With a kickoff or a chip picked mid-connect, the agent's first turn is already
+				// in flight — show "thinking" until it replies. Otherwise the session opens
+				// silently listening, with the prompt picker leading.
+				onConnect: () => {
+					phase = kickoffMessage || pendingPrompt ? 'thinking' : 'listening';
+					if (!kickoffMessage && !pendingPrompt) agentSpeaking = false;
+				},
 				onDisconnect: () => onSessionEnded(),
 				onMessage: ({ message, role }) => {
 					if (!message) return;
@@ -311,6 +467,16 @@
 					/* ignore — fall back to the student speaking first */
 				}
 			}
+			// Flush a prompt-picker choice made while the session was still connecting (its
+			// user bubble is already in the transcript from pickPrompt).
+			if (pendingPrompt) {
+				try {
+					conversation.sendUserMessage(pendingPrompt);
+				} catch {
+					/* ignore — the student can re-send by typing or speaking */
+				}
+				pendingPrompt = '';
+			}
 		} catch (e) {
 			errorMsg = e instanceof Error ? e.message : $t('agent.error');
 			phase = 'error';
@@ -389,65 +555,95 @@
 		tabindex="-1"
 		onkeydown={onKey}
 		use:focusTrap
-		transition:fade={{ duration: 120 }}
 	>
-		<div class="modal" in:fly={{ y: 10, duration: 200 }}>
+		<div class="modal">
 			<div class="head">
 				<h2>{answerRevealed ? $t('agent.title') : $t('agent.hintTitle')}</h2>
 				<button class="close-btn" onclick={close} aria-label={$t('common.close')}>×</button>
 			</div>
 
-			<!-- Connecting/thinking show no status text: the chat "typing" bubble below is the single
-			     loading indicator. The status row covers the turn-taking states only. -->
-			<div class="status" role="status" aria-live="polite">
-				{#if phase === 'listening'}
-					{#if pushToTalk && !talking}
-						<span class="dot"></span>
-						<span>{$t('agent.ptt.muted')}</span>
-					{:else}
-						<span class="dot dot--live"></span>
-						<span>{$t('agent.status.listening')}</span>
+			<!-- The orb is the voice indicator: it breathes with the live audio level (see the rAF
+			     effect) or gently pulses while idle/thinking. The status line beneath it covers the
+			     turn-taking states plus a lightweight connecting notice. -->
+			<div class="stage">
+				<div
+					class="orb"
+					class:orb--pulse={orbPulse}
+					class:orb--dim={orbDim}
+					bind:this={orbEl}
+					aria-hidden="true"
+				></div>
+				<div class="status" role="status" aria-live="polite">
+					{#if phase === 'connecting'}
+						<span>{$t('agent.status.connecting')}</span>
+					{:else if phase === 'listening'}
+						{#if pushToTalk && !talking}
+							<span class="dot"></span>
+							<span>{$t('agent.ptt.muted')}</span>
+						{:else}
+							<span class="dot dot--live"></span>
+							<span>{$t('agent.status.listening')}</span>
+						{/if}
+					{:else if phase === 'speaking'}
+						<span>{$t('agent.status.speaking')}</span>
+					{:else if phase === 'ended'}
+						<span>{$t('agent.status.ended')}</span>
+					{:else if phase === 'error'}
+						<span class="err">{errorMsg || $t('agent.error')}</span>
 					{/if}
-				{:else if phase === 'speaking'}
-					<span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-					<span>{$t('agent.status.speaking')}</span>
-				{:else if phase === 'ended'}
-					<span>{$t('agent.status.ended')}</span>
-				{:else if phase === 'error'}
-					<span class="err">{errorMsg || $t('agent.error')}</span>
-				{/if}
+				</div>
 			</div>
 
 			<!-- Polite live region for assistive tech: announces finished turns once (see
 			     liveAnnouncement). The visible transcript is intentionally not a live region. -->
 			<p class="visually-hidden" aria-live="polite" role="status">{liveAnnouncement}</p>
 
-			<div class="transcript" bind:this={transcriptEl} onscroll={onTranscriptScroll}>
-				{#each messages as m, i (i)}
-					<div
-						class="bubble"
-						class:user={m.role === 'user'}
-						in:fly={{ y: 6, duration: 180 }}
-					>
-						<span class="who">{m.role === 'user' ? $t('agent.you') : $t('agent.agent')}</span>
-						{#if m.streaming && !m.text}
+			<div class="transcript-wrap">
+				<div class="transcript" bind:this={transcriptEl} onscroll={onTranscriptScroll}>
+					{#each messages as m, i (i)}
+						<div
+							class="bubble"
+							class:user={m.role === 'user'}
+							in:fly={{ y: 6, duration: 180 }}
+						>
+							<span class="who">{m.role === 'user' ? $t('agent.you') : $t('agent.agent')}</span>
+							{#if m.streaming && !m.text}
+								{@render dots()}
+								<span class="visually-hidden">{$t('agent.status.thinking')}</span>
+							{:else}
+								<span class="text">{m.text}</span>
+							{/if}
+						</div>
+					{/each}
+					{#if showTyping}
+						<div class="bubble typing-bubble" in:fade={{ duration: 150 }} out:fade={{ duration: 120 }}>
+							<span class="who">{$t('agent.agent')}</span>
 							{@render dots()}
 							<span class="visually-hidden">{$t('agent.status.thinking')}</span>
-						{:else}
-							<span class="text">{m.text}</span>
-						{/if}
-					</div>
-				{/each}
-				{#if showTyping}
-					<div class="bubble typing-bubble" in:fade={{ duration: 150 }} out:fade={{ duration: 120 }}>
-						<span class="who">{$t('agent.agent')}</span>
-						{@render dots()}
-						<span class="visually-hidden">{$t('agent.status.thinking')}</span>
-					</div>
-				{:else if messages.length === 0 && phase !== 'speaking' && phase !== 'error'}
-					<p class="hint" in:fade={{ duration: 150 }}>
-						{answerRevealed ? $t('agent.hint') : $t('agent.preRevealHint')}
-					</p>
+						</div>
+					{:else if showPicker}
+						<!-- Generic open: the student picks what they need. Visible from the first
+						     connecting frame so choosing a prompt overlaps the WebRTC handshake. -->
+						<div class="prompt-picker" in:fade={{ duration: 150 }}>
+							<p class="picker-title">{$t('agent.prompts.title')}</p>
+							<div class="picker-chips">
+								{#each promptChips as chip (chip)}
+									<button type="button" class="picker-chip" onclick={() => pickPrompt(chip)}>{chip}</button>
+								{/each}
+							</div>
+							<p class="picker-hint">{pushToTalk ? $t('agent.prompts.orHintPtt') : $t('agent.prompts.orHint')}</p>
+						</div>
+					{:else if messages.length === 0 && phase !== 'speaking' && phase !== 'error'}
+						<p class="hint" in:fade={{ duration: 150 }}>
+							{answerRevealed ? $t('agent.hint') : $t('agent.preRevealHint')}
+						</p>
+					{/if}
+				</div>
+				{#if hasUnseen && !stickToBottom}
+					<button type="button" class="scroll-pill" onclick={scrollToLatest} transition:fade={{ duration: 120 }}>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+						{$t('agent.newMessages')}
+					</button>
 				{/if}
 			</div>
 
@@ -523,36 +719,74 @@
 <style>
 	.backdrop {
 		position: fixed; inset: 0;
-		background: rgba(0, 0, 0, 0.7);
+		background: rgba(0, 0, 0, 0.6);
+		-webkit-backdrop-filter: blur(4px);
+		backdrop-filter: blur(4px);
 		display: flex; align-items: center; justify-content: center;
 		z-index: 200;
+		animation: fade-in var(--t-fast) var(--ease);
 		/* Keep clear of the notch / Dynamic Island and the home indicator. */
 		padding:
 			calc(env(safe-area-inset-top) + 0.75rem) 1rem
 			calc(env(safe-area-inset-bottom) + 0.75rem);
 	}
 	.modal {
-		background: var(--bg);
+		background: var(--surface);
 		border: 1px solid var(--border);
-		border-radius: 12px;
+		border-radius: var(--r-lg);
+		box-shadow: var(--shadow-lg);
 		padding: 1rem 1.1rem;
 		width: 100%; max-width: 520px;
 		display: flex; flex-direction: column; gap: 0.7rem;
 		max-height: 85dvh;
+		/* The transcript has a min-height floor; on very short viewports the modal body
+		   scrolls rather than crushing it. */
+		overflow-y: auto;
+		animation: pop var(--t-med) var(--ease);
 	}
 	.head { display: flex; justify-content: space-between; align-items: center; }
 	.head h2 { margin: 0; font-size: 1.1rem; }
 	.close-btn {
 		background: none; border: none; color: var(--text-muted);
 		font-size: 1.5rem; line-height: 1; cursor: pointer;
-		padding: 0.2rem 0.5rem; min-width: 36px; min-height: 36px;
+		padding: 0.2rem 0.5rem; min-width: 44px; min-height: 44px;
 	}
 	.close-btn:hover { color: var(--text); }
 
+	.stage {
+		display: flex; flex-direction: column; align-items: center;
+		gap: 0.5rem; padding: 0.35rem 0 0.1rem;
+	}
+	/* The voice orb: monochrome white sphere whose scale + glow follow --orb-level (0–1),
+	   written each frame by the rAF loop. transform/box-shadow only, so the compositor can
+	   keep it smooth while the WebRTC session churns the main thread. */
+	.orb {
+		width: 76px; height: 76px; border-radius: 50%;
+		background: radial-gradient(
+			circle at 35% 30%,
+			rgba(255, 255, 255, 0.95),
+			rgba(255, 255, 255, 0.55) 55%,
+			rgba(255, 255, 255, 0.22)
+		);
+		transform: scale(calc(1 + var(--orb-level, 0) * 0.3));
+		box-shadow: 0 0 calc(14px + var(--orb-level, 0) * 28px)
+			rgba(255, 255, 255, calc(0.15 + var(--orb-level, 0) * 0.4));
+		will-change: transform;
+	}
+	/* Idle / connecting / thinking (and the no-analyser fallback): a gentle breathing pulse.
+	   The running animation overrides the rAF-written inline transform; the global
+	   reduced-motion rule compresses it to a static frame. */
+	.orb--pulse { animation: orb-pulse 2.6s ease-in-out infinite; }
+	.orb--dim { opacity: 0.35; }
+	@keyframes orb-pulse {
+		0%, 100% { transform: scale(1); box-shadow: 0 0 14px rgba(255, 255, 255, 0.15); }
+		50% { transform: scale(1.05); box-shadow: 0 0 26px rgba(255, 255, 255, 0.3); }
+	}
+
 	.status {
-		display: flex; align-items: center; gap: 0.5rem;
+		display: flex; align-items: center; justify-content: center; gap: 0.5rem;
 		font-size: 0.85rem; color: var(--text-muted);
-		min-height: 1.6rem;
+		min-height: 1.6rem; text-align: center;
 	}
 	.status .err { color: var(--danger-soft); }
 	.dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; display: inline-block; }
@@ -575,30 +809,14 @@
 		40% { transform: translateY(-0.34rem); opacity: 1; }
 	}
 
-	/* Animated equalizer while the tutor speaks — reads as "live audio" better than a dot. */
-	.bars { display: inline-flex; align-items: center; gap: 0.12rem; height: 0.9rem; }
-	.bars i {
-		width: 0.18rem; height: 100%; border-radius: 1px;
-		background: var(--primary);
-		animation: bars-eq 0.9s ease-in-out infinite;
-	}
-	.bars i:nth-child(2) { animation-delay: 0.15s; }
-	.bars i:nth-child(3) { animation-delay: 0.3s; }
-	.bars i:nth-child(4) { animation-delay: 0.45s; }
-	@keyframes bars-eq {
-		0%, 100% { transform: scaleY(0.35); }
-		50% { transform: scaleY(1); }
-	}
-
 	/* Under Reduce Motion we must NOT freeze the loader — a static "loading" reads as broken.
-	   Swap the bounce/equalizer for a gentle opacity pulse (no translation), which is within the
+	   Swap the bounce for a gentle opacity pulse (no translation), which is within the
 	   spirit of reduced motion while still signalling activity. */
 	@media (prefers-reduced-motion: reduce) {
 		.typing i {
 			animation: dot-fade 1.2s ease-in-out infinite both;
 			transform: none;
 		}
-		.bars i { animation: dot-fade 1.1s ease-in-out infinite both; transform: scaleY(0.7); }
 		.dot--live { animation: dot-fade 1.6s ease-in-out infinite; }
 	}
 	@keyframes dot-fade {
@@ -610,31 +828,52 @@
 		50% { opacity: 0.4; }
 	}
 
+	/* Positioning context for the floating "new messages" pill; carries the min-height floor
+	   so the PTT zone/composer can't crush the transcript on short viewports. */
+	.transcript-wrap {
+		position: relative;
+		flex: 1; min-height: 8rem;
+		display: flex; flex-direction: column;
+	}
 	.transcript {
-		flex: 1; min-height: 0; overflow-y: auto;
-		background: var(--surface);
+		flex: 1; min-height: 8rem; overflow-y: auto;
+		background: var(--surface-2);
 		border: 1px solid var(--border-muted);
-		border-radius: 10px;
+		border-radius: var(--r-md);
 		padding: 0.65rem 0.7rem;
 		display: flex; flex-direction: column; gap: 0.5rem;
 		font-size: 0.92rem; line-height: 1.45;
 	}
+	.scroll-pill {
+		position: absolute; left: 50%; bottom: 0.6rem;
+		transform: translateX(-50%);
+		display: inline-flex; align-items: center; gap: 0.35rem;
+		background: var(--surface-elevated); color: var(--text);
+		border: 1px solid var(--border); border-radius: var(--r-pill);
+		box-shadow: var(--shadow-md);
+		padding: 0.35rem 0.85rem; min-height: 40px;
+		font-size: 0.8rem; font-weight: 600; font-family: inherit;
+		cursor: pointer; touch-action: manipulation; white-space: nowrap;
+	}
+	.scroll-pill:hover { border-color: var(--border-strong); }
 	.bubble {
 		align-self: flex-start;
 		max-width: 86%;
 		display: flex; flex-direction: column; gap: 0.2rem;
 		padding: 0.5rem 0.7rem;
-		background: var(--surface-2);
-		border-radius: 14px;
+		background: var(--surface-elevated);
+		border-radius: var(--r-lg);
 		border-bottom-left-radius: 5px;
 	}
 	.bubble.user {
 		align-self: flex-end;
-		/* Fallback first, then a subtle primary tint where color-mix is supported (iOS 16.2+). */
-		background: var(--surface-elevated, var(--surface-2));
+		/* Fallback first, then a subtle primary tint where color-mix is supported (iOS 16.2+).
+		   With the white primary this lands around #3b3b3b — a clearly "yours" light-grey wash
+		   that keeps --text comfortably readable. */
+		background: var(--surface-elevated);
 		background: color-mix(in srgb, var(--primary) 18%, var(--surface-2));
-		border-radius: 14px;
-		border-bottom-left-radius: 14px;
+		border-radius: var(--r-lg);
+		border-bottom-left-radius: var(--r-lg);
 		border-bottom-right-radius: 5px;
 	}
 	.typing-bubble { gap: 0.35rem; padding: 0.6rem 0.75rem; }
@@ -647,10 +886,56 @@
 	.text { color: var(--text); overflow-wrap: anywhere; }
 	.hint { color: var(--text-subtle); font-size: 0.85rem; margin: 0; text-align: center; padding: 1rem; }
 
+	/* ===== Prompt picker (generic tutor opens) ===== */
+	.prompt-picker {
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+		padding: 0.5rem 0.25rem;
+	}
+	.picker-title {
+		margin: 0;
+		font-size: 0.85rem;
+		color: var(--text-muted);
+	}
+	.picker-chips {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.45rem;
+	}
+	.picker-chip {
+		background: var(--surface-2);
+		color: var(--text);
+		border: 1px solid var(--border);
+		border-radius: var(--r-lg);
+		border-bottom-left-radius: 5px; /* mirrors the agent bubble shape — "this becomes a message" */
+		padding: 0.55rem 0.85rem;
+		font-size: 0.9rem;
+		font-family: inherit;
+		text-align: left;
+		max-width: 86%;
+		cursor: pointer;
+		touch-action: manipulation;
+		transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease), transform 80ms var(--ease);
+	}
+	.picker-chip:hover {
+		border-color: var(--border-strong);
+		background: var(--surface-elevated);
+	}
+	.picker-chip:active {
+		transform: scale(0.98);
+	}
+	.picker-hint {
+		margin: 0;
+		font-size: 0.78rem;
+		color: var(--text-subtle);
+	}
+
 	.composer { display: flex; gap: 0.5rem; align-items: center; }
 	.composer-input {
 		flex: 1; min-width: 0;
-		background: var(--surface); color: var(--text);
+		background: var(--surface-2); color: var(--text);
 		border: 1px solid var(--border-muted); border-radius: var(--r-pill);
 		/* 16px keeps iOS Safari from auto-zooming the page when the field gains focus. */
 		padding: 0.55rem 0.85rem; font-size: 16px; min-height: 40px;
@@ -713,10 +998,11 @@
 	}
 	.ptt-switch.on { color: var(--text); }
 	.ptt-switch.on .switch-track {
-		background: color-mix(in srgb, var(--primary) 55%, transparent);
+		background: var(--primary);
 		border-color: var(--primary);
 	}
-	.ptt-switch.on .switch-thumb { transform: translateX(16px); background: #fff; }
+	/* Dark thumb on the white "on" track — a white thumb would vanish into it. */
+	.ptt-switch.on .switch-thumb { transform: translateX(16px); background: var(--text-on-primary); }
 	.actions-right { display: flex; align-items: center; gap: 0.5rem; }
 	.retry-btn {
 		background: var(--surface-2); color: var(--text);
@@ -726,7 +1012,7 @@
 	}
 	.retry-btn:hover { border-color: var(--primary); }
 	.end-btn {
-		background: var(--primary); color: var(--text);
+		background: var(--primary); color: var(--text-on-primary);
 		border: none; border-radius: var(--r-pill);
 		padding: 0.55rem 1.1rem;
 		font-size: 0.9rem; font-weight: 600;

@@ -102,33 +102,31 @@
 <style>
 	.backdrop {
 		position: fixed; inset: 0;
-		background: rgba(0, 0, 0, 0.7);
+		background: rgba(0, 0, 0, 0.6);
+		-webkit-backdrop-filter: blur(4px);
+		backdrop-filter: blur(4px);
 		display: flex; align-items: center; justify-content: center;
 		z-index: 200; padding: 1rem;
+		animation: fade-in var(--t-fast) var(--ease);
 	}
 	.modal {
-		background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
+		background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+		box-shadow: var(--shadow-lg);
 		padding: 1.25rem; max-width: 440px; width: 100%;
+		animation: pop var(--t-med) var(--ease);
 	}
 	h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
 	.field { display: block; margin-bottom: 0.75rem; }
 	.field-label { display: block; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.3rem; font-weight: 600; }
 	input {
 		width: 100%; box-sizing: border-box;
-		padding: 0.55rem 0.7rem; border-radius: 7px;
+		padding: 0.55rem 0.7rem; border-radius: var(--r-md);
 		background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
 		font-size: 0.95rem; font-family: inherit;
+		transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
 	}
-	input:focus { outline: none; border-color: var(--border-strong); }
-	input[aria-invalid='true'] { border-color: var(--danger-hover); }
+	input:focus { outline: none; border-color: var(--border-strong); box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06); }
+	input[aria-invalid='true'] { border-color: var(--danger); }
 	.error { color: var(--danger-soft); font-size: 0.82rem; margin: 0 0 0.75rem; }
 	.actions { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: flex-end; }
-	.btn-primary, .btn-secondary {
-		padding: 0.5rem 1rem; border-radius: 7px;
-		font-size: 0.9rem; font-weight: 600; cursor: pointer; border: none;
-	}
-	.btn-primary { background: var(--primary); color: var(--text); }
-	.btn-primary:hover { background: var(--primary-hover); }
-	.btn-secondary { background: transparent; border: 1px solid var(--border); color: #c8c8e0; }
-	.btn-secondary:hover { border-color: var(--border-strong); color: var(--text); }
 </style>

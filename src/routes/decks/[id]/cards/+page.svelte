@@ -14,6 +14,7 @@
 	let currentPage = $state(1);
 	let pageSize = $state(20);
 	let loading = $state(true);
+	let loadError = $state(false);
 	let deckName = $state('');
 	let searchQuery = $state('');
 	let stateFilter = $state<'all' | 'new' | 'learning' | 'review' | 'suspended'>('all');
@@ -31,6 +32,7 @@
 
 	async function loadCards() {
 		loading = true;
+		loadError = false;
 		const params = new URLSearchParams({
 			page: String(currentPage),
 			pageSize: String(pageSize),
@@ -38,13 +40,16 @@
 		});
 		if (searchQuery) params.set('q', searchQuery);
 
-		const res = await fetch(`/api/decks/${deckId}/cards?${params}`);
-		if (res.ok) {
+		try {
+			const res = await fetch(`/api/decks/${deckId}/cards?${params}`);
+			if (!res.ok) throw new Error(`cards fetch failed: ${res.status}`);
 			const data = (await res.json()) as { cards: BrowseCard[]; total: number; page: number; pageSize: number };
 			cards = data.cards;
 			total = data.total;
 			currentPage = data.page;
 			pageSize = data.pageSize;
+		} catch {
+			loadError = true;
 		}
 		loading = false;
 	}
@@ -198,12 +203,12 @@
 	<div class="controls">
 		<input
 			type="text"
-			class="search-input"
+			class="input search-input"
 			placeholder={$t('cards.search')}
 			bind:value={searchQuery}
 			oninput={handleSearch}
 		/>
-		<button class="new-card-btn" onclick={openCreateModal}>{$t('cards.newCard')}</button>
+		<button class="btn-primary new-card-btn" onclick={openCreateModal}>{$t('cards.newCard')}</button>
 	</div>
 
 	<div class="filters">
@@ -211,6 +216,7 @@
 			<button
 				class="filter-pill"
 				class:active={stateFilter === s}
+				aria-pressed={stateFilter === s}
 				onclick={() => setStateFilter(s)}
 			>
 				{$t(`state.${s}`)}
@@ -228,6 +234,11 @@
 
 	{#if loading}
 		<div class="loading-msg"><Spinner size={26} /></div>
+	{:else if loadError}
+		<div class="error-msg" role="alert">
+			<p>{$t('cards.loadError')}</p>
+			<button class="btn-secondary" onclick={loadCards}>{$t('cards.retry')}</button>
+		</div>
 	{:else if cards.length === 0}
 		<p class="empty-msg">{$t('cards.empty')}</p>
 	{:else}
@@ -299,6 +310,10 @@
 	h1 {
 		margin: 0.5rem 0 0;
 		font-size: 1.4rem;
+		/* Deck names are user text and can be arbitrarily long — keep the heading to one line. */
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
 	.controls {
@@ -307,35 +322,16 @@
 		margin-bottom: 1rem;
 	}
 
+	/* Colors come from the global .input recipe; this only adds layout. */
 	.search-input {
 		flex: 1;
-		padding: 0.6rem 0.8rem;
-		background: var(--surface);
-		border: 1px solid var(--border);
-		border-radius: 8px;
-		color: var(--text);
+		min-width: 0;
 		font-size: 0.9rem;
 	}
 
-	.search-input:focus {
-		outline: none;
-		border-color: var(--border-strong);
-	}
-
+	/* Colors come from the global .btn-primary recipe; this only adds layout. */
 	.new-card-btn {
-		padding: 0.6rem 1.2rem;
-		background: var(--primary);
-		border: none;
-		color: var(--text);
-		border-radius: 8px;
-		cursor: pointer;
-		font-size: 0.9rem;
-		font-weight: 600;
 		white-space: nowrap;
-	}
-
-	.new-card-btn:hover {
-		background: var(--primary-hover);
 	}
 
 	.filters {
@@ -347,12 +343,16 @@
 
 	.filter-pill {
 		padding: 0.35rem 0.8rem;
-		background: var(--surface);
+		min-height: 2rem;
+		background: transparent;
 		border: 1px solid var(--border);
 		color: var(--text-muted);
-		border-radius: 20px;
+		border-radius: var(--r-pill);
 		cursor: pointer;
 		font-size: 0.8rem;
+		font-family: inherit;
+		touch-action: manipulation;
+		transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
 	}
 
 	.filter-pill:hover {
@@ -362,8 +362,8 @@
 
 	.filter-pill.active {
 		background: var(--primary);
-		border-color: var(--border-strong);
-		color: var(--text);
+		border-color: transparent;
+		color: var(--text-on-primary);
 		font-weight: 600;
 	}
 
@@ -372,8 +372,9 @@
 		align-items: center;
 		gap: 0.75rem;
 		padding: 0.5rem 0.75rem;
-		background: var(--border-muted);
-		border-radius: 8px;
+		background: var(--surface-elevated);
+		border: 1px solid var(--border-muted);
+		border-radius: var(--r-md);
 		margin-bottom: 1rem;
 		font-size: 0.85rem;
 		color: var(--text);
@@ -383,14 +384,18 @@
 		padding: 0.3rem 0.8rem;
 		background: var(--primary);
 		border: none;
-		color: var(--text);
-		border-radius: 6px;
+		color: var(--text-on-primary);
+		border-radius: var(--r-sm);
 		cursor: pointer;
 		font-size: 0.8rem;
+		font-weight: 600;
+		font-family: inherit;
+		touch-action: manipulation;
+		transition: background var(--t-fast) var(--ease);
 	}
 
-	.bulk-btn:hover {
-		background: var(--primary);
+	.bulk-btn:hover:not(:disabled) {
+		background: var(--primary-hover);
 	}
 
 	.bulk-btn:disabled {
@@ -399,16 +404,26 @@
 	}
 
 	.loading-msg, .empty-msg {
-		color: #8080c0;
+		color: var(--text-muted);
 		display: flex;
 		justify-content: center;
 		text-align: center;
 		padding: 2rem;
 	}
 
+	.error-msg {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 2rem;
+		color: var(--danger-soft);
+		text-align: center;
+	}
+
 	.card-list {
 		border: 1px solid var(--border);
-		border-radius: 8px;
+		border-radius: var(--r-md);
 		overflow: hidden;
 	}
 
@@ -419,7 +434,7 @@
 		background: var(--surface);
 		font-size: 0.75rem;
 		font-weight: 600;
-		color: #8080a0;
+		color: var(--text-subtle);
 		text-transform: uppercase;
 		gap: 0.5rem;
 	}
@@ -432,10 +447,17 @@
 		cursor: pointer;
 		gap: 0.5rem;
 		font-size: 0.85rem;
+		transition: background var(--t-fast) var(--ease);
 	}
 
 	.card-row:hover {
-		background: var(--surface);
+		background: rgba(255, 255, 255, 0.04);
+	}
+
+	/* The list container clips overflow, so pull the global focus ring inward
+	   to keep it visible when tabbing through rows. */
+	.card-row:focus-visible {
+		outline-offset: -2px;
 	}
 
 	.checkbox-cell {
@@ -459,15 +481,17 @@
 
 	.state-badge {
 		padding: 0.15rem 0.4rem;
-		border-radius: 4px;
+		border-radius: var(--r-sm);
 		font-size: 0.7rem;
 		font-weight: 600;
 	}
 
-	.state-badge.new { background: #20204a; color: #88bbff; }
-	.state-badge.learning { background: #3a2a5e; color: #ccaaff; }
-	.state-badge.review { background: #204a20; color: var(--success); }
-	.state-badge.suspended { background: #4a2020; color: #ff8888; }
+	/* Standardized card-state colors: new = info, learning = warning, review = success,
+	   suspended = danger. */
+	.state-badge.new { background: var(--info-tint); color: var(--info); }
+	.state-badge.learning { background: var(--warning-tint); color: var(--warning); }
+	.state-badge.review { background: var(--success-tint); color: var(--success); }
+	.state-badge.suspended { background: var(--danger-tint); color: var(--danger-soft); }
 
 	.pagination {
 		display: flex;
@@ -483,9 +507,12 @@
 		background: var(--surface);
 		border: 1px solid var(--border);
 		color: var(--text-muted);
-		border-radius: 6px;
+		border-radius: var(--r-sm);
 		cursor: pointer;
 		font-size: 0.85rem;
+		font-family: inherit;
+		touch-action: manipulation;
+		transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
 	}
 
 	.page-btn:hover:not(:disabled) {

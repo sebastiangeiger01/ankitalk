@@ -2,6 +2,8 @@
 	import { onDestroy } from 'svelte';
 	import { t } from '$lib/i18n';
 	import Spinner from './Spinner.svelte';
+	import SavedFlag from './SavedFlag.svelte';
+	import { SavedFlags } from '$lib/client/saved-flags.svelte';
 	import {
 		DEFAULT_VOICE_SETTINGS,
 		ELEVENLABS_TTS_MODELS,
@@ -35,13 +37,14 @@
 		settings: UserVoiceSettings;
 		keyConfigured: boolean;
 		disabled?: boolean;
-		onUpdate: (partial: Partial<UserVoiceSettings>) => void;
+		onUpdate: (partial: Partial<UserVoiceSettings>) => Promise<boolean>;
 	} = $props();
 
 	let voices = $state<VoiceOption[]>([]);
 	let loadingVoices = $state(false);
 	let voicesError = $state(false);
 	let voiceSearch = $state('');
+	let categoryFilter = $state<string | null>(null);
 
 	let subscription = $state<SubscriptionInfo | null>(null);
 	let loadingSubscription = $state(false);
@@ -65,13 +68,28 @@
 	let previewVoiceId = $state<string | null>(null);
 	let previewAudio: HTMLAudioElement | null = null;
 
+	// Transient "Saved ✓" confirmations, one per control group (model / voice / tuning).
+	const savedFlags = new SavedFlags();
+	async function commit(group: 'model' | 'voice' | 'tuning', partial: Partial<UserVoiceSettings>) {
+		savedFlags.flash(group, await onUpdate(partial));
+	}
+
+	const voiceCategories = $derived.by(() => {
+		const set = new Set<string>();
+		for (const voice of voices) {
+			if (voice.category) set.add(voice.category);
+		}
+		return [...set];
+	});
+
 	const filteredVoices = $derived.by(() => {
 		const query = voiceSearch.trim().toLowerCase();
-		const base = query
-			? voices.filter((v) =>
-					`${v.name} ${v.category} ${v.description} ${v.voiceId}`.toLowerCase().includes(query)
-				)
-			: voices;
+		let base = categoryFilter ? voices.filter((v) => v.category === categoryFilter) : voices;
+		if (query) {
+			base = base.filter((v) =>
+				`${v.name} ${v.category} ${v.description} ${v.voiceId}`.toLowerCase().includes(query)
+			);
+		}
 		// Always surface the currently selected voice first.
 		const selected = base.filter((v) => v.voiceId === settings.elevenlabs_voice_id);
 		const rest = base.filter((v) => v.voiceId !== settings.elevenlabs_voice_id);
@@ -188,12 +206,12 @@
 
 	function selectVoice(voiceId: string) {
 		if (voiceId === settings.elevenlabs_voice_id) return;
-		onUpdate({ elevenlabs_voice_id: voiceId });
+		void commit('voice', { elevenlabs_voice_id: voiceId });
 	}
 
 	function selectModel(modelId: string) {
 		if (modelId === settings.elevenlabs_tts_model) return;
-		onUpdate({ elevenlabs_tts_model: modelId });
+		void commit('model', { elevenlabs_tts_model: modelId });
 	}
 
 	function modelLabel(id: string): string {
@@ -209,7 +227,7 @@
 	}
 
 	function resetTuning() {
-		onUpdate({
+		void commit('tuning', {
 			elevenlabs_tts_speed: DEFAULT_VOICE_SETTINGS.elevenlabs_tts_speed,
 			elevenlabs_stability: DEFAULT_VOICE_SETTINGS.elevenlabs_stability,
 			elevenlabs_similarity: DEFAULT_VOICE_SETTINGS.elevenlabs_similarity,
@@ -220,7 +238,7 @@
 
 	function commitNumber(field: keyof UserVoiceSettings, event: Event) {
 		const value = parseFloat((event.currentTarget as HTMLInputElement).value);
-		onUpdate({ [field]: value } as Partial<UserVoiceSettings>);
+		void commit('tuning', { [field]: value } as Partial<UserVoiceSettings>);
 	}
 
 	function formatResetDate(unix: number | null): string {
@@ -247,12 +265,12 @@
 {#if !keyConfigured}
 	<p class="el-hint">{$t('settings.elevenlabs.needKey')}</p>
 {:else}
-	<!-- Credit balance -->
+	<!-- Credit gauge -->
 	<div class="el-card">
 		<div class="el-card-head">
 			<span class="el-card-title">{$t('settings.elevenlabs.credits')}</span>
 			{#if subscription}
-				<span class="el-tier">{subscription.tier}</span>
+				<span class="badge el-tier">{subscription.tier}</span>
 			{/if}
 		</div>
 		{#if loadingSubscription}
@@ -268,9 +286,9 @@
 					used: subscription.characterCount.toLocaleString(),
 					limit: subscription.characterLimit.toLocaleString()
 				})}</span>
-				<span>{creditUsedPct}%</span>
+				<span class="el-credit-pct" class:el-credit-pct--high={creditUsedPct >= 90}>{creditUsedPct}%</span>
 			</div>
-			<p class="el-muted el-reset">{$t('settings.elevenlabs.creditsReset', { date: formatResetDate(subscription.nextResetUnix) })}</p>
+			<p class="el-muted el-reset-note">{$t('settings.elevenlabs.creditsReset', { date: formatResetDate(subscription.nextResetUnix) })}</p>
 		{/if}
 
 		{#if hasBreakdown && breakdown}
@@ -288,7 +306,7 @@
 
 	<!-- Model / version picker -->
 	<div class="el-group">
-		<span class="el-group-title">{$t('settings.elevenlabs.model')}</span>
+		<span class="el-group-title">{$t('settings.elevenlabs.model')} <SavedFlag status={savedFlags.get('model')} /></span>
 		<span class="el-group-desc">{$t('settings.elevenlabs.modelDesc')}</span>
 		<div class="el-model-options">
 			{#each ELEVENLABS_TTS_MODELS as model}
@@ -304,7 +322,7 @@
 					<span class="el-model-body">
 						<span class="el-model-head">
 							<strong>{modelLabel(model.id)}</strong>
-							<span class="el-badge" class:el-badge--cheap={model.creditMultiplier < 1}>{creditBadge(model.id)}</span>
+							<span class="badge" class:badge--success={model.creditMultiplier < 1}>{creditBadge(model.id)}</span>
 						</span>
 						<small>{modelDesc(model.id)}</small>
 					</span>
@@ -315,7 +333,7 @@
 
 	<!-- Voice picker -->
 	<div class="el-group">
-		<span class="el-group-title">{$t('settings.elevenlabs.voice')}</span>
+		<span class="el-group-title">{$t('settings.elevenlabs.voice')} <SavedFlag status={savedFlags.get('voice')} /></span>
 		<span class="el-group-desc">{$t('settings.elevenlabs.voiceDesc', { name: selectedVoiceName })}</span>
 
 		{#if loadingVoices}
@@ -332,6 +350,30 @@
 				placeholder={$t('settings.elevenlabs.searchVoices')}
 				bind:value={voiceSearch}
 			/>
+			{#if voiceCategories.length > 1}
+				<div class="el-cat-row" role="group" aria-label={$t('settings.elevenlabs.categoryFilter')}>
+					<button
+						type="button"
+						class="el-cat"
+						class:active={categoryFilter === null}
+						aria-pressed={categoryFilter === null}
+						onclick={() => (categoryFilter = null)}
+					>
+						{$t('settings.elevenlabs.allCategories')}
+					</button>
+					{#each voiceCategories as category (category)}
+						<button
+							type="button"
+							class="el-cat"
+							class:active={categoryFilter === category}
+							aria-pressed={categoryFilter === category}
+							onclick={() => (categoryFilter = categoryFilter === category ? null : category)}
+						>
+							{category}
+						</button>
+					{/each}
+				</div>
+			{/if}
 			<div class="el-voice-list">
 				{#each filteredVoices as voice (voice.voiceId)}
 					<div class="el-voice" class:active={settings.elevenlabs_voice_id === voice.voiceId}>
@@ -345,7 +387,10 @@
 								onchange={() => selectVoice(voice.voiceId)}
 							/>
 							<span class="el-voice-info">
-								<span class="el-voice-name">{voice.name}</span>
+								<span class="el-voice-head">
+									<span class="el-voice-name">{voice.name}</span>
+									{#if voice.category}<span class="badge el-voice-cat">{voice.category}</span>{/if}
+								</span>
 								{#if voice.description}<span class="el-voice-desc">{voice.description}</span>{/if}
 							</span>
 						</label>
@@ -354,10 +399,17 @@
 								type="button"
 								class="el-preview-btn"
 								class:playing={previewVoiceId === voice.voiceId}
-								aria-label={$t('settings.elevenlabs.preview')}
+								aria-label={previewVoiceId === voice.voiceId ? $t('settings.elevenlabs.previewStop') : $t('settings.elevenlabs.preview')}
+								aria-pressed={previewVoiceId === voice.voiceId}
 								onclick={() => togglePreview(voice)}
 							>
-								{previewVoiceId === voice.voiceId ? '■' : '▶'}
+								{#if previewVoiceId === voice.voiceId}
+									<span class="el-eq" aria-hidden="true"><span></span><span></span><span></span></span>
+									{$t('settings.elevenlabs.previewStop')}
+								{:else}
+									<span class="el-play-glyph" aria-hidden="true">▶</span>
+									{$t('settings.elevenlabs.previewBtn')}
+								{/if}
 							</button>
 						{/if}
 					</div>
@@ -372,7 +424,7 @@
 	<!-- Advanced tuning -->
 	<div class="el-group">
 		<button type="button" class="el-advanced-toggle" onclick={() => (advancedOpen = !advancedOpen)} aria-expanded={advancedOpen}>
-			<span class="el-group-title">{$t('settings.elevenlabs.tuning')}</span>
+			<span class="el-group-title">{$t('settings.elevenlabs.tuning')} <SavedFlag status={savedFlags.get('tuning')} /></span>
 			<span class="el-chevron">{advancedOpen ? '−' : '+'}</span>
 		</button>
 		{#if advancedOpen}
@@ -418,7 +470,7 @@
 						<small>{$t('settings.elevenlabs.speakerBoostDesc')}</small>
 					</span>
 					<input type="checkbox" role="switch" checked={settings.elevenlabs_speaker_boost} {disabled}
-						onchange={(e) => onUpdate({ elevenlabs_speaker_boost: (e.currentTarget as HTMLInputElement).checked })} />
+						onchange={(e) => commit('tuning', { elevenlabs_speaker_boost: (e.currentTarget as HTMLInputElement).checked })} />
 				</label>
 				<button type="button" class="el-reset" onclick={resetTuning} {disabled}>{$t('settings.elevenlabs.resetTuning')}</button>
 			</div>
@@ -429,79 +481,88 @@
 <style>
 	.el-hint {
 		font-size: 0.85rem;
-		color: #8d8db0;
-		background: #17172a;
-		border: 1px solid var(--surface-elevated);
-		border-radius: 8px;
+		color: var(--text-muted);
+		background: var(--surface-2);
+		border: 1px solid var(--border-muted);
+		border-radius: var(--r-md);
 		padding: 0.7rem 0.85rem;
-		margin: 0;
+		margin: 0 0 1rem;
 		line-height: 1.45;
 	}
 
+	/* Credit gauge — the most premium surface in the app, so give it presence. */
 	.el-card {
-		background: #17172a;
-		border: 1px solid var(--surface-elevated);
-		border-radius: 10px;
-		padding: 0.85rem 1rem;
-		margin-bottom: 0.75rem;
+		background: var(--surface-2);
+		border: 1px solid var(--border-muted);
+		border-radius: var(--r-md);
+		padding: 0.95rem 1rem;
+		margin-bottom: 1rem;
 	}
 
 	.el-card-head {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		margin-bottom: 0.6rem;
+		margin-bottom: 0.7rem;
 	}
 
 	.el-card-title {
-		font-size: 0.9rem;
+		font-size: 0.95rem;
 		font-weight: 600;
-		color: #dadaff;
+		color: var(--text);
 	}
 
 	.el-tier {
-		font-size: 0.72rem;
-		font-weight: 600;
 		text-transform: capitalize;
-		padding: 0.15rem 0.55rem;
-		border-radius: 99px;
-		background: var(--border-muted);
-		color: #b0b0e0;
 	}
 
 	.el-credit-bar {
-		height: 8px;
-		border-radius: 99px;
+		height: 10px;
+		border-radius: var(--r-pill);
 		background: var(--border-muted);
 		overflow: hidden;
 	}
 
 	.el-credit-fill {
 		height: 100%;
-		background: #6b6bc8;
-		transition: width 0.3s;
+		border-radius: var(--r-pill);
+		background: var(--primary);
+		transition: width var(--t-med) var(--ease);
 	}
 
 	.el-credit-fill--high {
-		background: #c87070;
+		background: var(--danger);
 	}
 
 	.el-credit-stats {
 		display: flex;
 		justify-content: space-between;
+		align-items: baseline;
+		gap: 0.75rem;
 		font-size: 0.82rem;
 		color: var(--text-muted);
-		margin-top: 0.5rem;
+		margin-top: 0.55rem;
 	}
 
-	.el-reset {
+	.el-credit-pct {
+		font-size: 1.05rem;
+		font-weight: 700;
+		color: var(--text);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.el-credit-pct--high {
+		color: var(--danger);
+	}
+
+	.el-reset-note {
 		margin: 0.35rem 0 0;
 	}
 
 	.el-breakdown {
 		margin-top: 0.85rem;
 		padding-top: 0.75rem;
-		border-top: 1px solid var(--surface-elevated);
+		border-top: 1px solid var(--border-muted);
 		display: flex;
 		flex-direction: column;
 		gap: 0.4rem;
@@ -510,7 +571,7 @@
 	.el-breakdown-title {
 		font-size: 0.78rem;
 		font-weight: 600;
-		color: #b8b8d8;
+		color: var(--text-muted);
 	}
 
 	.el-breakdown-group {
@@ -544,7 +605,7 @@
 
 	.el-breakdown-bar {
 		height: 6px;
-		border-radius: 99px;
+		border-radius: var(--r-pill);
 		background: var(--border-muted);
 		overflow: hidden;
 	}
@@ -552,30 +613,29 @@
 	.el-breakdown-fill {
 		display: block;
 		height: 100%;
-		background: #6b6bc8;
+		background: var(--primary);
 	}
 
 	.el-breakdown-val {
 		font-variant-numeric: tabular-nums;
-		color: #c0c0e0;
+		color: var(--text);
 		white-space: nowrap;
 	}
 
 	.el-group {
-		background: var(--bg);
-		border: 1px solid var(--border-muted);
-		border-radius: 10px;
-		padding: 0.9rem 1rem;
-		margin-bottom: 0.75rem;
+		margin-bottom: 1rem;
 		display: flex;
 		flex-direction: column;
 		gap: 0.5rem;
 	}
 
 	.el-group-title {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
 		font-size: 0.95rem;
 		font-weight: 600;
-		color: #d0d0f0;
+		color: var(--text);
 	}
 
 	.el-group-desc {
@@ -585,6 +645,7 @@
 		margin-bottom: 0.2rem;
 	}
 
+	/* Radio-card idiom, matched to the voice-provider cards in settings. */
 	.el-model-options {
 		display: grid;
 		gap: 0.5rem;
@@ -594,21 +655,26 @@
 		display: flex;
 		align-items: flex-start;
 		gap: 0.65rem;
-		padding: 0.7rem;
-		border: 1px solid var(--surface-elevated);
-		border-radius: 8px;
+		padding: 0.75rem;
+		border: 1px solid var(--border-muted);
+		border-radius: var(--r-md);
 		cursor: pointer;
-		background: #17172a;
+		background: var(--surface-2);
+		transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+	}
+
+	.el-model:hover {
+		border-color: var(--border-strong);
 	}
 
 	.el-model.active {
-		border-color: #6666b8;
-		background: #202045;
+		border-color: var(--primary);
+		background: var(--surface-elevated);
 	}
 
 	.el-model input {
 		margin-top: 0.2rem;
-		accent-color: #8b8bea;
+		accent-color: var(--primary);
 	}
 
 	.el-model-body {
@@ -627,51 +693,75 @@
 
 	.el-model-head strong {
 		font-size: 0.9rem;
-		color: #dadaff;
+		color: var(--text);
 	}
 
 	.el-model-body small {
 		font-size: 0.78rem;
 		line-height: 1.35;
-		color: #8d8db0;
-	}
-
-	.el-badge {
-		font-size: 0.68rem;
-		font-weight: 600;
-		padding: 0.1rem 0.45rem;
-		border-radius: 99px;
-		background: var(--border-muted);
-		color: #9a9ac0;
-		white-space: nowrap;
-	}
-
-	.el-badge--cheap {
-		background: #1a3a2a;
-		color: #5aba84;
+		color: var(--text-muted);
 	}
 
 	.el-search {
 		width: 100%;
 		padding: 0.5rem 0.7rem;
-		background: var(--surface-2);
+		background: var(--bg);
 		border: 1px solid var(--border);
-		border-radius: 7px;
+		border-radius: var(--r-sm);
 		color: var(--text);
 		font-size: 0.88rem;
 		box-sizing: border-box;
+		transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
 	}
 
 	.el-search:focus {
 		outline: none;
-		border-color: #5a5a9e;
+		border-color: var(--border-strong);
+		box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
+	}
+
+	/* Category filter pills (All + distinct categories from the loaded voices). */
+	.el-cat-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.35rem;
+	}
+
+	.el-cat {
+		padding: 0.3rem 0.75rem;
+		min-height: 2rem;
+		border: 1px solid var(--border);
+		border-radius: var(--r-pill);
+		background: transparent;
+		color: var(--text-muted);
+		font-family: inherit;
+		font-size: 0.78rem;
+		font-weight: 600;
+		text-transform: capitalize;
+		cursor: pointer;
+		touch-action: manipulation;
+		transition:
+			color var(--t-fast) var(--ease),
+			background var(--t-fast) var(--ease),
+			border-color var(--t-fast) var(--ease);
+	}
+
+	.el-cat:hover {
+		color: var(--text);
+		border-color: var(--border-strong);
+	}
+
+	.el-cat.active {
+		background: var(--surface-elevated);
+		border-color: var(--primary);
+		color: var(--text);
 	}
 
 	.el-voice-list {
 		display: flex;
 		flex-direction: column;
 		gap: 0.3rem;
-		max-height: 260px;
+		max-height: 300px;
 		overflow-y: auto;
 		-webkit-overflow-scrolling: touch;
 	}
@@ -680,15 +770,20 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-		padding: 0.5rem 0.6rem;
-		border: 1px solid var(--surface-elevated);
-		border-radius: 8px;
-		background: #17172a;
+		padding: 0.55rem 0.6rem;
+		border: 1px solid var(--border-muted);
+		border-radius: var(--r-md);
+		background: var(--surface-2);
+		transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+	}
+
+	.el-voice:hover {
+		border-color: var(--border-strong);
 	}
 
 	.el-voice.active {
-		border-color: #6666b8;
-		background: #202045;
+		border-color: var(--primary);
+		background: var(--surface-elevated);
 	}
 
 	.el-voice-select {
@@ -701,51 +796,120 @@
 	}
 
 	.el-voice-select input {
-		accent-color: #8b8bea;
+		accent-color: var(--primary);
 		flex-shrink: 0;
 	}
 
 	.el-voice-info {
 		display: flex;
 		flex-direction: column;
-		gap: 0.1rem;
+		gap: 0.15rem;
+		min-width: 0;
+	}
+
+	.el-voice-head {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
 		min-width: 0;
 	}
 
 	.el-voice-name {
 		font-size: 0.88rem;
-		color: #dadaff;
+		color: var(--text);
 		font-weight: 600;
-	}
-
-	.el-voice-desc {
-		font-size: 0.74rem;
-		color: #8d8db0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
+	.el-voice-cat {
+		font-size: 0.62rem;
+		padding: 0.1rem 0.45rem;
+		text-transform: capitalize;
+		flex-shrink: 0;
+	}
+
+	.el-voice-desc {
+		font-size: 0.74rem;
+		color: var(--text-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	/* Labeled preview control; while playing the glyph becomes a 3-bar equalizer. */
 	.el-preview-btn {
 		flex-shrink: 0;
-		width: 2rem;
-		height: 2rem;
-		border-radius: 6px;
-		border: 1px solid var(--border);
-		background: var(--surface);
-		color: #b0b0e0;
-		cursor: pointer;
-		font-size: 0.7rem;
-		display: flex;
+		display: inline-flex;
 		align-items: center;
 		justify-content: center;
+		gap: 0.35rem;
+		min-height: 2.25rem;
+		padding: 0 0.7rem;
+		border-radius: var(--r-sm);
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: var(--text-muted);
+		cursor: pointer;
+		font-family: inherit;
+		font-size: 0.75rem;
+		font-weight: 600;
 		touch-action: manipulation;
+		transition:
+			color var(--t-fast) var(--ease),
+			border-color var(--t-fast) var(--ease),
+			background var(--t-fast) var(--ease);
+	}
+
+	.el-preview-btn:hover {
+		color: var(--text);
+		border-color: var(--border-strong);
 	}
 
 	.el-preview-btn.playing {
-		border-color: #6666b8;
-		background: #303060;
-		color: #f0f0ff;
+		border-color: var(--primary);
+		background: var(--surface-elevated);
+		color: var(--text);
+	}
+
+	.el-play-glyph {
+		font-size: 0.6rem;
+		line-height: 1;
+	}
+
+	.el-eq {
+		display: inline-flex;
+		align-items: flex-end;
+		gap: 2px;
+		height: 12px;
+	}
+
+	.el-eq span {
+		width: 3px;
+		border-radius: 1px;
+		background: currentColor;
+		transform-origin: bottom;
+		animation: el-eq-bounce 0.9s ease-in-out infinite;
+	}
+
+	.el-eq span:nth-child(1) {
+		height: 8px;
+	}
+
+	.el-eq span:nth-child(2) {
+		height: 12px;
+		animation-delay: 0.15s;
+	}
+
+	.el-eq span:nth-child(3) {
+		height: 9px;
+		animation-delay: 0.3s;
+	}
+
+	@keyframes el-eq-bounce {
+		0%, 100% { transform: scaleY(0.45); }
+		50% { transform: scaleY(1); }
 	}
 
 	.el-empty {
@@ -758,16 +922,19 @@
 		align-items: center;
 		justify-content: space-between;
 		width: 100%;
+		min-height: 44px;
 		background: none;
 		border: none;
 		padding: 0;
 		cursor: pointer;
 		color: inherit;
+		font-family: inherit;
+		touch-action: manipulation;
 	}
 
 	.el-chevron {
 		font-size: 1.2rem;
-		color: #8d8db0;
+		color: var(--text-muted);
 		line-height: 1;
 	}
 
@@ -788,17 +955,18 @@
 		display: flex;
 		justify-content: space-between;
 		font-size: 0.85rem;
-		color: #c0c0e0;
+		color: var(--text);
 		font-weight: 600;
 	}
 
 	.el-slider-val {
-		color: #8b8bea;
+		color: var(--text-muted);
+		font-variant-numeric: tabular-nums;
 	}
 
 	.el-slider input[type='range'] {
 		width: 100%;
-		accent-color: #6b6bc8;
+		accent-color: var(--primary);
 	}
 
 	.el-slider small {
@@ -824,7 +992,7 @@
 	.el-toggle-title {
 		font-size: 0.88rem;
 		font-weight: 600;
-		color: #d0d0f0;
+		color: var(--text);
 	}
 
 	.el-toggle-row small {
@@ -837,20 +1005,22 @@
 		width: 2.7rem;
 		height: 1.5rem;
 		flex-shrink: 0;
-		accent-color: #6b6bc8;
+		accent-color: var(--primary);
 		cursor: pointer;
 	}
 
 	.el-reset {
 		align-self: flex-start;
-		background: var(--surface);
+		background: transparent;
 		border: 1px solid var(--border);
-		color: #a8a8c8;
-		border-radius: 7px;
+		color: var(--text-muted);
+		border-radius: var(--r-sm);
 		padding: 0.4rem 0.9rem;
+		font-family: inherit;
 		font-size: 0.82rem;
 		cursor: pointer;
 		font-weight: 600;
+		touch-action: manipulation;
 	}
 
 	.el-reset:hover:not(:disabled) {
@@ -862,7 +1032,7 @@
 		display: flex;
 		justify-content: center;
 		padding: 0.75rem 0;
-		color: #8080c0;
+		color: var(--text-muted);
 	}
 
 	.el-muted {
@@ -874,7 +1044,7 @@
 	.el-link-btn {
 		background: none;
 		border: none;
-		color: #7a7aaa;
+		color: var(--text);
 		text-decoration: underline;
 		cursor: pointer;
 		font-size: 0.82rem;

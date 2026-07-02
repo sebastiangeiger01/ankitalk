@@ -30,7 +30,9 @@
 	const charCount = $derived(text.length);
 	const sentences = $derived(text.trim() ? splitIntoSentences(text) : []);
 	const credits = $derived(estimateCredits(sentences.reduce((n, c) => n + c.length, 0), modelId));
-	const insufficient = $derived(balanceRemaining !== null && charCount > balanceRemaining);
+	/* Compare estimated credits (chars × model multiplier — Flash/Turbo bill at 0.5×), not raw
+	 * characters, or cheap models trip the warning with plenty of balance left. */
+	const insufficient = $derived(balanceRemaining !== null && credits > balanceRemaining);
 
 	onMount(async () => {
 		try {
@@ -143,7 +145,7 @@
 		></textarea>
 
 		<div class="row">
-			<label class="upload-btn" class:disabled={submitting}>
+			<label class="btn-secondary upload-btn" class:disabled={submitting}>
 				{$t('listen.uploadTxt')}
 				<input type="file" accept=".txt,text/plain" onchange={handleFile} hidden disabled={submitting} />
 			</label>
@@ -202,7 +204,7 @@
 			{/if}
 		{/if}
 
-		<button class="generate-btn" onclick={() => submit(false)} disabled={!text.trim() || submitting}>
+		<button class="btn-primary generate-btn" onclick={() => submit(false)} disabled={!text.trim() || submitting}>
 			{#if submitting}<Spinner size={14} />{/if}
 			{submitting ? $t('listen.preparing') : $t('listen.openReader')}
 		</button>
@@ -213,6 +215,9 @@
 	</section>
 
 	{#if duplicateDocId}
+		<!-- Bespoke modal shell (three actions don't fit the ConfirmDialog API) matching the
+		     shared dialog look: blurred backdrop, surface, pop animation. "Open existing" is
+		     the primary (free) action; "Create anyway" re-spends credits so it's demoted. -->
 		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 		<div
 			class="modal-backdrop"
@@ -227,9 +232,9 @@
 				<h2 id="duplicate-title">{$t('listen.duplicateTitle')}</h2>
 				<p>{$t('listen.duplicateBody')}</p>
 				<div class="modal-actions">
-					<a class="btn-secondary" href={`/listen/${duplicateDocId}`}>{$t('listen.openExisting')}</a>
-					<button class="btn-secondary" onclick={() => (duplicateDocId = null)}>{$t('listen.cancel')}</button>
-					<button class="btn-primary" onclick={() => submit(true)}>{$t('listen.generateAnyway')}</button>
+					<button class="btn-ghost" onclick={() => (duplicateDocId = null)}>{$t('listen.cancel')}</button>
+					<button class="btn-secondary" onclick={() => submit(true)}>{$t('listen.generateAnyway')}</button>
+					<a class="btn-primary" href={`/listen/${duplicateDocId}`}>{$t('listen.openExisting')}</a>
 				</div>
 			</div>
 		</div>
@@ -248,9 +253,24 @@
 	<section class="card">
 		<h2 class="history-title">{$t('listen.historyTitle')}</h2>
 		{#if loadingHistory}
-			<div class="center"><Spinner size={20} /></div>
+			<!-- Card-shaped skeletons matching the history rows (global shimmer keyframes). -->
+			<div class="doc-list" role="status" aria-label={$t('common.loading')}>
+				{#each [0, 1, 2] as i (i)}
+					<div class="doc-card skel-card" aria-hidden="true">
+						<div class="skel skel-title-line"></div>
+						<div class="skel skel-meta-line"></div>
+					</div>
+				{/each}
+			</div>
 		{:else if documents.length === 0}
-			<p class="muted">{$t('listen.empty')}</p>
+			<div class="empty-state">
+				<svg class="empty-icon" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<path d="M3 18v-6a9 9 0 0 1 18 0v6"/>
+					<path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>
+				</svg>
+				<p class="empty-title">{$t('listen.empty')}</p>
+				<p class="empty-hint">{$t('listen.emptyHint')}</p>
+			</div>
 		{:else}
 			<ul class="doc-list">
 				{#each documents as doc (doc.id)}
@@ -278,12 +298,10 @@
 	.back-link { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
 	.back-link:hover { color: var(--text); }
 	h1 { margin: 1rem 0 0.25rem; font-size: 1.4rem; }
-	.subtitle { color: #8d8db0; font-size: 0.9rem; margin: 0 0 1.25rem; line-height: 1.45; }
+	.subtitle { color: var(--text-muted); font-size: 0.9rem; margin: 0 0 1.25rem; line-height: 1.45; }
 
+	/* Surface/border/radius come from the global .card recipe; only layout lives here. */
 	.card {
-		background: var(--bg);
-		border: 1px solid var(--border-muted);
-		border-radius: 12px;
 		padding: 1rem;
 		margin-bottom: 1.25rem;
 	}
@@ -295,59 +313,49 @@
 		box-sizing: border-box;
 		background: var(--surface-2);
 		border: 1px solid var(--border);
-		border-radius: 8px;
+		border-radius: var(--r-md);
 		color: var(--text);
 		font-size: 0.92rem;
 		line-height: 1.5;
 		padding: 0.65rem 0.8rem;
 		resize: vertical;
+		transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
 	}
-	.text-input:focus { outline: none; border-color: #5a5a9e; }
+	.text-input:focus { outline: none; border-color: var(--border-strong); box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06); }
 
 	.row { display: flex; gap: 0.6rem; margin-top: 0.6rem; flex-wrap: wrap; }
 	.row.override { gap: 0.6rem; }
 
-	.upload-btn {
-		display: inline-flex;
-		align-items: center;
-		padding: 0.5rem 0.9rem;
-		background: var(--surface);
-		border: 1px solid var(--border);
-		color: #c0c0e0;
-		border-radius: 7px;
-		cursor: pointer;
-		font-size: 0.85rem;
-		font-weight: 600;
-		white-space: nowrap;
-		touch-action: manipulation;
-	}
-	.upload-btn:hover { border-color: var(--border-strong); }
-	.upload-btn.disabled { opacity: 0.5; cursor: not-allowed; }
+	/* On top of the global .btn-secondary recipe: it's a <label>, so :disabled never
+	   matches — mirror the disabled look via the .disabled class. */
+	.upload-btn { white-space: nowrap; font-size: 0.85rem; }
+	.upload-btn.disabled { opacity: 0.45; cursor: not-allowed; }
 
 	.title-input {
 		flex: 1;
 		min-width: 160px;
 		background: var(--surface-2);
 		border: 1px solid var(--border);
-		border-radius: 7px;
+		border-radius: var(--r-md);
 		color: var(--text);
 		font-size: 0.88rem;
 		padding: 0.5rem 0.7rem;
+		transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
 	}
-	.title-input:focus { outline: none; border-color: #5a5a9e; }
+	.title-input:focus { outline: none; border-color: var(--border-strong); box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06); }
 
 	.override-field { display: flex; flex-direction: column; gap: 0.25rem; flex: 1; min-width: 150px; }
-	.override-field span { font-size: 0.76rem; color: #8d8db0; }
+	.override-field span { font-size: 0.76rem; color: var(--text-muted); }
 	.override-field select {
 		background: var(--surface-2);
 		border: 1px solid var(--border);
-		border-radius: 7px;
+		border-radius: var(--r-md);
 		color: var(--text);
 		font-size: 0.85rem;
 		padding: 0.45rem 0.5rem;
 	}
 
-	.override-hint { font-size: 0.74rem; color: #6a6a8a; margin: 0.4rem 0 0; line-height: 1.4; }
+	.override-hint { font-size: 0.74rem; color: var(--text-subtle); margin: 0.4rem 0 0; line-height: 1.4; }
 
 	.estimate {
 		display: flex;
@@ -356,58 +364,54 @@
 		margin-top: 0.85rem;
 		padding: 0.6rem 0.75rem;
 		background: var(--surface-2);
-		border: 1px solid var(--surface-elevated);
-		border-radius: 8px;
+		border: 1px solid var(--border-muted);
+		border-radius: var(--r-md);
 		font-size: 0.82rem;
 		color: var(--text-muted);
 	}
-	.estimate.warn { border-color: #5a2a2a; }
-	.estimate .credits { color: #8b8bea; font-weight: 600; }
-	.estimate .balance { color: #6a6a8a; margin-left: auto; }
-	.warn-text { color: #cc6666; font-size: 0.82rem; margin: 0.4rem 0 0; }
+	.estimate.warn { border-color: var(--danger-border); }
+	.estimate .credits { color: var(--text); font-weight: 600; }
+	.estimate .balance { color: var(--text-subtle); margin-left: auto; }
+	.warn-text { color: var(--danger-soft); font-size: 0.82rem; margin: 0.4rem 0 0; }
 	.hint { font-size: 0.78rem; color: var(--text-subtle); margin: 0.4rem 0 0; line-height: 1.4; }
 
+	/* Layout-only additions to the global .btn-primary recipe. */
 	.generate-btn {
 		margin-top: 0.85rem;
 		width: 100%;
 		padding: 0.7rem;
-		background: var(--primary);
-		border: 1px solid var(--border-strong);
-		color: var(--text);
-		border-radius: 8px;
-		font-size: 0.95rem;
-		font-weight: 600;
-		cursor: pointer;
-		touch-action: manipulation;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: 0.5rem;
 	}
-	.generate-btn:hover:not(:disabled) { background: var(--primary); }
-	.generate-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
-	.error-text { color: #cc6666; font-size: 0.85rem; margin: 0.6rem 0 0; }
+	.error-text { color: var(--danger-soft); font-size: 0.85rem; margin: 0.6rem 0 0; }
 
 	.history-title { font-size: 1rem; color: var(--text-muted); margin: 0 0 0.75rem; }
-	.center { display: flex; justify-content: center; padding: 1rem 0; color: #8080c0; }
-	.muted { color: #5a5a7a; font-size: 0.88rem; }
+
+	/* Empty history: a calm value-prop nudge toward the paste box above. */
+	.empty-state {
+		display: flex; flex-direction: column; align-items: center;
+		text-align: center;
+		gap: 0.35rem;
+		padding: 1.5rem 1rem 1.25rem;
+	}
+	.empty-icon { color: var(--text-subtle); }
+	.empty-title { margin: 0.5rem 0 0; font-size: 0.95rem; font-weight: 600; color: var(--text); }
+	.empty-hint { margin: 0; font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; max-width: 30rem; }
 
 	.doc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
 	.doc-card {
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-		background: var(--surface);
-		border: 1px solid var(--surface-elevated);
-		border-radius: 10px;
+		background: var(--surface-2);
+		border: 1px solid var(--border-muted);
+		border-radius: var(--r-md);
 		overflow: hidden;
 	}
 	.doc-link { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.35rem; padding: 0.75rem 0.9rem; text-decoration: none; color: inherit; }
-	.doc-link:hover { background: var(--border-muted); }
-	.doc-title { font-size: 0.95rem; font-weight: 600; color: #dadaff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.doc-meta { display: flex; flex-wrap: wrap; gap: 0.4rem 0.7rem; font-size: 0.76rem; color: #8d8db0; align-items: center; }
-	.expiry { color: #6a6a8a; }
+	.doc-link:hover { background: rgba(255, 255, 255, 0.05); }
+	.doc-title { font-size: 0.95rem; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.doc-meta { display: flex; flex-wrap: wrap; gap: 0.4rem 0.7rem; font-size: 0.76rem; color: var(--text-muted); align-items: center; }
+	.expiry { color: var(--text-subtle); }
 
 	.doc-action {
 		flex-shrink: 0;
@@ -422,20 +426,34 @@
 		justify-content: center;
 		touch-action: manipulation;
 	}
-	.doc-action:hover { color: #e07070; }
+	.doc-action:hover { color: var(--danger-soft); }
+
+	/* History-list loading skeletons (global shimmer keyframes from app.css). */
+	.skel-card { flex-direction: column; align-items: stretch; gap: 0.5rem; padding: 0.8rem 0.9rem; }
+	.skel {
+		border-radius: var(--r-sm);
+		background: linear-gradient(90deg, var(--surface-elevated) 25%, var(--border) 50%, var(--surface-elevated) 75%);
+		background-size: 200% 100%;
+		animation: shimmer 1.6s linear infinite;
+	}
+	.skel-title-line { height: 0.95rem; width: 55%; }
+	.skel-meta-line { height: 0.72rem; width: 82%; }
 
 	.modal-backdrop {
-		position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+		position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6);
+		-webkit-backdrop-filter: blur(4px);
+		backdrop-filter: blur(4px);
 		display: flex; align-items: center; justify-content: center; padding: 1rem; z-index: 50;
+		animation: fade-in var(--t-fast) var(--ease);
 	}
-	.modal { background: var(--bg); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; max-width: 420px; width: 100%; }
+	.modal {
+		background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+		box-shadow: var(--shadow-lg);
+		padding: 1.25rem; max-width: 420px; width: 100%;
+		animation: pop var(--t-med) var(--ease);
+	}
 	.modal h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
 	.modal p { color: var(--text-muted); font-size: 0.88rem; line-height: 1.45; margin: 0 0 1rem; }
 	.modal-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: flex-end; }
-	.btn-primary, .btn-secondary {
-		padding: 0.5rem 0.9rem; border-radius: 7px; font-size: 0.85rem; font-weight: 600; cursor: pointer; text-decoration: none;
-		touch-action: manipulation;
-	}
-	.btn-primary { background: var(--primary); border: 1px solid var(--border-strong); color: var(--text); }
-	.btn-secondary { background: var(--surface); border: 1px solid var(--border); color: #a8a8c8; }
+	.modal-actions a { text-decoration: none; }
 </style>

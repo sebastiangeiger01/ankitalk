@@ -4,45 +4,86 @@
  * Use the semantic names (var(--surface)) rather than re-typing hex literals — the colors
  * here are the single source of truth. Adding a new color? Add it here first.
  *
+ * The palette is monochrome near-black: the only "brand" color is white (--primary), so
+ * primary actions read as white-on-dark and color is reserved for semantic states.
+ *
  * Naming convention:
  *   --bg, --surface, --surface-2, --surface-elevated: dark backgrounds, low → high
  *   --border, --border-muted, --border-strong: dividers and form-control borders
  *   --text, --text-muted, --text-subtle: body text → secondary → tertiary
- *   --primary, --primary-hover: the brand/action color
- *   --success, --warning, --danger, --danger-soft: semantic state colors
- *   --r-sm / --r-md / --r-lg: border-radius scale (avoid one-off pixel values)
+ *   --primary, --primary-hover: the action color (white); pair its background with
+ *     color: var(--text-on-primary) — never var(--text), which would be white-on-white
+ *   --success / --warning / --danger / --info: semantic states, each with a
+ *     --*-tint (translucent fill) and --*-border pair for chips, toasts, and badges
+ *   --r-sm / --r-md / --r-lg / --r-pill: border-radius scale (avoid one-off pixel values)
+ *   --shadow-sm/md/lg: elevation; on near-black, elevation = lighter surface + border + shadow
+ *   --t-fast / --t-med / --ease: motion durations and easing for transitions
  */
 :root {
-	--bg: #1a1a2e;
-	--surface: #22223a;
-	--surface-2: #12121f;
-	--surface-elevated: #2e2e52;
+	--bg: #0a0a0a;
+	--surface: #151515;
+	--surface-2: #101010;
+	--surface-elevated: #1f1f1f;
 
-	--border: #3a3a5e;
-	--border-muted: #2a2a4a;
-	--border-strong: #5a5a8e;
+	--border: #2a2a2a;
+	--border-muted: #1d1d1d;
+	--border-strong: #3f3f3f;
 
-	--text: #e0e0ff;
-	--text-muted: #a8a8b8;
-	--text-subtle: #7a7a9a;
-	--text-on-primary: #ffffff;
+	--text: #f5f5f5;
+	--text-muted: #a3a3a3;
+	--text-subtle: #6e6e6e;
+	--text-on-primary: #0a0a0a;
 
-	--primary: #4a4a8e;
-	--primary-hover: #5a5aae;
-	--success: #3aa86c;
-	--warning: #c8a85a;
-	--danger: #a8344c;
-	--danger-hover: #c63d59;
-	--danger-soft: #ff8896;
+	--primary: #ffffff;
+	--primary-hover: #e2e2e2;
+	--accent: var(--primary);
+
+	--success: #30d158;
+	--success-tint: rgba(48, 209, 88, 0.12);
+	--success-border: rgba(48, 209, 88, 0.35);
+	--warning: #ffb340;
+	--warning-tint: rgba(255, 179, 64, 0.12);
+	--warning-border: rgba(255, 179, 64, 0.35);
+	--danger: #ff453a;
+	--danger-hover: #ff6961;
+	--danger-soft: #ff8a80;
+	--danger-tint: rgba(255, 69, 58, 0.12);
+	--danger-border: rgba(255, 69, 58, 0.35);
+	/* Data-viz blue: "new" card state, Easy rating, cloze blanks — not a brand accent. */
+	--info: #6e9fff;
+	--info-tint: rgba(110, 159, 255, 0.12);
+	--info-border: rgba(110, 159, 255, 0.35);
 
 	--r-sm: 6px;
-	--r-md: 8px;
-	--r-lg: 12px;
-	--r-pill: 99px;
+	--r-md: 10px;
+	--r-lg: 14px;
+	--r-pill: 999px;
+
+	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+	--shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+	--shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.55);
+
+	--t-fast: 120ms;
+	--t-med: 200ms;
+	--ease: cubic-bezier(0.25, 0.6, 0.3, 1);
+
+	--focus-ring: #f5f5f5;
+
+	--font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+	--font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
 
 	/** Tells UA-rendered controls (scrollbars, date pickers, native form widgets, etc.) to
 	 * use their dark-mode chrome. Without this, those bits render light on a dark background. */
 	color-scheme: dark;
+}
+
+body {
+	font-family: var(--font-sans);
+	-webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 {
+	letter-spacing: -0.015em;
 }
 
 /**
@@ -71,4 +112,175 @@
 		transition-duration: 0.01ms !important;
 		scroll-behavior: auto !important;
 	}
+}
+
+/**
+ * Shared keyframes. Svelte hashes @keyframes declared in component <style> blocks, so
+ * animations reused across components must live here in the one unscoped stylesheet.
+ */
+@keyframes fade-in {
+	from { opacity: 0; transform: translateY(-4px); }
+	to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-down {
+	from { opacity: 0; transform: translateY(-8px); }
+	to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pop {
+	from { opacity: 0; transform: scale(0.98); }
+	to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes shimmer {
+	0% { background-position: 200% 0; }
+	100% { background-position: -200% 0; }
+}
+
+/**
+ * Shared component classes. These are the app-wide button/input/card/badge recipes;
+ * component <style> blocks should only add layout (width, margin) on top, not re-declare
+ * colors. Buttons pair --primary backgrounds with --text-on-primary automatically.
+ */
+.btn-primary,
+.btn-secondary,
+.btn-ghost,
+.btn-danger {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.5rem;
+	padding: 0.55rem 1.1rem;
+	border-radius: var(--r-md);
+	font-size: 0.95rem;
+	font-weight: 600;
+	font-family: inherit;
+	cursor: pointer;
+	touch-action: manipulation;
+	transition:
+		background var(--t-fast) var(--ease),
+		border-color var(--t-fast) var(--ease),
+		color var(--t-fast) var(--ease),
+		transform 80ms var(--ease);
+}
+
+.btn-primary:active,
+.btn-secondary:active,
+.btn-ghost:active,
+.btn-danger:active {
+	transform: scale(0.98);
+}
+
+.btn-primary:disabled,
+.btn-secondary:disabled,
+.btn-ghost:disabled,
+.btn-danger:disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
+	transform: none;
+}
+
+.btn-primary {
+	background: var(--primary);
+	color: var(--text-on-primary);
+	border: 1px solid transparent;
+}
+
+.btn-primary:hover:not(:disabled) {
+	background: var(--primary-hover);
+}
+
+.btn-secondary {
+	background: transparent;
+	color: var(--text-muted);
+	border: 1px solid var(--border);
+}
+
+.btn-secondary:hover:not(:disabled) {
+	color: var(--text);
+	border-color: var(--border-strong);
+}
+
+.btn-ghost {
+	background: transparent;
+	color: var(--text-subtle);
+	border: 1px solid transparent;
+}
+
+.btn-ghost:hover:not(:disabled) {
+	color: var(--text);
+	background: var(--surface-elevated);
+}
+
+.btn-danger {
+	background: var(--danger-tint);
+	color: var(--danger-soft);
+	border: 1px solid var(--danger-border);
+}
+
+.btn-danger:hover:not(:disabled) {
+	background: var(--danger);
+	color: var(--text-on-primary);
+	border-color: var(--danger);
+}
+
+.input {
+	background: var(--surface-2);
+	border: 1px solid var(--border);
+	border-radius: var(--r-md);
+	color: var(--text);
+	padding: 0.55rem 0.75rem;
+	font-family: inherit;
+	transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+}
+
+.input:focus {
+	outline: none;
+	border-color: var(--border-strong);
+	box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
+}
+
+.card {
+	background: var(--surface);
+	border: 1px solid var(--border-muted);
+	border-radius: var(--r-lg);
+}
+
+.badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.3rem;
+	font-size: 0.72rem;
+	font-weight: 600;
+	padding: 0.2rem 0.55rem;
+	border-radius: var(--r-pill);
+	background: var(--surface-elevated);
+	color: var(--text-muted);
+	border: 1px solid var(--border);
+	white-space: nowrap;
+}
+
+.badge--success {
+	background: var(--success-tint);
+	color: var(--success);
+	border-color: var(--success-border);
+}
+
+.badge--warning {
+	background: var(--warning-tint);
+	color: var(--warning);
+	border-color: var(--warning-border);
+}
+
+.badge--danger {
+	background: var(--danger-tint);
+	color: var(--danger-soft);
+	border-color: var(--danger-border);
+}
+
+.badge--info {
+	background: var(--info-tint);
+	color: var(--info);
+	border-color: var(--info-border);
 }

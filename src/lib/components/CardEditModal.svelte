@@ -179,13 +179,18 @@
 <style>
 	.backdrop {
 		position: fixed; inset: 0;
-		background: rgba(0, 0, 0, 0.7);
+		background: rgba(0, 0, 0, 0.6);
+		-webkit-backdrop-filter: blur(4px);
+		backdrop-filter: blur(4px);
 		display: flex; align-items: center; justify-content: center;
 		z-index: 100; padding: 1rem;
+		animation: fade-in var(--t-fast) var(--ease);
 	}
 	.modal {
-		background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
+		background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+		box-shadow: var(--shadow-lg);
 		padding: 1.5rem; width: 100%; max-width: 500px; max-height: 80vh; overflow-y: auto;
+		animation: pop var(--t-med) var(--ease);
 	}
 	h2 { margin: 0 0 1rem; font-size: 1.2rem; }
 	.field-label {
@@ -196,26 +201,22 @@
 		display: block; width: 100%; box-sizing: border-box;
 		margin-top: 0.3rem; padding: 0.6rem;
 		/* Aligned with the rest of the app's form inputs (var(--surface-2)), not the prior var(--surface). */
-		background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px;
+		background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md);
 		color: var(--text); font-size: 0.9rem; font-family: inherit; resize: vertical;
+		transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
 	}
-	textarea:focus, input:focus, select:focus { outline: none; border-color: var(--border-strong); }
+	textarea:focus, input:focus, select:focus {
+		outline: none; border-color: var(--border-strong);
+		box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
+	}
 	.field-tools { margin: -0.6rem 0 1rem; }
 	.btn-insert {
-		background: transparent; border: 1px solid var(--border); border-radius: 6px;
+		background: transparent; border: 1px solid var(--border); border-radius: var(--r-sm);
 		color: var(--text-muted); font-size: 0.8rem; padding: 0.3rem 0.7rem; cursor: pointer;
+		transition: border-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
 	}
 	.btn-insert:hover:not(:disabled) { border-color: var(--border-strong); color: var(--text); }
 	.btn-insert:disabled { opacity: 0.5; cursor: not-allowed; }
 	.error { color: var(--danger-soft); font-size: 0.85rem; margin: 0.5rem 0; }
 	.actions { display: flex; gap: 0.75rem; justify-content: flex-end; margin-top: 1rem; }
-	.btn-primary, .btn-secondary {
-		padding: 0.5rem 1.2rem; border-radius: 7px;
-		font-size: 0.9rem; font-weight: 600; cursor: pointer; border: none;
-	}
-	.btn-primary { background: var(--primary); color: var(--text); }
-	.btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
-	.btn-secondary { background: transparent; border: 1px solid var(--border); color: #c8c8e0; }
-	.btn-secondary:hover:not(:disabled) { border-color: var(--border-strong); color: var(--text); }
-	.btn-primary:disabled, .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

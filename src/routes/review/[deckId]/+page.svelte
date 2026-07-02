@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy } from 'svelte';
+	import { fade } from 'svelte/transition';
 	import { createReviewEngine, type ReviewEvent, type SessionStats, type StartOptions, type IntervalLabels, type QueueCounts, type PrefetchedCards } from '$lib/client/review-engine';
 	import { preloadTTS, unlockAudioForGesture } from '$lib/client/audio';
 	import { getPrepareAudioAhead } from '$lib/client/preferences';
 	import { locale, t } from '$lib/i18n';
-	import { focusTrap } from '$lib/actions/focusTrap';
+	import ReviewHelp from '$lib/components/ReviewHelp.svelte';
 	import { clientCardSanitizer } from '$lib/client/card-sanitize';
 	import { renderCard } from '$lib/client/card-renderer';
 	import type { ReviewPhase } from '$lib/types';
@@ -13,6 +14,7 @@
 	import AgentChat from '$lib/components/AgentChat.svelte';
 
 	let agentChatOpen = $state(false);
+	let agentIntent = $state<'hint' | 'explain' | null>(null);
 	let agentEnabled = $state(false);
 	let tutorPausedReviewMic = false;
 	// Tutor context — populated from each card_change emit so the agent receives current
@@ -57,7 +59,6 @@
 	let cramState = $state<'' | 'new' | 'learning' | 'review'>('');
 	let intervals = $state<IntervalLabels>({ again: '', hard: '', good: '', easy: '' });
 	let counts = $state<QueueCounts>({ new: 0, learning: 0, review: 0 });
-	let helpOpen = $state(false);
 	let shortcutsOpen = $state(false);
 	let prefetchedCards = $state<PrefetchedCards | null>(null);
 	let reviewPrepared = $state(false);
@@ -87,6 +88,41 @@
 			: !keyStatus.elevenlabs)
 	);
 
+	// The prepare step already fetched the due queue: an empty card list (with no cram
+	// override active) means there is genuinely nothing to review right now.
+	const nothingDue = $derived(
+		reviewPrepared &&
+		prefetchedCards !== null &&
+		(prefetchedCards.cards?.length ?? 0) === 0 &&
+		!cramMode
+	);
+
+	// Session progress: total captured from the first counts emit of the session,
+	// remaining updates on every card change.
+	let sessionTotal = $state(0);
+	const remainingCount = $derived(counts.new + counts.learning + counts.review);
+	const progress = $derived(
+		sessionTotal > 0 ? Math.min(1, Math.max(0, 1 - remainingCount / sessionTotal)) : 0
+	);
+
+	// Live STT transcript caption: interim results render dimmed, finals solid, then fade.
+	let transcriptText = $state('');
+	let transcriptFinal = $state(false);
+	let transcriptTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function clearTranscript() {
+		if (transcriptTimer) clearTimeout(transcriptTimer);
+		transcriptTimer = null;
+		transcriptText = '';
+		transcriptFinal = false;
+	}
+
+	const cardsPerMinute = $derived(
+		stats && stats.durationMs > 0
+			? (stats.cardsReviewed / (stats.durationMs / 60000)).toFixed(1)
+			: '0'
+	);
+
 	const engine = createReviewEngine();
 	function showReviewError(message: string) {
 		errorMsg = message;
@@ -99,7 +135,12 @@
 		errorMsg = '';
 	}
 
-	function openTutor() {
+	/**
+	 * `intent` records how the tutor was summoned: an explicit voice command or H/E shortcut
+	 * carries 'hint'/'explain' and makes the tutor answer immediately, while the generic
+	 * toolbar button passes null so the chat opens with the prompt picker instead.
+	 */
+	function openTutor(intent: 'hint' | 'explain' | null) {
 		if (!agentEnabled) {
 			showReviewError($t('agent.errors.noAgent'));
 			return;
@@ -108,15 +149,13 @@
 			tutorPausedReviewMic = true;
 			engine.toggleMic();
 		}
+		agentIntent = intent;
 		agentChatOpen = true;
-	}
-
-	function requestTutor() {
-		engine.executeCommand(phase === 'question' ? 'hint' : 'explain');
 	}
 
 	function closeTutor() {
 		agentChatOpen = false;
+		agentIntent = null;
 		if (tutorPausedReviewMic && !micOn) engine.toggleMic();
 		tutorPausedReviewMic = false;
 	}
@@ -128,6 +167,73 @@
 		}
 		learningCountdown = 0;
 	}
+
+	// ===== Mic level meter =====
+	// While the STT client is listening we tap its MediaStream with an AnalyserNode and
+	// drive a small 4-bar equalizer. If the stream or Web Audio is unavailable (or the
+	// user prefers reduced motion) the bars stay in a CSS-driven fallback state.
+	const MIC_BAR_REST = 0.25;
+	let meterLive = $state(false);
+	let micLevels = $state<number[]>([MIC_BAR_REST, MIC_BAR_REST, MIC_BAR_REST, MIC_BAR_REST]);
+	let meterCtx: AudioContext | null = null;
+	let meterAnalyser: AnalyserNode | null = null;
+	let meterSource: MediaStreamAudioSourceNode | null = null;
+	let meterRaf = 0;
+
+	function stopMicMeter() {
+		if (meterRaf) cancelAnimationFrame(meterRaf);
+		meterRaf = 0;
+		try { meterSource?.disconnect(); } catch { /* already disconnected */ }
+		meterSource = null;
+		meterAnalyser = null;
+		meterCtx?.close().catch(() => {});
+		meterCtx = null;
+		meterLive = false;
+		micLevels = [MIC_BAR_REST, MIC_BAR_REST, MIC_BAR_REST, MIC_BAR_REST];
+	}
+
+	function startMicMeter() {
+		if (meterCtx) return;
+		if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+		try {
+			const stream = engine.getMicStream();
+			const AudioContextCtor =
+				window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+			if (!stream || !AudioContextCtor) return; // fall back to the CSS equalizer
+			meterCtx = new AudioContextCtor();
+			if (meterCtx.state === 'suspended') void meterCtx.resume().catch(() => {});
+			meterAnalyser = meterCtx.createAnalyser();
+			meterAnalyser.fftSize = 128;
+			meterAnalyser.smoothingTimeConstant = 0.6;
+			meterSource = meterCtx.createMediaStreamSource(stream);
+			meterSource.connect(meterAnalyser);
+			const bins = new Uint8Array(meterAnalyser.frequencyBinCount);
+			// Four rough frequency bands, low → high; speech energy sits mostly in the lower two.
+			const bands: Array<[number, number]> = [[0, 4], [4, 12], [12, 28], [28, 64]];
+			const tick = () => {
+				if (!meterAnalyser) return;
+				meterAnalyser.getByteFrequencyData(bins);
+				micLevels = bands.map(([from, to]) => {
+					let sum = 0;
+					for (let i = from; i < to; i++) sum += bins[i];
+					const avg = sum / (to - from) / 255;
+					return Math.min(1, MIC_BAR_REST + avg * 1.6);
+				});
+				meterRaf = requestAnimationFrame(tick);
+			};
+			meterLive = true;
+			meterRaf = requestAnimationFrame(tick);
+		} catch {
+			stopMicMeter();
+		}
+	}
+
+	$effect(() => {
+		if (started && !sessionEnded && status === 'listening' && micOn) {
+			startMicMeter();
+			return () => stopMicMeter();
+		}
+	});
 
 	engine.onEvent((event: ReviewEvent) => {
 		switch (event.type) {
@@ -158,10 +264,22 @@
 			case 'idle':
 				status = 'idle';
 				break;
-			case 'transcript':
+			case 'transcript': {
+				transcriptText = event.text;
+				transcriptFinal = event.isFinal;
+				if (transcriptTimer) clearTimeout(transcriptTimer);
+				transcriptTimer = null;
+				if (event.isFinal) {
+					transcriptTimer = setTimeout(() => {
+						transcriptTimer = null;
+						transcriptText = '';
+						transcriptFinal = false;
+					}, 2000);
+				}
 				break;
+			}
 			case 'command':
-				if (event.command === 'hint' || event.command === 'explain') openTutor();
+				if (event.command === 'hint' || event.command === 'explain') openTutor(event.command);
 				if (['again', 'hard', 'good', 'easy'].includes(event.command)) {
 					highlightRating = event.command;
 					if (highlightTimer) clearTimeout(highlightTimer);
@@ -170,6 +288,7 @@
 				break;
 			case 'session_end':
 				clearCountdown();
+				clearTranscript();
 				sessionEnded = true;
 				stats = event.stats;
 				status = 'idle';
@@ -190,9 +309,12 @@
 			case 'audio_change':
 				audioOn = event.audioOn;
 				break;
-			case 'counts':
+			case 'counts': {
 				counts = event.counts;
+				const total = event.counts.new + event.counts.learning + event.counts.review;
+				if (total > sessionTotal) sessionTotal = total;
 				break;
+			}
 			case 'learning_due': {
 				status = 'waiting';
 				clearCountdown();
@@ -246,6 +368,35 @@
 		}
 	}
 
+	/**
+	 * "Review again" from the summary: reset all per-session UI state and start a fresh
+	 * session. The stale prefetched card set is dropped so the engine refetches what is
+	 * due now (cards just rated should not come straight back).
+	 */
+	async function restartSession() {
+		sessionEnded = false;
+		stats = null;
+		started = false;
+		cardsReviewed = 0;
+		sessionTotal = 0;
+		counts = { new: 0, learning: 0, review: 0 };
+		phase = 'question';
+		status = 'idle';
+		frontText = '';
+		backText = '';
+		frontHtml = '';
+		backHtml = '';
+		cardState = null;
+		intervals = { again: '', hard: '', good: '', easy: '' };
+		undoAvailable = false;
+		highlightRating = '';
+		suspendedNotice = '';
+		clearCountdown();
+		clearTranscript();
+		prefetchedCards = null;
+		await startReview();
+	}
+
 	function formatDuration(ms: number): string {
 		const seconds = Math.floor(ms / 1000);
 		const minutes = Math.floor(seconds / 60);
@@ -291,10 +442,10 @@
 				if (phase === 'rating') engine.executeCommand('easy');
 				break;
 			case 'e':
-				if (phase === 'rating') requestTutor();
+				if (phase === 'rating') engine.executeCommand('explain');
 				break;
 			case 'h':
-				if (phase === 'question') requestTutor();
+				if (phase === 'question') engine.executeCommand('hint');
 				break;
 			case 'r':
 				engine.executeCommand('repeat');
@@ -369,6 +520,7 @@
 
 	onDestroy(() => {
 		clearCountdown();
+		clearTranscript();
 		if (suspendedTimer) clearTimeout(suspendedTimer);
 		if (errorTimer) clearTimeout(errorTimer);
 		if (highlightTimer) clearTimeout(highlightTimer);
@@ -383,7 +535,7 @@
 	<div class="review-container">
 		<div class="missing-keys-banner">
 			<div class="missing-keys-icon">
-				<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><circle cx="12" cy="16" r="0.5" fill="currentColor" stroke="none"/></svg>
+				<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
 			</div>
 			<h2>{$t('review.missingKeys')}</h2>
 			<p>{$t('review.missingKeysDetail')}</p>
@@ -401,12 +553,23 @@
 					<div class="deck-name-skeleton"></div>
 				{/if}
 			</div>
-			<p class="start-hint">{$t('review.startHint')}</p>
+			{#if !nothingDue}
+				<p class="start-hint">{$t('review.startHint')}</p>
+			{/if}
 			{#if errorMsg}
 				<p class="start-error">{errorMsg}</p>
 			{/if}
 
-			<button class="start-btn" onclick={startReview} disabled={!reviewPrepared} aria-busy={!reviewPrepared}>{!reviewPrepared ? $t('common.loading') : cramMode ? $t('review.startCram') : $t('review.startReview')}</button>
+			{#if nothingDue}
+				<div class="nothing-due" role="status">
+					<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+					<p class="nothing-due-title">{$t('review.nothingDueTitle')}</p>
+					<p class="nothing-due-hint">{$t('review.nothingDueHint')}</p>
+					<a href="/" class="btn-secondary">{$t('session.backToDashboard')}</a>
+				</div>
+			{:else}
+				<button class="start-btn" onclick={startReview} disabled={!reviewPrepared} aria-busy={!reviewPrepared}>{!reviewPrepared ? $t('common.loading') : cramMode ? $t('review.startCram') : $t('review.startReview')}</button>
+			{/if}
 
 			<div class="review-options">
 				<label class="option-label">
@@ -432,29 +595,19 @@
 				{/if}
 			</div>
 
-			<button class="help-toggle" onclick={() => helpOpen = !helpOpen}>
-				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-				{helpOpen ? $t('review.hideHelp') : $t('review.showHelp')}
-				<svg class="help-chevron" class:open={helpOpen} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+			<button class="help-toggle" onclick={() => shortcutsOpen = true} aria-haspopup="dialog">
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+				<span class="help-toggle-text">{$t('review.showHelp')}</span>
 			</button>
-			{#if helpOpen}
-				<div class="commands-help">
-					<ul>
-						<li><strong>{$t('help.answer')}</strong> — {$t('help.answerDesc')} <kbd>Space</kbd></li>
-						<li><strong>{$t('help.hint')}</strong> — {$t('help.hintDesc')} <kbd>H</kbd></li>
-						<li><strong>{$t('help.ratings')}</strong> — {$t('help.ratingsDesc')} <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></li>
-						<li><strong>{$t('help.repeat')}</strong> — {$t('help.repeatDesc')} <kbd>R</kbd></li>
-						<li><strong>{$t('help.explain')}</strong> — {$t('help.explainDesc')} <kbd>E</kbd></li>
-						<li><strong>{$t('help.stop')}</strong> — {$t('help.stopDesc')} <kbd>Esc</kbd></li>
-					</ul>
-				</div>
-			{/if}
 		</div>
 	</div>
 {:else if sessionEnded && stats}
 	<div class="review-container">
 		<div class="summary">
-			<h1>{$t('session.completeTitle')}{deckName ? ` — ${deckName}` : ''}</h1>
+			<h1>{$t('session.completeTitle')}</h1>
+			{#if deckName}
+				<p class="summary-deck">{deckName}</p>
+			{/if}
 			<div class="stat-grid">
 				<div class="stat">
 					<span class="stat-value">{stats.cardsReviewed}</span>
@@ -464,18 +617,37 @@
 					<span class="stat-value">{formatDuration(stats.durationMs)}</span>
 					<span class="stat-label">{$t('session.duration')}</span>
 				</div>
+				<div class="stat">
+					<span class="stat-value">{cardsPerMinute}</span>
+					<span class="stat-label">{$t('session.cardsPerMinute')}</span>
+				</div>
 			</div>
 			<div class="ratings-summary">
-				<span class="rating again">{$t('rating.again')}: {stats.ratings.again}</span>
-				<span class="rating hard">{$t('rating.hard')}: {stats.ratings.hard}</span>
-				<span class="rating good">{$t('rating.good')}: {stats.ratings.good}</span>
-				<span class="rating easy">{$t('rating.easy')}: {stats.ratings.easy}</span>
+				<span class="rating-chip again">{$t('rating.again')} · {stats.ratings.again}</span>
+				<span class="rating-chip hard">{$t('rating.hard')} · {stats.ratings.hard}</span>
+				<span class="rating-chip good">{$t('rating.good')} · {stats.ratings.good}</span>
+				<span class="rating-chip easy">{$t('rating.easy')} · {stats.ratings.easy}</span>
 			</div>
-			<a href="/" class="back-link">{$t('session.backToDashboard')}</a>
+			<div class="summary-actions">
+				<a href="/" class="btn-secondary">{$t('session.backToDashboard')}</a>
+				<button class="btn-primary" onclick={restartSession}>{$t('session.reviewAgain')}</button>
+			</div>
 		</div>
 	</div>
 {:else}
 	<!-- Active review: AnkiWeb-style fullscreen layout -->
+
+	<!-- Session progress: thin bar pinned to the very top -->
+	<div
+		class="session-progress"
+		role="progressbar"
+		aria-label={$t('review.sessionProgress')}
+		aria-valuemin="0"
+		aria-valuemax="100"
+		aria-valuenow={Math.round(progress * 100)}
+	>
+		<div class="session-progress-fill" style="width: {progress * 100}%"></div>
+	</div>
 
 	<!-- Toast errors at top -->
 	{#if errorMsg}
@@ -506,50 +678,66 @@
 					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.5-.36 2.18"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
 				{/if}
 			</button>
-			{#if phase === 'question'}
-				<button class="toolbar-btn toolbar-btn--tutor" class:off={!agentEnabled} onclick={requestTutor} title="{$t('agent.askHint')} (H)" aria-label={$t('agent.askHint')}>
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/></svg>
-					<span>{$t('agent.askHint')}</span>
-				</button>
-			{:else}
-				<button class="toolbar-btn toolbar-btn--tutor" class:off={!agentEnabled} onclick={requestTutor} title="{$t('agent.openTutor')} (E)" aria-label={$t('agent.title')}>
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" y1="10" x2="15" y2="10"/></svg>
-					<span>{$t('agent.openTutor')}</span>
-				</button>
-			{/if}
-			<button class="toolbar-btn" onclick={() => shortcutsOpen = !shortcutsOpen} title="{$t('help.keyHelp')} (?)" aria-label={$t('help.keyboardTitle')} aria-pressed={shortcutsOpen}>
-				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor" stroke="none"/></svg>
+			<button class="toolbar-btn toolbar-btn--tutor" class:off={!agentEnabled} onclick={() => openTutor(null)} title="{$t('agent.openTutor')} (H/E)" aria-label={$t('agent.openTutor')}>
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" y1="10" x2="15" y2="10"/></svg>
+				<span>{$t('agent.openTutor')}</span>
 			</button>
-			<button class="toolbar-btn stop" onclick={() => engine.executeCommand('stop')} title="{$t('review.stop')} (Esc)" aria-label={$t('review.stop')}>
-				{$t('review.stop')}
+			<button class="toolbar-btn" onclick={() => shortcutsOpen = !shortcutsOpen} title="{$t('help.keyHelp')} (?)" aria-label={$t('help.title')} aria-pressed={shortcutsOpen}>
+				<!-- Feather help-circle: the dot must be a stroked zero-length line (round cap),
+				     not a tiny filled circle — r=0.5 renders sub-pixel and disappears. -->
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
 			</button>
-			{#if status === 'loading' || status === 'speaking' || status === 'listening'}
-				<span class="voice-dot" class:loading={status === 'loading'} class:speaking={status === 'speaking'} class:listening={status === 'listening'}></span>
+			{#if status === 'loading' || status === 'speaking'}
+				<span class="voice-dot" class:loading={status === 'loading'} class:speaking={status === 'speaking'}></span>
+			{:else if status === 'listening'}
+				<span class="mic-meter" class:live={meterLive} aria-hidden="true">
+					{#each micLevels as level, i (i)}
+						<span class="mic-bar" style:transform={meterLive ? `scaleY(${level})` : undefined}></span>
+					{/each}
+				</span>
 			{/if}
 		</div>
 		<div class="top-right">
-			<span class="count count-new" class:active={cardState === 'new'}>{counts.new}</span>
-			<span class="count-sep">+</span>
-			<span class="count count-learning" class:active={cardState === 'learning'}>{counts.learning}</span>
-			<span class="count-sep">+</span>
-			<span class="count count-review" class:active={cardState === 'review'}>{counts.review}</span>
+			<div class="counts">
+				<span class="count count-new" class:active={cardState === 'new'}>{counts.new}</span>
+				<span class="count-sep">+</span>
+				<span class="count count-learning" class:active={cardState === 'learning'}>{counts.learning}</span>
+				<span class="count-sep">+</span>
+				<span class="count count-review" class:active={cardState === 'review'}>{counts.review}</span>
+			</div>
+			<button class="toolbar-btn stop" onclick={() => engine.executeCommand('stop')} title="{$t('review.stop')} (Esc)" aria-label={$t('review.stop')}>
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+			</button>
 		</div>
 	</div>
 
 	<!-- Card content area -->
 	<div class="card-area">
-		{#if status === 'waiting'}
-			<p class="waiting-text">{$t('review.waitingCard', { seconds: learningCountdown })}</p>
-		{:else}
-			<div class="card-content" role="region" aria-label="Flashcard">
+		{#key cardsReviewed}
+			<div class="card-content" class:held={status === 'waiting'} role="region" aria-label={$t('review.cardRegion')}>
 				<div class="question-text">{@html frontHtml}</div>
 				{#if phase === 'rating'}
 					<hr class="card-divider" />
 					<div class="answer-text">{@html backHtml}</div>
 				{/if}
 			</div>
+		{/key}
+		{#if status === 'waiting'}
+			<!-- Learning hold: the rated card stays visible (dimmed) under a countdown pill -->
+			<div class="hold-pill" role="status">{$t('review.waitingCard', { seconds: learningCountdown })}</div>
 		{/if}
 	</div>
+
+	<!-- Live STT transcript caption -->
+	{#if transcriptText}
+		<div
+			class="transcript-pill"
+			class:interim={!transcriptFinal}
+			role="status"
+			aria-label={$t('review.transcriptLabel')}
+			transition:fade={{ duration: 180 }}
+		>{transcriptText}</div>
+	{/if}
 
 	<!-- Fixed bottom actions -->
 	<div class="bottom-bar">
@@ -560,7 +748,7 @@
 			<div class="bottom-actions">
 				<button class="show-answer-btn" onclick={() => engine.executeCommand('answer')}>{$t('review.showAnswer')}</button>
 			</div>
-		{:else if phase === 'rating'}
+		{:else if phase === 'rating' && status !== 'waiting'}
 			<div class="interval-labels">
 				<span class="interval">{intervals.again}</span>
 				<span class="interval">{intervals.hard}</span>
@@ -576,54 +764,16 @@
 		{/if}
 	</div>
 
-	<!-- Keyboard shortcuts overlay -->
-	{#if shortcutsOpen}
-		<button class="shortcuts-backdrop" onclick={() => shortcutsOpen = false} aria-label={$t('help.closeOverlay')}></button>
-		<div
-			class="shortcuts-overlay"
-			role="dialog"
-			aria-modal="true"
-			aria-label={$t('help.keyboardTitle')}
-			tabindex="-1"
-			onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); shortcutsOpen = false; } }}
-			use:focusTrap
-		>
-			<div class="shortcuts-header">
-				<span class="shortcuts-title">{$t('help.keyboardTitle')}</span>
-				<button class="shortcuts-close" onclick={() => shortcutsOpen = false} aria-label={$t('help.closeOverlay')}>
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-				</button>
-			</div>
-			<table class="shortcuts-table">
-				<tbody>
-					<tr><td><kbd>Space</kbd> / <kbd>Enter</kbd></td><td>{$t('help.keyAnswer')}</td></tr>
-					<tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></td><td>{$t('help.keyRatings')}</td></tr>
-					<tr><td><kbd>R</kbd></td><td>{$t('help.keyRepeat')}</td></tr>
-					<tr><td><kbd>E</kbd></td><td>{$t('help.keyExplain')}</td></tr>
-					<tr><td><kbd>H</kbd></td><td>{$t('help.keyHint')}</td></tr>
-					<tr><td><kbd>Z</kbd></td><td>{$t('help.keyUndo')}</td></tr>
-					<tr><td><kbd>Esc</kbd></td><td>{$t('help.keyStop')}</td></tr>
-					<tr><td><kbd>?</kbd></td><td>{$t('help.keyHelp')}</td></tr>
-				</tbody>
-			</table>
-			<div class="shortcuts-section-title">{$t('help.voiceTitle')}</div>
-			<ul class="shortcuts-voice">
-				<li><strong>{$t('help.answer')}</strong> — {$t('help.answerDesc')}</li>
-				<li><strong>{$t('help.ratings')}</strong> — {$t('help.ratingsDesc')}</li>
-				<li><strong>{$t('help.repeat')}</strong> — {$t('help.repeatDesc')}</li>
-				<li><strong>{$t('help.explain')}</strong> — {$t('help.explainDesc')}</li>
-				<li><strong>{$t('help.hint')}</strong> — {$t('help.hintDesc')}</li>
-				<li><strong>{$t('help.stop')}</strong> — {$t('help.stopDesc')}</li>
-			</ul>
-		</div>
-	{/if}
 {/if}
+
+<ReviewHelp open={shortcutsOpen} onclose={() => shortcutsOpen = false} />
 
 <AgentChat
 	open={agentChatOpen}
 	cardId={agentCardId}
 	answerRevealed={phase === 'rating'}
 	locale={$locale === 'de' ? 'de' : 'en'}
+	intent={agentIntent}
 	onclose={closeTutor}
 />
 
@@ -641,20 +791,20 @@
 	}
 
 	.missing-keys-icon {
-		color: #8899cc;
+		color: var(--text-muted);
 		opacity: 0.85;
 	}
 
 	.missing-keys-banner h2 {
 		font-size: 1.25rem;
 		font-weight: 600;
-		color: #d0d8ff;
+		color: var(--text);
 		margin: 0;
 	}
 
 	.missing-keys-banner p {
 		font-size: 0.95rem;
-		color: #8899bb;
+		color: var(--text-muted);
 		line-height: 1.6;
 		margin: 0;
 		max-width: 360px;
@@ -665,17 +815,17 @@
 		margin-top: 0.5rem;
 		padding: 0.75rem 1.75rem;
 		background: var(--primary);
-		color: #d0d0ff;
+		color: var(--text-on-primary);
 		border: none;
-		border-radius: 10px;
+		border-radius: var(--r-md);
 		font-size: 1rem;
 		font-weight: 600;
 		text-decoration: none;
-		transition: filter 0.15s;
+		transition: background var(--t-fast) var(--ease);
 	}
 
 	.settings-btn:hover {
-		filter: brightness(1.2);
+		background: var(--primary-hover);
 	}
 
 	/* ========== Start Screen ========== */
@@ -693,12 +843,7 @@
 		width: 100%;
 		padding-left: 1.5rem;
 		padding-right: 1.5rem;
-		animation: screen-fade-in 0.25s ease both;
-	}
-
-	@keyframes screen-fade-in {
-		from { opacity: 0; transform: translateY(8px); }
-		to { opacity: 1; transform: translateY(0); }
+		animation: fade-in var(--t-med) var(--ease) both;
 	}
 
 	.start-header {
@@ -711,37 +856,33 @@
 
 	.deck-name {
 		font-size: 1.1rem;
-		color: #8899cc;
+		color: var(--text-muted);
 		font-weight: 500;
 		margin: 0;
-		animation: screen-fade-in 0.3s ease both;
+		animation: fade-in var(--t-med) var(--ease) both;
 	}
 
 	.deck-name-skeleton {
 		height: 1.1rem;
 		width: 180px;
 		margin: 0 auto;
-		border-radius: 6px;
-		background: linear-gradient(90deg, var(--border-muted) 25%, #33335a 50%, var(--border-muted) 75%);
+		border-radius: var(--r-sm);
+		background: linear-gradient(90deg, var(--border-muted) 25%, var(--border) 50%, var(--border-muted) 75%);
 		background-size: 200% 100%;
 		animation: shimmer 1.2s ease-in-out infinite;
 	}
 
-	@keyframes shimmer {
-		0% { background-position: 200% 0; }
-		100% { background-position: -200% 0; }
-	}
-
 	.start-hint {
-		color: #8080a0;
+		color: var(--text-subtle);
 		font-size: 0.95rem;
 		margin: 0.75rem 0 0;
 	}
 
 	.start-error {
-		color: #ff8888;
-		background: #3a1a1a;
-		border-radius: 8px;
+		color: var(--danger-soft);
+		background: var(--danger-tint);
+		border: 1px solid var(--danger-border);
+		border-radius: var(--r-md);
 		padding: 0.55rem 0.75rem;
 		font-size: 0.85rem;
 		font-weight: 600;
@@ -751,14 +892,17 @@
 
 	.start-btn {
 		padding: 1rem 2.5rem;
-		font-size: 1.2rem;
+		font-size: 1.15rem;
+		font-weight: 600;
+		font-family: inherit;
 		background: var(--primary);
-		color: var(--text);
+		color: var(--text-on-primary);
 		border: none;
-		border-radius: 12px;
+		border-radius: var(--r-lg);
 		cursor: pointer;
+		touch-action: manipulation;
 		margin: 1.5rem 0;
-		transition: background 0.15s, transform 0.1s;
+		transition: background var(--t-fast) var(--ease), transform 80ms var(--ease);
 	}
 
 	.start-btn:hover {
@@ -773,6 +917,38 @@
 		opacity: 0.55;
 		cursor: wait;
 		transform: none;
+	}
+
+	.nothing-due {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.5rem;
+		margin: 1.5rem auto 0;
+		padding: 1.5rem;
+		max-width: 360px;
+		background: var(--surface);
+		border: 1px solid var(--border-muted);
+		border-radius: var(--r-lg);
+		animation: fade-in var(--t-med) var(--ease) both;
+	}
+
+	.nothing-due svg {
+		color: var(--success);
+	}
+
+	.nothing-due-title {
+		font-size: 1.05rem;
+		font-weight: 700;
+		color: var(--text);
+		margin: 0;
+	}
+
+	.nothing-due-hint {
+		font-size: 0.9rem;
+		color: var(--text-muted);
+		line-height: 1.5;
+		margin: 0 0 0.5rem;
 	}
 
 	.review-options {
@@ -798,7 +974,7 @@
 		padding: 0.5rem 0.6rem;
 		background: var(--surface);
 		border: 1px solid var(--border);
-		border-radius: 6px;
+		border-radius: var(--r-sm);
 		color: var(--text);
 		font-size: 0.9rem;
 		font-family: inherit;
@@ -819,132 +995,164 @@
 	}
 
 	.option-hint {
-		color: #8080a0;
+		color: var(--text-subtle);
 		font-size: 0.8rem;
 	}
 
+	/* Multi-line pill: the German label wraps to 2–3 lines on narrow screens */
 	.help-toggle {
 		display: inline-flex;
 		align-items: center;
+		justify-content: center;
+		flex-wrap: wrap;
 		gap: 0.45rem;
+		max-width: 100%;
 		background: transparent;
 		border: 1px solid var(--border);
-		color: #a8a8cc;
+		color: var(--text-muted);
 		cursor: pointer;
 		font-size: 0.875rem;
 		font-family: inherit;
 		font-weight: 500;
+		line-height: 1.35;
 		padding: 0.5rem 1rem;
-		border-radius: 8px;
+		border-radius: var(--r-pill);
 		margin-top: 1rem;
-		transition: border-color 0.15s, color 0.15s, background 0.15s;
+		transition: border-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+	}
+
+	.help-toggle-text {
+		white-space: normal;
+		overflow-wrap: break-word;
+		min-width: 0;
 	}
 
 	.help-toggle:hover {
 		border-color: var(--border-strong);
-		color: #d0d0ff;
+		color: var(--text);
 		background: var(--surface);
-	}
-
-	.help-chevron {
-		transition: transform 0.2s ease;
-		opacity: 0.7;
-	}
-
-	.help-chevron.open {
-		transform: rotate(180deg);
-	}
-
-	.commands-help {
-		text-align: left;
-		max-width: 400px;
-		margin: 0.75rem auto 0;
-		color: var(--text-muted);
-		font-size: 0.9rem;
-		background: #1e1e38;
-		border: 1px solid #2e2e50;
-		border-radius: 10px;
-		padding: 0.75rem 1rem;
-	}
-
-	.commands-help ul {
-		padding-left: 0;
-		list-style: none;
-		margin: 0;
-	}
-
-	.commands-help li {
-		margin-bottom: 0.4rem;
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.commands-help li:last-child {
-		margin-bottom: 0;
 	}
 
 	/* ========== Session Complete ========== */
 	.summary {
 		text-align: center;
-		padding-top: 3rem;
+		padding: 3rem 1.5rem 2rem;
+		max-width: 560px;
+		width: 100%;
+		animation: fade-in var(--t-med) var(--ease) both;
+	}
+
+	.summary h1 {
+		margin: 0 0 0.35rem;
+	}
+
+	.summary-deck {
+		font-size: 1.05rem;
+		color: var(--text-muted);
+		font-weight: 500;
+		margin: 0;
 	}
 
 	.stat-grid {
 		display: flex;
-		gap: 2rem;
+		gap: 2.5rem;
 		justify-content: center;
-		margin: 2rem 0;
+		flex-wrap: wrap;
+		margin: 2.25rem 0 1.75rem;
 	}
 
 	.stat {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
+		gap: 0.15rem;
 	}
 
 	.stat-value {
-		font-size: 2rem;
+		font-size: 2.4rem;
 		font-weight: 700;
+		letter-spacing: -0.02em;
 	}
 
 	.stat-label {
-		color: var(--text-muted);
-		font-size: 0.85rem;
+		color: var(--text-subtle);
+		font-size: 0.8rem;
+		font-weight: 600;
 	}
 
 	.ratings-summary {
 		display: flex;
-		gap: 1rem;
+		gap: 0.5rem;
 		justify-content: center;
 		flex-wrap: wrap;
-		margin-bottom: 2rem;
+		margin-bottom: 2.5rem;
 	}
 
-	.ratings-summary .rating {
-		padding: 0.3rem 0.8rem;
-		border-radius: 6px;
+	.rating-chip {
+		padding: 0.4rem 0.9rem;
+		border-radius: var(--r-pill);
+		border: 1px solid transparent;
 		font-size: 0.85rem;
+		font-weight: 600;
+		white-space: nowrap;
 	}
 
-	.rating.again { background: #4a2020; color: #ff8888; }
-	.rating.hard { background: #4a3a20; color: #ffbb88; }
-	.rating.good { background: #204a20; color: var(--success); }
-	.rating.easy { background: #20204a; color: #88bbff; }
+	.rating-chip.again {
+		background: var(--danger-tint);
+		color: var(--danger-soft);
+		border-color: var(--danger-border);
+	}
 
-	.back-link {
-		display: inline-block;
-		padding: 0.6rem 1.5rem;
-		color: #aaa;
+	.rating-chip.hard {
+		background: var(--warning-tint);
+		color: var(--warning);
+		border-color: var(--warning-border);
+	}
+
+	.rating-chip.good {
+		background: var(--success-tint);
+		color: var(--success);
+		border-color: var(--success-border);
+	}
+
+	.rating-chip.easy {
+		background: var(--info-tint);
+		color: var(--info);
+		border-color: var(--info-border);
+	}
+
+	.summary-actions {
+		display: flex;
+		gap: 0.75rem;
+		justify-content: center;
+		flex-wrap: wrap;
+	}
+
+	.summary-actions .btn-primary,
+	.summary-actions .btn-secondary {
+		padding: 0.7rem 1.6rem;
+		font-size: 1rem;
+		min-height: 44px;
 		text-decoration: none;
-		border: 1px solid #444;
-		border-radius: 8px;
 	}
 
-	.back-link:hover {
-		border-color: #666;
-		color: #ddd;
+	/* ========== Session Progress Bar ========== */
+	.session-progress {
+		position: fixed;
+		top: env(safe-area-inset-top, 0px);
+		left: 0;
+		right: 0;
+		height: 2px;
+		z-index: 60;
+		pointer-events: none;
+	}
+
+	.session-progress-fill {
+		height: 100%;
+		width: 0;
+		background: var(--primary);
+		border-radius: 0 1px 1px 0;
+		transition: width var(--t-med) var(--ease);
 	}
 
 	/* ========== Toast Notifications ========== */
@@ -957,14 +1165,18 @@
 		align-items: center;
 		gap: 0.6rem;
 		max-width: min(90vw, 32rem);
-		background: #4a2020;
-		color: #ff8888;
+		background: var(--danger-tint);
+		color: var(--danger-soft);
+		border: 1px solid var(--danger-border);
 		padding: 0.5rem 0.6rem 0.5rem 1.2rem;
-		border-radius: 8px;
+		border-radius: var(--r-md);
 		font-size: 0.85rem;
 		font-weight: 600;
 		z-index: 100;
-		animation: slide-down 0.2s ease;
+		box-shadow: var(--shadow-md);
+		-webkit-backdrop-filter: blur(12px);
+		backdrop-filter: blur(12px);
+		animation: toast-in var(--t-med) var(--ease);
 	}
 
 	.toast-dismiss {
@@ -976,7 +1188,7 @@
 		height: 1.5rem;
 		padding: 0;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--r-sm);
 		background: transparent;
 		color: inherit;
 		font-size: 0.8rem;
@@ -995,17 +1207,23 @@
 		top: max(0.75rem, env(safe-area-inset-top));
 		left: 50%;
 		transform: translateX(-50%);
-		background: #3a2a10;
-		color: #ffcc88;
+		background: var(--warning-tint);
+		color: var(--warning);
+		border: 1px solid var(--warning-border);
 		padding: 0.5rem 1.2rem;
-		border-radius: 8px;
+		border-radius: var(--r-md);
 		font-size: 0.85rem;
 		font-weight: 600;
 		z-index: 100;
-		animation: slide-down 0.2s ease;
+		box-shadow: var(--shadow-md);
+		-webkit-backdrop-filter: blur(12px);
+		backdrop-filter: blur(12px);
+		animation: toast-in var(--t-med) var(--ease);
 	}
 
-	@keyframes slide-down {
+	/* Toasts center themselves with translateX(-50%), so they need their own entrance
+	   keyframes — the global slide-down would drop that offset mid-animation. */
+	@keyframes toast-in {
 		from { opacity: 0; transform: translateX(-50%) translateY(-10px); }
 		to { opacity: 1; transform: translateX(-50%) translateY(0); }
 	}
@@ -1020,6 +1238,7 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
+		gap: 0.5rem;
 		padding: env(safe-area-inset-top) 0.75rem 0;
 		z-index: 50;
 		background: var(--bg);
@@ -1029,12 +1248,21 @@
 		display: flex;
 		align-items: center;
 		gap: 0.3rem;
+		min-width: 0;
 	}
 
 	.top-right {
 		display: flex;
 		align-items: center;
+		gap: 0.4rem;
+		min-width: 0;
+	}
+
+	.counts {
+		display: flex;
+		align-items: center;
 		gap: 0.2rem;
+		min-width: 0;
 		font-size: 0.9rem;
 		font-weight: 600;
 	}
@@ -1043,31 +1271,29 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		flex-shrink: 0;
 		width: 44px;
 		height: 44px;
 		border-radius: var(--r-sm);
 		border: none;
 		background: transparent;
-		color: #8080a0;
+		color: var(--text-subtle);
 		cursor: pointer;
-		transition: all 0.15s;
+		touch-action: manipulation;
+		transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
 	}
 
 	.toolbar-btn:hover {
-		background: var(--border-muted);
+		background: rgba(255, 255, 255, 0.08);
 		color: var(--text);
 	}
 
 	.toolbar-btn.off {
-		color: #ff8888;
+		color: var(--danger-soft);
 	}
 
-	.toolbar-btn.stop {
-		width: auto;
-		padding: 0 10px;
-		font-size: 0.8rem;
-		font-weight: 500;
-		letter-spacing: 0.01em;
+	.toolbar-btn.stop:hover {
+		color: var(--danger-soft);
 	}
 
 	.toolbar-btn--tutor {
@@ -1076,11 +1302,19 @@
 		gap: 0.35rem;
 		font-size: 0.78rem;
 		font-weight: 600;
+		font-family: inherit;
 		color: var(--accent);
 	}
 
-	.toolbar-btn.stop:hover {
-		color: #ff6666;
+	@media (max-width: 380px) {
+		.toolbar-btn--tutor {
+			width: 44px;
+			padding: 0;
+		}
+
+		.toolbar-btn--tutor span {
+			display: none;
+		}
 	}
 
 	.voice-dot {
@@ -1092,18 +1326,13 @@
 	}
 
 	.voice-dot.loading {
-		background: #ffbb88;
+		background: var(--warning);
 		animation: pulse-fade 0.8s ease-in-out infinite;
 	}
 
 	.voice-dot.speaking {
-		background: #ffbb88;
+		background: var(--warning);
 		animation: pulse-dot 1s ease-in-out infinite;
-	}
-
-	.voice-dot.listening {
-		background: var(--success);
-		animation: pulse-dot 1.4s ease-in-out infinite;
 	}
 
 	@keyframes pulse-dot {
@@ -1116,11 +1345,49 @@
 		50% { opacity: 1; transform: scale(1.2); }
 	}
 
+	/* ========== Mic Level Meter ========== */
+	.mic-meter {
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+		height: 16px;
+		margin-left: 0.3rem;
+		flex-shrink: 0;
+	}
 
-	.count-new { color: var(--success); }
-	.count-learning { color: #ffaa44; }
-	.count-review { color: #6699ff; }
-	.count-sep { color: #555; font-size: 0.75rem; }
+	.mic-bar {
+		width: 3px;
+		height: 14px;
+		border-radius: 2px;
+		background: var(--success);
+		transform: scaleY(0.25);
+		transform-origin: center;
+		will-change: transform;
+	}
+
+	.mic-meter.live .mic-bar {
+		transition: transform 60ms linear;
+	}
+
+	/* Fallback when the analyser isn't available: a gentle CSS equalizer driven purely
+	   by the listening state. Neutralized to static bars under reduced motion. */
+	.mic-meter:not(.live) .mic-bar {
+		animation: mic-eq 1.1s ease-in-out infinite;
+	}
+
+	.mic-meter:not(.live) .mic-bar:nth-child(2) { animation-delay: 0.18s; }
+	.mic-meter:not(.live) .mic-bar:nth-child(3) { animation-delay: 0.36s; }
+	.mic-meter:not(.live) .mic-bar:nth-child(4) { animation-delay: 0.09s; }
+
+	@keyframes mic-eq {
+		0%, 100% { transform: scaleY(0.25); }
+		50% { transform: scaleY(0.9); }
+	}
+
+	.count-new { color: var(--info); }
+	.count-learning { color: var(--warning); }
+	.count-review { color: var(--success); }
+	.count-sep { color: var(--text-subtle); font-size: 0.75rem; }
 
 	.count.active {
 		text-decoration: underline;
@@ -1147,6 +1414,30 @@
 		max-width: 600px;
 		width: 100%;
 		text-align: center;
+		animation: pop var(--t-med) var(--ease);
+		transition: opacity var(--t-med) var(--ease);
+	}
+
+	.card-content.held {
+		opacity: 0.35;
+	}
+
+	.hold-pill {
+		position: absolute;
+		left: 50%;
+		top: 38%;
+		transform: translate(-50%, -50%);
+		background: var(--surface-elevated);
+		border: 1px solid var(--border);
+		border-radius: var(--r-pill);
+		box-shadow: var(--shadow-md);
+		color: var(--text-muted);
+		font-size: 0.9rem;
+		font-weight: 600;
+		padding: 0.55rem 1.1rem;
+		white-space: nowrap;
+		z-index: 1;
+		animation: pop var(--t-fast) var(--ease);
 	}
 
 	.question-text {
@@ -1164,7 +1455,7 @@
 	.answer-text {
 		font-size: 1.2rem;
 		margin: 0;
-		color: #aaddaa;
+		color: var(--text);
 		line-height: 1.5;
 	}
 
@@ -1213,19 +1504,43 @@
 	}
 
 	.question-text :global(.cloze-blank) {
-		color: #6699ff;
+		color: var(--info);
 		font-weight: 600;
 	}
 
 	.answer-text :global(.cloze-answer) {
-		color: #66ddaa;
+		color: var(--success);
 		font-weight: 700;
 	}
 
-	.waiting-text {
-		font-size: 1.2rem;
-		color: #ccaaff;
+	/* ========== Live Transcript Pill ========== */
+	.transcript-pill {
+		position: fixed;
+		left: 50%;
+		transform: translateX(-50%);
+		bottom: calc(128px + env(safe-area-inset-bottom, 0px));
+		max-width: min(90vw, 480px);
+		background: var(--surface-elevated);
+		border: 1px solid var(--border);
+		border-radius: var(--r-pill);
+		box-shadow: var(--shadow-sm);
+		color: var(--text);
+		font-size: 0.85rem;
+		line-height: 1.4;
+		padding: 0.4rem 0.9rem;
 		text-align: center;
+		z-index: 55;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+		overflow-wrap: anywhere;
+	}
+
+	.transcript-pill.interim {
+		color: var(--text-muted);
+		font-style: italic;
 	}
 
 	/* ========== Bottom Bar ========== */
@@ -1238,7 +1553,7 @@
 		flex-direction: column;
 		align-items: center;
 		padding: 0.5rem 1rem;
-		padding-bottom: 0.75rem;
+		padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
 		background: var(--bg);
 		border-top: 1px solid var(--border-muted);
 		z-index: 50;
@@ -1247,18 +1562,19 @@
 	.undo-link {
 		background: none;
 		border: none;
-		color: #8080a0;
+		color: var(--text-subtle);
 		cursor: pointer;
 		font-size: 0.75rem;
+		font-family: inherit;
 		margin-bottom: 0.3rem;
 		display: flex;
 		align-items: center;
 		gap: 0.3rem;
-		animation: fade-in 0.2s ease;
+		animation: fade-in var(--t-med) var(--ease);
 	}
 
 	.undo-link:hover {
-		color: #ffcc66;
+		color: var(--warning);
 	}
 
 	.bottom-actions {
@@ -1268,19 +1584,26 @@
 
 	.show-answer-btn {
 		width: 100%;
+		min-height: 44px;
 		padding: 0.9rem;
 		font-size: 1.05rem;
 		font-weight: 600;
+		font-family: inherit;
 		background: var(--primary);
-		color: #d0d0ff;
+		color: var(--text-on-primary);
 		border: none;
-		border-radius: 10px;
+		border-radius: var(--r-md);
 		cursor: pointer;
-		transition: filter 0.15s;
+		touch-action: manipulation;
+		transition: background var(--t-fast) var(--ease), transform 80ms var(--ease);
 	}
 
 	.show-answer-btn:hover {
-		filter: brightness(1.15);
+		background: var(--primary-hover);
+	}
+
+	.show-answer-btn:active {
+		transform: scale(0.97);
 	}
 
 	.interval-labels {
@@ -1288,13 +1611,19 @@
 		grid-template-columns: repeat(4, 1fr);
 		width: 100%;
 		max-width: 400px;
+		min-width: 0;
 		text-align: center;
 		margin-bottom: 0.2rem;
 	}
 
 	.interval {
-		font-size: 0.7rem;
-		color: #8080a0;
+		font-size: 0.65rem;
+		color: var(--text-subtle);
+		white-space: nowrap;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		padding: 0 2px;
 	}
 
 	.rating-buttons {
@@ -1306,32 +1635,60 @@
 	}
 
 	.rate-btn {
-		padding: 0.75rem 0;
-		border: none;
-		border-radius: 8px;
-		font-size: 0.9rem;
+		min-width: 0;
+		min-height: 44px;
+		padding: 0.7rem 0;
+		border: 1px solid transparent;
+		border-radius: var(--r-md);
+		font-size: 0.88rem;
 		font-weight: 600;
+		font-family: inherit;
 		cursor: pointer;
-		transition: filter 0.15s;
+		touch-action: manipulation;
+		transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease), transform 80ms var(--ease);
 	}
 
 	.rate-btn:hover {
-		filter: brightness(1.2);
+		border-color: currentColor;
 	}
 
-	.rate-btn.again { background: #4a2020; color: #ff8888; }
-	.rate-btn.hard { background: #4a3a20; color: #ffbb88; }
-	.rate-btn.good { background: #204a20; color: var(--success); }
-	.rate-btn.easy { background: #20204a; color: #88bbff; }
+	.rate-btn:active {
+		transform: scale(0.97);
+	}
+
+	.rate-btn.again {
+		background: var(--danger-tint);
+		color: var(--danger-soft);
+		border-color: var(--danger-border);
+	}
+
+	.rate-btn.hard {
+		background: var(--warning-tint);
+		color: var(--warning);
+		border-color: var(--warning-border);
+	}
+
+	.rate-btn.good {
+		background: var(--success-tint);
+		color: var(--success);
+		border-color: var(--success-border);
+	}
+
+	.rate-btn.easy {
+		background: var(--info-tint);
+		color: var(--info);
+		border-color: var(--info-border);
+	}
+
+	.rate-btn.again:hover,
+	.rate-btn.hard:hover,
+	.rate-btn.good:hover,
+	.rate-btn.easy:hover {
+		border-color: currentColor;
+	}
 
 	.rate-btn.voice-picked {
-		filter: brightness(1.8);
-		transition: filter 0.05s;
-	}
-
-	@keyframes fade-in {
-		from { opacity: 0; transform: translateY(-4px); }
-		to { opacity: 1; transform: translateY(0); }
+		box-shadow: 0 0 0 2px currentColor;
 	}
 
 	kbd {
@@ -1349,123 +1706,4 @@
 		kbd { display: none; }
 	}
 
-	/* ========== Keyboard Shortcuts Overlay ========== */
-	.shortcuts-backdrop {
-		position: fixed;
-		inset: 0;
-		background: rgba(0, 0, 0, 0.55);
-		border: 0;
-		padding: 0;
-		z-index: 200;
-		animation: fade-in 0.15s ease;
-	}
-
-	.shortcuts-overlay {
-		position: fixed;
-		top: 50%;
-		left: 50%;
-		transform: translate(-50%, -50%);
-		z-index: 201;
-		background: #1e1e38;
-		border: 1px solid var(--border);
-		border-radius: 14px;
-		padding: 1.25rem 1.5rem;
-		/* No min-width: at 320px viewport, 300px > calc(100vw - 2rem) (288px) and pushes the
-		   overlay past the right edge. Let the content (table + kbd labels) drive the width. */
-		max-width: min(480px, calc(100vw - 2rem));
-		max-height: calc(100vh - 4rem);
-		max-height: calc(100dvh - 4rem);
-		overflow-y: auto;
-		animation: overlay-pop 0.18s ease;
-	}
-
-	@keyframes overlay-pop {
-		from { opacity: 0; transform: translate(-50%, -48%); }
-		to { opacity: 1; transform: translate(-50%, -50%); }
-	}
-
-	.shortcuts-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-bottom: 1rem;
-	}
-
-	.shortcuts-title {
-		font-size: 1rem;
-		font-weight: 700;
-		color: #d0d0ff;
-	}
-
-	.shortcuts-close {
-		background: transparent;
-		border: none;
-		color: #8080a0;
-		cursor: pointer;
-		padding: 0.25rem;
-		border-radius: 4px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition: color 0.15s;
-	}
-
-	.shortcuts-close:hover {
-		color: #d0d0ff;
-	}
-
-	.shortcuts-table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: 0.875rem;
-		margin-bottom: 1.25rem;
-	}
-
-	.shortcuts-table td {
-		padding: 0.3rem 0;
-		vertical-align: middle;
-		color: #c0c0d8;
-	}
-
-	.shortcuts-table td:first-child {
-		white-space: nowrap;
-		padding-right: 1.25rem;
-		color: #d0d0ff;
-	}
-
-	.shortcuts-table tr + tr td {
-		border-top: 1px solid #2a2a48;
-		padding-top: 0.35rem;
-	}
-
-	.shortcuts-section-title {
-		font-size: 0.8rem;
-		font-weight: 700;
-		color: #8899cc;
-		text-transform: uppercase;
-		letter-spacing: 0.07em;
-		margin-bottom: 0.6rem;
-	}
-
-	.shortcuts-voice {
-		list-style: none;
-		padding: 0;
-		margin: 0;
-		font-size: 0.875rem;
-		color: var(--text-muted);
-	}
-
-	.shortcuts-voice li {
-		padding: 0.25rem 0;
-		border-top: 1px solid #2a2a48;
-	}
-
-	.shortcuts-voice li:first-child {
-		border-top: none;
-	}
-
-	/* On touch/mobile devices keep the overlay fully usable */
-	@media (hover: none), (max-width: 640px) {
-		.shortcuts-overlay kbd { display: inline; }
-	}
 </style>
