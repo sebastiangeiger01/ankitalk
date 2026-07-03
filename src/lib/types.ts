@@ -103,10 +103,7 @@ export type VoiceCommand =
 	| 'stop'
 	| 'explain'
 	| 'suspend'
-	| 'undo'
-	| 'slower'
-	| 'faster'
-	| 'normal_speed';
+	| 'undo';
 
 export type RatingName = 'again' | 'hard' | 'good' | 'easy';
 

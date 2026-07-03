@@ -90,8 +90,6 @@ export const de: Record<string, string> = {
 	'help.explainDesc': 'Tutor zur aufgedeckten Antwort fragen',
 	'help.stop': 'stopp / aufh\u00f6ren',
 	'help.stopDesc': 'Sitzung beenden',
-	'help.speed': 'langsamer / schneller',
-	'help.speedDesc': 'Sprechtempo anpassen',
 
 	// Review - Keyboard shortcuts overlay
 	'help.title': 'Hilfe & Befehle',
@@ -123,7 +121,6 @@ export const de: Record<string, string> = {
 	'review.showAnswer': 'Antwort zeigen',
 	'review.undo': 'R\u00fcckg\u00e4ngig',
 	'review.cardSuspended': 'Karte ausgesetzt',
-	'review.speedNotice': 'Tempo: {rate}\u00d7',
 	'review.waitingCard': 'Karte kommt in {seconds}s zur\u00fcck...',
 	'review.sessionProgress': 'Fortschritt der Sitzung',
 	'review.transcriptLabel': 'Live-Transkript',
@@ -135,10 +132,6 @@ export const de: Record<string, string> = {
 	'rating.easy': 'Einfach',
 
 	// Review - Session complete
-	'session.recapFast': 'Geschafft! {cards} Karten in unter zwei Minuten.',
-	'session.recapBase': 'Geschafft! {cards} Karten in {minutes} Minuten.',
-	'session.recapShaky': 'Schau dir nochmal an: {cards}.',
-	'session.recapPerfect': 'Alles auf Anhieb – starke Runde.',
 	'session.completeTitle': 'Sitzung abgeschlossen',
 	'session.cardsReviewed': 'Karten abgefragt',
 	'session.duration': 'Dauer',

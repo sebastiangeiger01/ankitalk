@@ -52,7 +52,6 @@
 				<li><strong>{$t('help.repeat')}</strong><span>{$t('help.repeatDesc')}</span></li>
 				<li><strong>{$t('help.explain')}</strong><span>{$t('help.explainDesc')}</span></li>
 				<li><strong>{$t('help.hint')}</strong><span>{$t('help.hintDesc')}</span></li>
-				<li><strong>{$t('help.speed')}</strong><span>{$t('help.speedDesc')}</span></li>
 				<li><strong>{$t('help.stop')}</strong><span>{$t('help.stopDesc')}</span></li>
 			</ul>
 

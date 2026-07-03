@@ -1,4 +1,4 @@
-import { speak, stopPlayback, getLastSpokenText, playSound, preloadTTS, clearAudioCache, getSpeechRate, setSpeechRate } from './audio';
+import { speak, stopPlayback, getLastSpokenText, playSound, preloadTTS, clearAudioCache } from './audio';
 import { createDeepgramClient } from './deepgram';
 import { createElevenLabsClient } from './elevenlabs';
 import type { SpeechClient } from './speech';
@@ -55,18 +55,12 @@ export type ReviewEvent =
 	| { type: 'audio_change'; audioOn: boolean }
 	| { type: 'learning_due'; waitMs: number }
 	| { type: 'card_suspended'; cardId: string }
-	| { type: 'speech_rate'; rate: number }
 	| { type: 'counts'; counts: QueueCounts };
 
 export interface SessionStats {
 	cardsReviewed: number;
 	ratings: Record<RatingName, number>;
 	durationMs: number;
-	/**
-	 * Plain-text fronts of the cards rated Again this session (unique, insertion order).
-	 * Feeds the spoken session recap ("still shaky: …") on the summary screen.
-	 */
-	shakyFronts: string[];
 }
 
 interface CardData {
@@ -202,8 +196,7 @@ export function createReviewEngine(): ReviewEngine {
 	const stats: SessionStats = {
 		cardsReviewed: 0,
 		ratings: { again: 0, hard: 0, good: 0, easy: 0 },
-		durationMs: 0,
-		shakyFronts: []
+		durationMs: 0
 	};
 
 	function emit(event: ReviewEvent) {
@@ -455,22 +448,6 @@ export function createReviewEngine(): ReviewEngine {
 				// Handled by the review page's ElevenLabs tutor UI.
 				break;
 
-			case 'slower':
-			case 'faster':
-			case 'normal_speed': {
-				// Client-side playbackRate: instant, free, no re-synthesis. Replaying the
-				// last line right away is the audible confirmation the pace changed.
-				const step = command === 'faster' ? 0.2 : -0.2;
-				const next = command === 'normal_speed'
-					? 1
-					: Math.round(Math.min(1.8, Math.max(0.6, getSpeechRate() + step)) * 10) / 10;
-				setSpeechRate(next);
-				emit({ type: 'speech_rate', rate: next });
-				const lastSpoken = getLastSpokenText();
-				if (lastSpoken) speakText(lastSpoken);
-				break;
-			}
-
 			case 'suspend':
 				handleSuspend();
 				break;
@@ -521,9 +498,6 @@ export function createReviewEngine(): ReviewEngine {
 		// Optimistic bookkeeping — postReview rolls it back if the write fails.
 		stats.cardsReviewed++;
 		stats.ratings[rating]++;
-		if (rating === 'again' && card.front && !stats.shakyFronts.includes(card.front)) {
-			stats.shakyFronts.push(card.front);
-		}
 		studiedNoteIds.add(card.note_id);
 
 		const write = () => postReview(card, rating, durationMs, gen);
@@ -638,10 +612,6 @@ export function createReviewEngine(): ReviewEngine {
 			// The card stays due and comes back next session; siblings unblock again.
 			stats.cardsReviewed = Math.max(0, stats.cardsReviewed - 1);
 			stats.ratings[rating] = Math.max(0, stats.ratings[rating] - 1);
-			if (rating === 'again') {
-				const idx = stats.shakyFronts.indexOf(card.front);
-				if (idx !== -1) stats.shakyFronts.splice(idx, 1);
-			}
 			studiedNoteIds.delete(card.note_id);
 			if (!sessionFinished) {
 				emit({ type: 'error', message: 'Failed to save review — the card stays due' });
@@ -685,10 +655,6 @@ export function createReviewEngine(): ReviewEngine {
 		// Revert stats
 		stats.cardsReviewed = Math.max(0, stats.cardsReviewed - 1);
 		stats.ratings[rating] = Math.max(0, stats.ratings[rating] - 1);
-		if (rating === 'again') {
-			const idx = stats.shakyFronts.indexOf(card.front);
-			if (idx !== -1) stats.shakyFronts.splice(idx, 1);
-		}
 		cardsReviewedCount--;
 		studiedNoteIds.delete(card.note_id);
 
@@ -783,7 +749,6 @@ export function createReviewEngine(): ReviewEngine {
 		stats.cardsReviewed = 0;
 		stats.ratings = { again: 0, hard: 0, good: 0, easy: 0 };
 		stats.durationMs = 0;
-		stats.shakyFronts = [];
 
 		// Microphone setup is optional and must not block cards.
 		try {

@@ -43,30 +43,8 @@ function getAudioElement(): HTMLAudioElement {
 	if (!audioElement) {
 		audioElement = new Audio();
 		audioElement.preload = 'auto';
-		// Keep pitch natural when the speech rate is changed (default in modern
-		// browsers, but Safari needs the prefixed property).
-		audioElement.preservesPitch = true;
-		(audioElement as HTMLAudioElement & { webkitPreservesPitch?: boolean }).webkitPreservesPitch = true;
 	}
 	return audioElement;
-}
-
-/**
- * Client-side speech pace ("slower"/"faster" voice commands). Applied as
- * playbackRate on the shared element — free and instant, no re-synthesis and no
- * extra provider credits, unlike the server-side elevenlabs_tts_speed setting.
- * Chimes always play at 1× (playSource resets the rate for non-speech clips).
- */
-let speechRate = 1;
-let speechClipActive = false;
-
-export function setSpeechRate(rate: number): void {
-	speechRate = rate;
-	if (speechClipActive && audioElement) audioElement.playbackRate = rate;
-}
-
-export function getSpeechRate(): number {
-	return speechRate;
 }
 
 function cacheKey(text: string, voice?: string, speed?: number): string {
@@ -189,15 +167,11 @@ function mediaState(player: HTMLAudioElement): string {
 	return `readyState=${player.readyState}, networkState=${player.networkState}`;
 }
 
-function playSource(src: string, onPlaybackStart?: () => void, objectUrl?: string, sourceInfo?: string, speech = false): Promise<void> {
+function playSource(src: string, onPlaybackStart?: () => void, objectUrl?: string, sourceInfo?: string): Promise<void> {
 	stopCurrentPlayback();
 	const player = getAudioElement();
 	player.src = src;
 	player.load();
-	// After load(): loading a new source resets playbackRate to defaultPlaybackRate.
-	speechClipActive = speech;
-	player.defaultPlaybackRate = speech ? speechRate : 1;
-	player.playbackRate = speech ? speechRate : 1;
 
 	return new Promise<void>((resolve, reject) => {
 		let settled = false;
@@ -314,7 +288,7 @@ export async function speak(text: string, voice?: string, speed?: number, onPlay
 
 	const objectUrl = URL.createObjectURL(audio);
 	try {
-		await playSource(objectUrl, onPlaybackStart, objectUrl, `${mime}, ${audio.size} bytes, canPlayType=${support}`, true);
+		await playSource(objectUrl, onPlaybackStart, objectUrl, `${mime}, ${audio.size} bytes, canPlayType=${support}`);
 	} finally {
 		if (currentAbort === abort) currentAbort = null;
 	}
