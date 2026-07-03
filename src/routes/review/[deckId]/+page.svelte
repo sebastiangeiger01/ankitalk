@@ -152,6 +152,9 @@
 			tutorPausedReviewMic = true;
 			engine.toggleMic();
 		}
+		// Stop the card audio so it doesn't keep talking underneath the tutor.
+		// (Not resumed on close — "wiederholen" re-reads the card if needed.)
+		engine.interruptSpeech();
 		agentIntent = intent;
 		agentChatOpen = true;
 	}

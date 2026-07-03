@@ -126,6 +126,11 @@ export interface ReviewEngine {
 	executeCommand(command: VoiceCommand): void;
 	toggleMic(): void;
 	toggleAudio(): void;
+	/**
+	 * Stop any in-flight card audio without changing the audioOn setting — used when
+	 * the tutor opens so the card voice doesn't talk over the conversation.
+	 */
+	interruptSpeech(): void;
 	undo(): void;
 	/**
 	 * The live STT microphone stream, when the speech client exposes one. Used by the UI
@@ -899,6 +904,15 @@ export function createReviewEngine(): ReviewEngine {
 		emit({ type: 'audio_change', audioOn });
 	}
 
+	function interruptSpeech() {
+		// Bumping the speak generation (via interruptTTS) also suppresses the stopped
+		// clip's finish chime and its trailing listening/idle emit.
+		interruptTTS();
+		if (destroyed || sessionFinished) return;
+		if (micOn) emit({ type: 'listening' });
+		else emit({ type: 'idle' });
+	}
+
 	return {
 		start(deckId: string, options?: StartOptions) {
 			return start(deckId, options);
@@ -912,6 +926,7 @@ export function createReviewEngine(): ReviewEngine {
 		},
 		toggleMic,
 		toggleAudio,
+		interruptSpeech,
 		undo() {
 			performUndo();
 		},
