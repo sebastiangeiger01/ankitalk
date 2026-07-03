@@ -1348,12 +1348,12 @@
 	}
 
 	.section-nav a {
+		position: relative;
 		flex: 0 0 auto;
 		display: inline-flex;
 		align-items: center;
 		min-height: 44px;
-		padding: 0.35rem 0.9rem;
-		border: 1px solid transparent;
+		padding: 0 0.9rem;
 		border-radius: var(--r-pill);
 		font-size: 0.85rem;
 		font-weight: 600;
@@ -1361,10 +1361,7 @@
 		text-decoration: none;
 		white-space: nowrap;
 		touch-action: manipulation;
-		transition:
-			color var(--t-fast) var(--ease),
-			background var(--t-fast) var(--ease),
-			border-color var(--t-fast) var(--ease);
+		transition: color var(--t-fast) var(--ease);
 	}
 
 	.section-nav a:hover {
@@ -1373,8 +1370,23 @@
 
 	.section-nav a.active {
 		color: var(--text);
+	}
+
+	/* 44px tap target, but the visible highlight is a slimmer pill behind the label —
+	   a full-height background makes the whole bar read oversized (same as the app nav). */
+	.section-nav a.active::before {
+		content: '';
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 50%;
+		height: 30px;
+		box-sizing: border-box;
+		transform: translateY(-50%);
+		border: 1px solid var(--border);
+		border-radius: var(--r-pill);
 		background: var(--surface-elevated);
-		border-color: var(--border);
+		z-index: -1;
 	}
 
 	/* Grouped iOS-Settings-style cards; .card (app.css) supplies surface/border/radius.
