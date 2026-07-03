@@ -130,12 +130,15 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 		throw error(413, `Text too long (max ${MAX_TTS_TEXT_CHARS} characters)`);
 	}
 
-	const provider = voiceSettings.voice_provider;
+	const provider = voiceSettings.tts_provider;
 	const ttsModel = provider === 'elevenlabs' ? voiceSettings.elevenlabs_tts_model : 'tts-1';
 	const ttsVoice = provider === 'elevenlabs' ? voiceSettings.elevenlabs_voice_id : (voice ?? 'nova');
 	// For ElevenLabs the per-request `speed`/tuning live in the user's saved settings,
 	// so fold them into the cache key — otherwise changing them would serve stale audio.
 	const cacheSpeed = provider === 'elevenlabs' ? voiceSettings.elevenlabs_tts_speed : speed;
+	// OpenAI clips were historically keyed under the combined 'openai_deepgram' provider
+	// label; keep that string so existing cached audio isn't re-billed after the split.
+	const cacheProvider = provider === 'openai' ? 'openai_deepgram' : provider;
 	const cacheExtra = provider === 'elevenlabs'
 		? JSON.stringify([
 			voiceSettings.elevenlabs_stability,
@@ -147,7 +150,7 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 	// Identity of this exact clip — encodes every synthesis parameter (incl. the user) so
 	// different voices/speeds/tunings never collide. Same key for the edge cache and R2.
 	const hash = await ttsHash(
-		makeTtsCachePayload(userId, text, provider, ttsModel, ttsVoice, cacheSpeed ?? 1.0, cacheExtra)
+		makeTtsCachePayload(userId, text, cacheProvider, ttsModel, ttsVoice, cacheSpeed ?? 1.0, cacheExtra)
 	);
 
 	// An active exam pin routes this clip to the long-retention R2 prefix and keeps it refreshed.
@@ -307,7 +310,7 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 						: undefined;
 				await Promise.all([
 					recordCacheEvent(db, userId, eventStatus, text.length, hash).catch(() => undefined),
-					logUsage(db, userId, provider === 'elevenlabs' ? 'elevenlabs' : 'openai', 'tts', text.length, cost).catch(() => undefined),
+					logUsage(db, userId, provider, 'tts', text.length, cost).catch(() => undefined),
 					bucket && eventStatus === 'miss' ? recordCachedAudio(db, userId, hash, bytes.byteLength, deckPinned).catch(() => undefined) : undefined,
 					edgeWrite?.catch(() => undefined)
 				]);

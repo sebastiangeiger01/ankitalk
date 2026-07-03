@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { onDestroy } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import { createReviewEngine, type ReviewEvent, type SessionStats, type StartOptions, type IntervalLabels, type QueueCounts, type PrefetchedCards } from '$lib/client/review-engine';
 	import { preloadTTS, unlockAudioForGesture } from '$lib/client/audio';
@@ -62,12 +62,16 @@
 	let shortcutsOpen = $state(false);
 	let prefetchedCards = $state<PrefetchedCards | null>(null);
 	let reviewPrepared = $state(false);
+	// True while startReview awaits the mic permission — keeps the Start button from
+	// double-firing while the browser's permission prompt is up.
+	let startingReview = $state(false);
 	let highlightRating = $state<string>('');
 	let highlightTimer: ReturnType<typeof setTimeout> | null = null;
 	type ApiKeyStatus = { openai: boolean; deepgram: boolean; anthropic: boolean; elevenlabs: boolean };
 	let keyStatus = $state<ApiKeyStatus | null>(null);
 	let voiceSettings = $state<UserVoiceSettings>({
-		voice_provider: 'elevenlabs',
+		tts_provider: 'elevenlabs',
+		stt_provider: 'elevenlabs',
 		voice_command_language: 'en',
 		elevenlabs_voice_id: 'JBFqnCBsd6RMkjVDRZzb',
 		elevenlabs_tts_model: 'eleven_flash_v2_5',
@@ -81,11 +85,10 @@
 	});
 	let keyStatusLoading = $state(true);
 
+	// TTS and STT providers are chosen independently; each one needs its own key.
 	const missingRequiredKeys = $derived(
 		keyStatus !== null &&
-		(voiceSettings.voice_provider === 'openai_deepgram'
-			? (!keyStatus.openai || !keyStatus.deepgram)
-			: !keyStatus.elevenlabs)
+		(!keyStatus[voiceSettings.tts_provider] || !keyStatus[voiceSettings.stt_provider])
 	);
 
 	// The prepare step already fetched the due queue: an empty card list (with no cram
@@ -336,13 +339,39 @@
 		}
 	});
 
+	/**
+	 * Resolve the mic permission before any card audio plays. iOS pauses the page's audio
+	 * while its permission popup is up (and after granting), so letting the STT client
+	 * trigger the prompt mid-session used to cut off the first card's TTS. The throwaway
+	 * stream is stopped immediately — the speech client acquires its own.
+	 */
+	async function ensureMicPermission(): Promise<boolean> {
+		try {
+			const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+			stream.getTracks().forEach((track) => track.stop());
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
 	async function startReview() {
+		if (startingReview) return;
+		startingReview = true;
 		// Bless the shared media element inside this gesture so the first card can be fetched
 		// after the click and still play on iOS — this is why Start no longer waits for a TTS
-		// round trip before it enables.
+		// round trip before it enables. Must run synchronously, before the first await.
 		unlockAudioForGesture();
-		started = true;
 		errorMsg = '';
+		if (micOn && !(await ensureMicPermission())) {
+			// No mic permission: start the session muted instead of failing mid-session.
+			micOn = false;
+			errorMsg = $t('review.micUnavailable');
+			if (errorTimer) clearTimeout(errorTimer);
+			errorTimer = setTimeout(() => { errorMsg = ''; }, 6000);
+		}
+		startingReview = false;
+		started = true;
 		document.body.classList.add('review-active');
 		// Warm the tutor's WebRTC bundle now (after deck-open paint, during the session) so it's
 		// parsed by the time the user opens the tutor — without weighing down deck open itself.
@@ -358,8 +387,10 @@
 			options.prefetchedCards = prefetchedCards;
 		}
 		options.sttLanguage = sttLanguageForVoiceCommandLanguage(voiceSettings.voice_command_language);
-		options.voiceProvider = voiceSettings.voice_provider;
+		options.sttProvider = voiceSettings.stt_provider;
 		options.prepareAudioAhead = getPrepareAudioAhead();
+		options.micOn = micOn;
+		options.audioOn = audioOn;
 		try {
 			await engine.start(deckId!, options);
 		} catch {
@@ -464,10 +495,13 @@
 
 	// Prefetch cards + deck name on mount so engine.start() is instant
 	$effect(() => {
+		// Read the locale without subscribing: this effect must run once on mount, not
+		// refetch keys/settings/cards every time the user switches language.
+		const currentLocale = untrack(() => $locale);
 		// Check API key status first
 		Promise.all([
 			fetch('/api/settings/api-keys').then((r) => r.ok ? r.json() : null),
-			fetch(`/api/settings/voice?locale=${encodeURIComponent($locale)}`).then((r) => r.ok ? r.json() : null)
+			fetch(`/api/settings/voice?locale=${encodeURIComponent(currentLocale)}`).then((r) => r.ok ? r.json() : null)
 		])
 			.then(([keys, voice]) => {
 				if (keys) keyStatus = keys as ApiKeyStatus;
@@ -482,17 +516,14 @@
 			.catch(() => {})
 			.finally(() => { keyStatusLoading = false; });
 
-		fetch(`/api/decks/${deckId}`)
-			.then((r) => r.json())
-			.then((data) => { deckName = (data as { deck: { name: string } }).deck.name; })
-			.catch(() => {});
-
-		// Prefetch the full card set (reused by engine.start to skip duplicate fetch)
+		// Prefetch the full card set (reused by engine.start to skip duplicate fetch).
+		// It also carries deckName, so no separate /api/decks/[id] request is needed.
 		fetch(`/api/cards/next?${new URLSearchParams({ deckId: deckId!, limit: '50' })}`)
 			.then((r) => r.ok ? r.json() : null)
 			.then((data) => {
 				if (!data) { reviewPrepared = true; return; }
 				prefetchedCards = data as PrefetchedCards;
+				if (prefetchedCards.deckName) deckName = prefetchedCards.deckName;
 				// Enable Start the moment the cards are here — no longer blocked on a TTS round
 				// trip. The first card's front is still preloaded in the background so playback is
 				// instant when it lands; if the user clicks Start before it does, the
@@ -539,7 +570,7 @@
 			</div>
 			<h2>{$t('review.missingKeys')}</h2>
 			<p>{$t('review.missingKeysDetail')}</p>
-			<a href="/settings" class="settings-btn">{$t('review.goToSettings')}</a>
+			<a href="/settings" class="btn-primary">{$t('review.goToSettings')}</a>
 		</div>
 	</div>
 {:else if !started}
@@ -565,10 +596,38 @@
 					<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
 					<p class="nothing-due-title">{$t('review.nothingDueTitle')}</p>
 					<p class="nothing-due-hint">{$t('review.nothingDueHint')}</p>
-					<a href="/" class="btn-secondary">{$t('session.backToDashboard')}</a>
+					<div class="nothing-due-actions">
+						<a href="/" class="btn-secondary">{$t('session.backToDashboard')}</a>
+						<!-- Direct path to cram: without it, keeping on studying requires spotting
+						     the cram checkbox further down — undiscoverable when the Start button is gone. -->
+						<button class="btn-ghost" onclick={() => cramMode = true}>{$t('review.cramAnyway')}</button>
+					</div>
 				</div>
 			{:else}
-				<button class="start-btn" onclick={startReview} disabled={!reviewPrepared} aria-busy={!reviewPrepared}>{!reviewPrepared ? $t('common.loading') : cramMode ? $t('review.startCram') : $t('review.startReview')}</button>
+				<button class="start-btn" onclick={startReview} disabled={!reviewPrepared || startingReview} aria-busy={!reviewPrepared || startingReview}>{!reviewPrepared ? $t('common.loading') : cramMode ? $t('review.startCram') : $t('review.startReview')}</button>
+
+				<!-- Pre-session mute toggles: start silently in a library, or listen-only on a walk.
+				     Mic off also means the session begins without any microphone prompt at all. -->
+				<div class="start-toggles" role="group" aria-label={$t('review.startTogglesLabel')}>
+					<button class="start-toggle" class:off={!audioOn} onclick={() => audioOn = !audioOn} aria-pressed={audioOn}>
+						{#if audioOn}
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+							<span>{$t('review.startAudioOn')}</span>
+						{:else}
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+							<span>{$t('review.startAudioOff')}</span>
+						{/if}
+					</button>
+					<button class="start-toggle" class:off={!micOn} onclick={() => micOn = !micOn} aria-pressed={micOn}>
+						{#if micOn}
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+							<span>{$t('review.startMicOn')}</span>
+						{:else}
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.5-.36 2.18"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+							<span>{$t('review.startMicOff')}</span>
+						{/if}
+					</button>
+				</div>
 			{/if}
 
 			<div class="review-options">
@@ -698,12 +757,12 @@
 			{/if}
 		</div>
 		<div class="top-right">
-			<div class="counts">
-				<span class="count count-new" class:active={cardState === 'new'}>{counts.new}</span>
-				<span class="count-sep">+</span>
-				<span class="count count-learning" class:active={cardState === 'learning'}>{counts.learning}</span>
-				<span class="count-sep">+</span>
-				<span class="count count-review" class:active={cardState === 'review'}>{counts.review}</span>
+			<div class="counts" role="status" aria-label="{counts.new} {$t('state.new')}, {counts.learning} {$t('state.learning')}, {counts.review} {$t('state.review')}">
+				<span class="count count-new" class:active={cardState === 'new'} title={$t('state.new')}>{counts.new}</span>
+				<span class="count-sep" aria-hidden="true">+</span>
+				<span class="count count-learning" class:active={cardState === 'learning'} title={$t('state.learning')}>{counts.learning}</span>
+				<span class="count-sep" aria-hidden="true">+</span>
+				<span class="count count-review" class:active={cardState === 'review'} title={$t('state.review')}>{counts.review}</span>
 			</div>
 			<button class="toolbar-btn stop" onclick={() => engine.executeCommand('stop')} title="{$t('review.stop')} (Esc)" aria-label={$t('review.stop')}>
 				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -808,24 +867,6 @@
 		line-height: 1.6;
 		margin: 0;
 		max-width: 360px;
-	}
-
-	.settings-btn {
-		display: inline-block;
-		margin-top: 0.5rem;
-		padding: 0.75rem 1.75rem;
-		background: var(--primary);
-		color: var(--text-on-primary);
-		border: none;
-		border-radius: var(--r-md);
-		font-size: 1rem;
-		font-weight: 600;
-		text-decoration: none;
-		transition: background var(--t-fast) var(--ease);
-	}
-
-	.settings-btn:hover {
-		background: var(--primary-hover);
 	}
 
 	/* ========== Start Screen ========== */
@@ -949,6 +990,54 @@
 		color: var(--text-muted);
 		line-height: 1.5;
 		margin: 0 0 0.5rem;
+	}
+
+	.nothing-due-actions {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 0.5rem;
+	}
+
+	.start-toggles {
+		display: flex;
+		justify-content: center;
+		gap: 0.6rem;
+		margin: -0.25rem 0 0.5rem;
+	}
+
+	.start-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		min-height: 44px;
+		padding: 0.5rem 1rem;
+		background: transparent;
+		border: 1px solid var(--border);
+		border-radius: var(--r-pill);
+		color: var(--text-muted);
+		font-size: 0.875rem;
+		font-family: inherit;
+		font-weight: 500;
+		cursor: pointer;
+		touch-action: manipulation;
+		transition: border-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+	}
+
+	.start-toggle:hover {
+		border-color: var(--border-strong);
+		color: var(--text);
+	}
+
+	.start-toggle.off {
+		color: var(--danger-soft);
+		border-color: var(--danger-border);
+		background: var(--danger-tint);
+	}
+
+	.start-toggle:focus-visible {
+		outline: 2px solid var(--focus-ring);
+		outline-offset: 2px;
 	}
 
 	.review-options {

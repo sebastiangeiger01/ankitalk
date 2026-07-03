@@ -54,6 +54,14 @@
 				<li><strong>{$t('help.hint')}</strong><span>{$t('help.hintDesc')}</span></li>
 				<li><strong>{$t('help.stop')}</strong><span>{$t('help.stopDesc')}</span></li>
 			</ul>
+
+			<!-- Legend for the colored counts triple in the session toolbar -->
+			<div class="help-section-title help-section-title--queue">{$t('help.queueTitle')}</div>
+			<ul class="help-voice">
+				<li><strong class="queue-chip queue-chip--new">{$t('state.new')}</strong><span>{$t('help.queueNewDesc')}</span></li>
+				<li><strong class="queue-chip queue-chip--learning">{$t('state.learning')}</strong><span>{$t('help.queueLearningDesc')}</span></li>
+				<li><strong class="queue-chip queue-chip--review">{$t('state.review')}</strong><span>{$t('help.queueReviewDesc')}</span></li>
+			</ul>
 		</div>
 	</div>
 {/if}
@@ -185,6 +193,24 @@
 	.help-voice strong {
 		color: var(--text);
 		font-weight: 600;
+	}
+
+	.help-section-title--queue {
+		margin-top: 1.4rem;
+	}
+
+	/* Match the toolbar count colors (new=info, learning=warning, review=success).
+	   Scoped under .help-voice to out-rank its `strong { color: var(--text) }`. */
+	.help-voice strong.queue-chip--new {
+		color: var(--info);
+	}
+
+	.help-voice strong.queue-chip--learning {
+		color: var(--warning);
+	}
+
+	.help-voice strong.queue-chip--review {
+		color: var(--success);
 	}
 
 	kbd {

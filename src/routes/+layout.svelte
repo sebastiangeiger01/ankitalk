@@ -86,6 +86,9 @@
 	}
 
 	.nav-tab {
+		display: inline-flex;
+		align-items: center;
+		min-height: 44px;
 		color: var(--text-muted);
 		text-decoration: none;
 		font-weight: 600;

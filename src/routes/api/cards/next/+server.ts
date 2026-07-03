@@ -168,11 +168,11 @@ export const GET: RequestHandler = async ({ url, platform, locals }) => {
 
 	const now = new Date().toISOString();
 
-	// Load deck settings for FSRS scheduler + learning steps
+	// Load deck settings once: FSRS scheduler + learning steps + daily limits.
 	const fsrsSettings = await db
-		.prepare('SELECT desired_retention, max_interval, learning_steps, relearning_steps FROM deck_settings WHERE deck_id = ?')
+		.prepare('SELECT desired_retention, max_interval, learning_steps, relearning_steps, new_cards_per_day, max_reviews_per_day FROM deck_settings WHERE deck_id = ?')
 		.bind(deckId)
-		.first<{ desired_retention: number; max_interval: number; learning_steps: string; relearning_steps: string }>();
+		.first<{ desired_retention: number; max_interval: number; learning_steps: string; relearning_steps: string; new_cards_per_day: number; max_reviews_per_day: number }>();
 
 	const scheduler = fsrs({
 		request_retention: fsrsSettings?.desired_retention ?? 0.9,
@@ -217,25 +217,21 @@ export const GET: RequestHandler = async ({ url, platform, locals }) => {
 	}
 
 	// Normal mode
-	// Load deck settings (or use defaults)
-	const settings = await db
-		.prepare('SELECT new_cards_per_day, max_reviews_per_day FROM deck_settings WHERE deck_id = ?')
-		.bind(deckId)
-		.first<{ new_cards_per_day: number; max_reviews_per_day: number }>();
-
-	const newPerDay = settings?.new_cards_per_day ?? 20;
-	const maxReviews = settings?.max_reviews_per_day ?? 200;
+	const newPerDay = fsrsSettings?.new_cards_per_day ?? 20;
+	const maxReviews = fsrsSettings?.max_reviews_per_day ?? 200;
 
 	// Count today's completions (since 4 AM UTC)
 	const dayStart = todayStart();
 
+	// Count by the card's state AT REVIEW TIME (prev_fsrs_state), not its current state:
+	// a reviewed new card is state 1/2 by the next fetch, so joining on cards.fsrs_state
+	// made new_done ~0 forever and handed out a fresh new-card batch every session.
 	const counts = await db
 		.prepare(
 			`SELECT
-				SUM(CASE WHEN c.fsrs_state = 0 THEN 1 ELSE 0 END) as new_done,
-				SUM(CASE WHEN c.fsrs_state = 2 THEN 1 ELSE 0 END) as review_done
+				SUM(CASE WHEN r.prev_fsrs_state = 0 THEN 1 ELSE 0 END) as new_done,
+				SUM(CASE WHEN r.prev_fsrs_state = 2 THEN 1 ELSE 0 END) as review_done
 			FROM reviews r
-			JOIN cards c ON c.id = r.card_id
 			WHERE r.deck_id = ? AND r.user_id = ? AND r.created_at >= ?`
 		)
 		.bind(deckId, locals.userId, dayStart)
