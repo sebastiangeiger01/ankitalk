@@ -343,18 +343,25 @@
 	});
 
 	/**
-	 * Resolve the mic permission before any card audio plays. iOS pauses the page's audio
-	 * while its permission popup is up (and after granting), so letting the STT client
-	 * trigger the prompt mid-session used to cut off the first card's TTS. The throwaway
-	 * stream is stopped immediately — the speech client acquires its own.
+	 * Acquire the microphone inside the Start tap — before any card audio plays. iOS
+	 * pauses the page's audio while its permission popup is up (and after granting), so
+	 * letting the STT client trigger the prompt mid-session used to cut off the first
+	 * card's TTS. The stream is KEPT and handed to the STT client via StartOptions:
+	 * stopping it and re-acquiring moments later can yield a muted second stream on iOS
+	 * (the recorder then sends nothing and Deepgram closes with net0001). Same
+	 * constraints as the STT clients so the handed-off stream is a drop-in.
 	 */
-	async function ensureMicPermission(): Promise<boolean> {
+	async function acquireMicStream(): Promise<MediaStream | null> {
 		try {
-			const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-			stream.getTracks().forEach((track) => track.stop());
-			return true;
+			return await navigator.mediaDevices.getUserMedia({
+				audio: {
+					echoCancellation: true,
+					noiseSuppression: true,
+					autoGainControl: true
+				}
+			});
 		} catch {
-			return false;
+			return null;
 		}
 	}
 
@@ -366,12 +373,16 @@
 		// round trip before it enables. Must run synchronously, before the first await.
 		unlockAudioForGesture();
 		errorMsg = '';
-		if (micOn && !(await ensureMicPermission())) {
-			// No mic permission: start the session muted instead of failing mid-session.
-			micOn = false;
-			errorMsg = $t('review.micUnavailable');
-			if (errorTimer) clearTimeout(errorTimer);
-			errorTimer = setTimeout(() => { errorMsg = ''; }, 6000);
+		let micStream: MediaStream | null = null;
+		if (micOn) {
+			micStream = await acquireMicStream();
+			if (!micStream) {
+				// No mic permission: start the session muted instead of failing mid-session.
+				micOn = false;
+				errorMsg = $t('review.micUnavailable');
+				if (errorTimer) clearTimeout(errorTimer);
+				errorTimer = setTimeout(() => { errorMsg = ''; }, 6000);
+			}
 		}
 		startingReview = false;
 		started = true;
@@ -402,6 +413,7 @@
 		options.prepareAudioAhead = getPrepareAudioAhead();
 		options.micOn = micOn;
 		options.audioOn = audioOn;
+		if (micStream) options.micStream = micStream;
 		try {
 			await engine.start(deckId!, options);
 		} catch {
