@@ -71,6 +71,7 @@ export const en: Record<string, string> = {
 	'review.startMicOn': 'Microphone on',
 	'review.startMicOff': 'Microphone off',
 	'review.micUnavailable': 'Microphone unavailable — the session starts muted.',
+	'review.audioMutedNotice': 'Audio is muted — tap the speaker icon to hear your cards.',
 	'review.nothingDueTitle': 'All caught up',
 	'review.nothingDueHint': 'No cards are due right now. Come back later, or keep practicing in cram mode.',
 	'review.missingKeys': 'You need API keys to start reviewing.',

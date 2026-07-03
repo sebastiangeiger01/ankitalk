@@ -71,6 +71,7 @@ export const de: Record<string, string> = {
 	'review.startMicOn': 'Mikrofon an',
 	'review.startMicOff': 'Mikrofon aus',
 	'review.micUnavailable': 'Mikrofon nicht verfügbar – die Sitzung startet stummgeschaltet.',
+	'review.audioMutedNotice': 'Audio ist stumm – tippe auf das Lautsprecher-Symbol, um deine Karten zu hören.',
 	'review.nothingDueTitle': 'Alles gelernt',
 	'review.nothingDueHint': 'Gerade ist keine Karte fällig. Schau später wieder vorbei – oder übe weiter im Paukmodus.',
 	'review.missingKeys': 'Du benötigst API-Schlüssel, um mit der Wiederholung zu beginnen.',

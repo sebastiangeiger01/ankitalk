@@ -375,6 +375,14 @@
 		}
 		startingReview = false;
 		started = true;
+		// A muted session is otherwise a mystery: cards advance in complete silence with
+		// no error. Surface the state once so a mute left over from an earlier session
+		// (the PWA keeps page state alive for days) explains itself.
+		if (!audioOn) {
+			suspendedNotice = $t('review.audioMutedNotice');
+			if (suspendedTimer) clearTimeout(suspendedTimer);
+			suspendedTimer = setTimeout(() => { suspendedNotice = ''; }, 5000);
+		}
 		document.body.classList.add('review-active');
 		// Warm the tutor's WebRTC bundle now (after deck-open paint, during the session) so it's
 		// parsed by the time the user opens the tutor — without weighing down deck open itself.
