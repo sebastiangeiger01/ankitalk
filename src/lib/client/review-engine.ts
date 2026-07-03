@@ -117,6 +117,13 @@ export interface StartOptions {
 	micOn?: boolean;
 	/** Start the session with card audio muted. */
 	audioOn?: boolean;
+	/**
+	 * A mic stream already acquired inside the Start tap (for the permission fix).
+	 * Handed to the STT client instead of re-acquiring: on iOS, a second getUserMedia
+	 * right after stopping the first can come up muted — the recorder then sends no
+	 * audio and Deepgram closes the socket (net0001). The engine owns it from here.
+	 */
+	micStream?: MediaStream;
 }
 
 export interface ReviewEngine {
@@ -723,9 +730,9 @@ export function createReviewEngine(): ReviewEngine {
 		emit({ type: 'session_end', stats });
 	}
 
-	function startListening(client: SpeechClient) {
+	function startListening(client: SpeechClient, micStream?: MediaStream) {
 		speechStarted = true;
-		void client.start().catch((err: unknown) => {
+		void client.start(micStream).catch((err: unknown) => {
 			if (destroyed || sessionFinished || speechClient !== client) return;
 			client.stop();
 			micOn = false;
@@ -772,8 +779,12 @@ export function createReviewEngine(): ReviewEngine {
 			client.onError((err) => {
 				emit({ type: 'error', message: err.message });
 			});
-			if (micOn) startListening(client);
+			if (micOn) startListening(client, options?.micStream);
+			else options?.micStream?.getTracks().forEach((track) => track.stop());
 		} catch (err) {
+			// The client never adopted the handed-in stream — release it here so the
+			// browser's mic indicator doesn't stay lit on a failed setup.
+			options?.micStream?.getTracks().forEach((track) => track.stop());
 			speechClient = null;
 			micOn = false;
 			emit({ type: 'mic_change', micOn: false });

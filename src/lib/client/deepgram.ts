@@ -18,7 +18,11 @@ export function createDeepgramClient(options?: DeepgramOptions): SpeechClient {
 	let paused = false;
 	let keepAliveInterval: ReturnType<typeof setInterval> | null = null;
 
-	async function start() {
+	async function start(providedStream?: MediaStream) {
+		// Adopt a caller-acquired stream immediately so stop() cleans it up even if a
+		// later step throws.
+		if (providedStream) stream = providedStream;
+
 		// 1. Get short-lived token from our server
 		const tokenRes = await fetch('/api/deepgram-token');
 		if (!tokenRes.ok) {
@@ -26,16 +30,19 @@ export function createDeepgramClient(options?: DeepgramOptions): SpeechClient {
 		}
 		const { token } = (await tokenRes.json()) as { token: string };
 
-		// 2. Get microphone access. Echo cancellation matters here: the mic stays open
-		// while cards play aloud, so without it the TTS audio feeds back into STT and
-		// can trigger false voice commands (matches the ElevenLabs client's constraints).
-		stream = await navigator.mediaDevices.getUserMedia({
-			audio: {
-				echoCancellation: true,
-				noiseSuppression: true,
-				autoGainControl: true
-			}
-		});
+		// 2. Get microphone access (unless the caller handed a live stream in). Echo
+		// cancellation matters here: the mic stays open while cards play aloud, so
+		// without it the TTS audio feeds back into STT and can trigger false voice
+		// commands (matches the ElevenLabs client's constraints).
+		if (!stream) {
+			stream = await navigator.mediaDevices.getUserMedia({
+				audio: {
+					echoCancellation: true,
+					noiseSuppression: true,
+					autoGainControl: true
+				}
+			});
+		}
 
 		if (!token) {
 			throw new Error('Deepgram token is empty');
