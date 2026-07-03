@@ -3,7 +3,7 @@
 	import { onDestroy, untrack } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import { createReviewEngine, type ReviewEvent, type SessionStats, type StartOptions, type IntervalLabels, type QueueCounts, type PrefetchedCards } from '$lib/client/review-engine';
-	import { preloadTTS, unlockAudioForGesture } from '$lib/client/audio';
+	import { preloadTTS, speak, unlockAudioForGesture } from '$lib/client/audio';
 	import { getPrepareAudioAhead } from '$lib/client/preferences';
 	import { locale, t } from '$lib/i18n';
 	import ReviewHelp from '$lib/components/ReviewHelp.svelte';
@@ -54,6 +54,12 @@
 	let countdownInterval: ReturnType<typeof setInterval> | null = null;
 	let suspendedNotice = $state('');
 	let suspendedTimer: ReturnType<typeof setTimeout> | null = null;
+	// Transient confirmation for the "slower"/"faster" voice commands.
+	let speedNotice = $state('');
+	let speedTimer: ReturnType<typeof setTimeout> | null = null;
+	// Spoken + displayed one-liner about the finished session.
+	let recapText = $state('');
+	let recapTimer: ReturnType<typeof setTimeout> | null = null;
 	let tagFilter = $state('');
 	let cramMode = $state(false);
 	let cramState = $state<'' | 'new' | 'learning' | 'review'>('');
@@ -296,6 +302,13 @@
 				stats = event.stats;
 				status = 'idle';
 				document.body.classList.remove('review-active');
+				// End the session the way it ran: a short spoken wrap in the card voice.
+				// Delayed so the completion chime can land first.
+				recapText = composeRecap(event.stats);
+				if (recapText && audioOn) {
+					if (recapTimer) clearTimeout(recapTimer);
+					recapTimer = setTimeout(() => { void speak(recapText, undefined, undefined, undefined, deckId).catch(() => {}); }, 700);
+				}
 				break;
 			case 'error':
 				showReviewError(event.message);
@@ -336,8 +349,33 @@
 				suspendedTimer = setTimeout(() => { suspendedNotice = ''; }, 3000);
 				break;
 			}
+			case 'speech_rate': {
+				speedNotice = $t('review.speedNotice', { rate: event.rate });
+				if (speedTimer) clearTimeout(speedTimer);
+				speedTimer = setTimeout(() => { speedNotice = ''; }, 2500);
+				break;
+			}
 		}
 	});
+
+	/**
+	 * One or two spoken sentences about the finished session: how much in how long,
+	 * plus which cards were rated Again ("still shaky"). Skipped for 0–1 card runs.
+	 */
+	function composeRecap(s: SessionStats): string {
+		if (s.cardsReviewed < 2) return '';
+		const minutes = Math.round(s.durationMs / 60000);
+		let text = s.durationMs < 90_000
+			? $t('session.recapFast', { cards: s.cardsReviewed })
+			: $t('session.recapBase', { cards: s.cardsReviewed, minutes });
+		const shaky = s.shakyFronts.slice(0, 2).map((f) => plainText(f).slice(0, 60)).filter(Boolean);
+		if (shaky.length > 0) {
+			text += ' ' + $t('session.recapShaky', { cards: shaky.join('; ') });
+		} else if (s.ratings.again === 0 && s.cardsReviewed >= 5) {
+			text += ' ' + $t('session.recapPerfect');
+		}
+		return text;
+	}
 
 	/**
 	 * Resolve the mic permission before any card audio plays. iOS pauses the page's audio
@@ -422,6 +460,9 @@
 		undoAvailable = false;
 		highlightRating = '';
 		suspendedNotice = '';
+		speedNotice = '';
+		recapText = '';
+		if (recapTimer) clearTimeout(recapTimer);
 		clearCountdown();
 		clearTranscript();
 		prefetchedCards = null;
@@ -553,6 +594,8 @@
 		clearCountdown();
 		clearTranscript();
 		if (suspendedTimer) clearTimeout(suspendedTimer);
+		if (speedTimer) clearTimeout(speedTimer);
+		if (recapTimer) clearTimeout(recapTimer);
 		if (errorTimer) clearTimeout(errorTimer);
 		if (highlightTimer) clearTimeout(highlightTimer);
 		document.body.classList.remove('review-active');
@@ -667,6 +710,9 @@
 			{#if deckName}
 				<p class="summary-deck">{deckName}</p>
 			{/if}
+			{#if recapText}
+				<p class="summary-recap">{recapText}</p>
+			{/if}
 			<div class="stat-grid">
 				<div class="stat">
 					<span class="stat-value">{stats.cardsReviewed}</span>
@@ -718,6 +764,10 @@
 
 	{#if suspendedNotice}
 		<div class="toast-notice">{suspendedNotice}</div>
+	{/if}
+
+	{#if speedNotice}
+		<div class="toast-notice" role="status">{speedNotice}</div>
 	{/if}
 
 	<!-- Top bar -->
@@ -1140,6 +1190,14 @@
 		color: var(--text-muted);
 		font-weight: 500;
 		margin: 0;
+	}
+
+	.summary-recap {
+		font-size: 0.95rem;
+		color: var(--text-muted);
+		line-height: 1.5;
+		max-width: 420px;
+		margin: 0.75rem auto 0;
 	}
 
 	.stat-grid {

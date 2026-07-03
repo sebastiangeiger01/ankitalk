@@ -73,6 +73,22 @@ const COMMANDS: CommandDef[] = [
 		phases: ['question']
 	},
 	{
+		command: 'slower',
+		aliases: ['slower', 'slow down', 'speak slower', 'too fast', 'langsamer', 'zu schnell'],
+		phases: ['question', 'rating']
+	},
+	{
+		command: 'faster',
+		aliases: ['faster', 'speed up', 'speak faster', 'too slow', 'schneller', 'zu langsam'],
+		phases: ['question', 'rating']
+	},
+	{
+		// Deliberately phrase-only: a bare "normal" appears in ordinary speech too often.
+		command: 'normal_speed',
+		aliases: ['normal speed', 'normal pace', 'normale geschwindigkeit', 'normales tempo'],
+		phases: ['question', 'rating']
+	},
+	{
 		command: 'stop',
 		aliases: [
 			'stop', 'quit', 'end', 'finish', 'done', 'end session',

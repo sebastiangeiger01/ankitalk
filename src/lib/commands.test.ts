@@ -90,4 +90,29 @@ describe('matchCommand', () => {
 			expect(matchCommand('stopp', 'rating')).toBe('stop');
 		});
 	});
+
+	describe('speech pace commands', () => {
+		it('adjusts pace in both phases', () => {
+			expect(matchCommand('langsamer', 'question')).toBe('slower');
+			expect(matchCommand('Langsamer.', 'rating')).toBe('slower');
+			expect(matchCommand('schneller', 'question')).toBe('faster');
+			expect(matchCommand('faster', 'rating')).toBe('faster');
+		});
+
+		it('matches multi-word pace phrases', () => {
+			expect(matchCommand('zu schnell', 'question')).toBe('slower');
+			expect(matchCommand('speak slower', 'rating')).toBe('slower');
+			expect(matchCommand('normale Geschwindigkeit', 'question')).toBe('normal_speed');
+			expect(matchCommand('normal speed', 'rating')).toBe('normal_speed');
+		});
+
+		it('does not fire on a bare "normal" or unrelated speed talk', () => {
+			expect(matchCommand('normal', 'question')).toBeNull();
+			expect(matchCommand('Das ist ganz normal', 'rating')).toBeNull();
+		});
+
+		it('German "schnell" alone is not a command (only "zu schnell"/"schneller")', () => {
+			expect(matchCommand('schnell', 'question')).toBeNull();
+		});
+	});
 });

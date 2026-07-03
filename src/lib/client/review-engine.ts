@@ -1,4 +1,4 @@
-import { speak, stopPlayback, getLastSpokenText, playSound, preloadTTS, clearAudioCache } from './audio';
+import { speak, stopPlayback, getLastSpokenText, playSound, preloadTTS, clearAudioCache, getSpeechRate, setSpeechRate } from './audio';
 import { createDeepgramClient } from './deepgram';
 import { createElevenLabsClient } from './elevenlabs';
 import type { SpeechClient } from './speech';
@@ -55,12 +55,18 @@ export type ReviewEvent =
 	| { type: 'audio_change'; audioOn: boolean }
 	| { type: 'learning_due'; waitMs: number }
 	| { type: 'card_suspended'; cardId: string }
+	| { type: 'speech_rate'; rate: number }
 	| { type: 'counts'; counts: QueueCounts };
 
 export interface SessionStats {
 	cardsReviewed: number;
 	ratings: Record<RatingName, number>;
 	durationMs: number;
+	/**
+	 * Plain-text fronts of the cards rated Again this session (unique, insertion order).
+	 * Feeds the spoken session recap ("still shaky: …") on the summary screen.
+	 */
+	shakyFronts: string[];
 }
 
 interface CardData {
@@ -146,8 +152,12 @@ const LEARNING_QUEUE_MAX_MS = 30 * 60 * 1000;
 /** If the next learning card is ≤ this far away, wait for it instead of ending session */
 const LEARNING_WAIT_THRESHOLD_MS = 30 * 1000;
 
-/** Timeout for review API call */
-const REVIEW_API_TIMEOUT_MS = 3000;
+/**
+ * Timeout for the review API call. Generous: the write happens in the background
+ * (the UI has already advanced), and aborting a write the server may have committed
+ * would produce a phantom "failed to save" for a rating that actually saved.
+ */
+const REVIEW_API_TIMEOUT_MS = 10000;
 
 export function createReviewEngine(): ReviewEngine {
 	let eventCb: EventCallback | null = null;
@@ -169,6 +179,11 @@ export function createReviewEngine(): ReviewEngine {
 	// resume — the client (Deepgram's resume() is a no-op without a live socket).
 	let speechStarted = false;
 	let ratingInFlight = false;
+	// Review writes are chained so rapid ratings reach the server in card order, and
+	// stamped with a session generation so a write landing after "Review again" can't
+	// reconcile into (or roll back) the wrong session.
+	let pendingReview: Promise<unknown> = Promise.resolve();
+	let sessionGen = 0;
 	let undoInFlight = false;
 	let sessionFinished = false;
 	let prepareAudioAhead = true;
@@ -187,7 +202,8 @@ export function createReviewEngine(): ReviewEngine {
 	const stats: SessionStats = {
 		cardsReviewed: 0,
 		ratings: { again: 0, hard: 0, good: 0, easy: 0 },
-		durationMs: 0
+		durationMs: 0,
+		shakyFronts: []
 	};
 
 	function emit(event: ReviewEvent) {
@@ -431,13 +447,29 @@ export function createReviewEngine(): ReviewEngine {
 			case 'good':
 			case 'easy': {
 				if (phase !== 'rating') break;
-				void submitRating(command);
+				submitRating(command);
 				break;
 			}
 
 			case 'explain':
 				// Handled by the review page's ElevenLabs tutor UI.
 				break;
+
+			case 'slower':
+			case 'faster':
+			case 'normal_speed': {
+				// Client-side playbackRate: instant, free, no re-synthesis. Replaying the
+				// last line right away is the audible confirmation the pace changed.
+				const step = command === 'faster' ? 0.2 : -0.2;
+				const next = command === 'normal_speed'
+					? 1
+					: Math.round(Math.min(1.8, Math.max(0.6, getSpeechRate() + step)) * 10) / 10;
+				setSpeechRate(next);
+				emit({ type: 'speech_rate', rate: next });
+				const lastSpoken = getLastSpokenText();
+				if (lastSpoken) speakText(lastSpoken);
+				break;
+			}
 
 			case 'suspend':
 				handleSuspend();
@@ -465,30 +497,86 @@ export function createReviewEngine(): ReviewEngine {
 		presentCard();
 	}
 
-	async function submitRating(rating: RatingName) {
+	/** Is another card presentable right now (without waiting or ending)? */
+	function hasImmediateNextCard(): boolean {
+		if (learningQueue.length > 0 && learningQueue[0].dueAt <= Date.now()) return true;
+		return reviewQueue.some((c) => !studiedNoteIds.has(c.note_id));
+	}
+
+	/**
+	 * Rating advances the UI immediately: the next card's front is already preloaded,
+	 * so all the old `await` bought was a silent, frozen gap of one network round trip
+	 * per card. The write runs in the background and is reconciled when it lands
+	 * (learning re-queue, leech suspend, undo availability). Only when no next card is
+	 * immediately presentable does the submit stay blocking, because the end-vs-hold
+	 * decision depends on whether this rating re-queues the card for learning.
+	 */
+	function submitRating(rating: RatingName) {
 		if (!currentCard || ratingInFlight || sessionFinished) return;
 
 		const card = currentCard;
 		const durationMs = Date.now() - cardStartTime;
+		const gen = sessionGen;
 
-		// Submit to server and get fsrsState + dueAt back
-		let addedToLearning = false;
-		let leeched = false;
+		// Optimistic bookkeeping — postReview rolls it back if the write fails.
+		stats.cardsReviewed++;
+		stats.ratings[rating]++;
+		if (rating === 'again' && card.front && !stats.shakyFronts.includes(card.front)) {
+			stats.shakyFronts.push(card.front);
+		}
+		studiedNoteIds.add(card.note_id);
 
+		const write = () => postReview(card, rating, durationMs, gen);
+
+		if (hasImmediateNextCard()) {
+			pendingReview = pendingReview.then(write);
+			playSound('/success.mp3').catch(() => {});
+			presentCard();
+			return;
+		}
+
+		// Last presentable card: wait for the authoritative result before deciding
+		// between session end and the learning hold.
 		ratingInFlight = true;
-		let timeout: ReturnType<typeof setTimeout> | null = null;
+		pendingReview = pendingReview.then(write).then((ok) => {
+			ratingInFlight = false;
+			if (gen !== sessionGen || sessionFinished || destroyed) return;
+			if (!ok) {
+				// Rolled back: stay on the card in rating phase so the user can retry.
+				if (micOn) emit({ type: 'listening' });
+				else emit({ type: 'idle' });
+				return;
+			}
+			playSound('/success.mp3').catch(() => {});
+			presentCard();
+		});
+	}
+
+	/**
+	 * Background half of a rating: POST to the server, then reconcile the session with
+	 * the authoritative result. Returns false — after rolling back the optimistic
+	 * bookkeeping — when the write failed; the card then simply stays due server-side.
+	 */
+	async function postReview(
+		card: CardData,
+		rating: RatingName,
+		durationMs: number,
+		gen: number
+	): Promise<boolean> {
 		try {
 			const controller = new AbortController();
-			timeout = setTimeout(() => controller.abort(), REVIEW_API_TIMEOUT_MS);
-
-			const res = await fetch(`/api/cards/${card.id}/review`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ rating, durationMs }),
-				signal: controller.signal
-			});
-			clearTimeout(timeout);
-			timeout = null;
+			const timeout = setTimeout(() => controller.abort(), REVIEW_API_TIMEOUT_MS);
+			let res: Response;
+			try {
+				res = await fetch(`/api/cards/${card.id}/review`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ rating, durationMs }),
+					signal: controller.signal
+				});
+			} finally {
+				clearTimeout(timeout);
+			}
 
 			if (!res.ok) {
 				throw new Error(`Review API failed: ${res.status}`);
@@ -501,26 +589,23 @@ export function createReviewEngine(): ReviewEngine {
 				leeched?: boolean;
 			};
 
-			if (sessionFinished || destroyed) return;
-
-			stats.cardsReviewed++;
-			stats.ratings[rating]++;
-			studiedNoteIds.add(card.note_id);
+			// Committed server-side, but a newer session owns the queues now.
+			if (gen !== sessionGen || destroyed) return true;
 
 			const newState = data.fsrsState;
 			const dueAt = new Date(data.dueAt).getTime();
-			const now = Date.now();
-			leeched = Boolean(data.leeched);
+			let addedToLearning = false;
 
 			// If card is still learning/relearning and due within 30 min, add to learning queue
 			// If leeched, emit suspended event and don't add to learning queue
 			// In cram mode, skip learning queue insertion
-			if (leeched) {
+			if (data.leeched) {
 				emit({ type: 'card_suspended', cardId: card.id });
 			} else if (
 				!isCramMode &&
+				!sessionFinished &&
 				(newState === STATE_LEARNING || newState === STATE_RELEARNING) &&
-				dueAt - now < LEARNING_QUEUE_MAX_MS
+				dueAt - Date.now() < LEARNING_QUEUE_MAX_MS
 			) {
 				const updatedCard: CardData = { ...card, fsrs_state: newState };
 				// Insert sorted by dueAt
@@ -532,21 +617,36 @@ export function createReviewEngine(): ReviewEngine {
 					learningQueue.splice(insertIdx, 0, entry);
 				}
 				addedToLearning = true;
+				emit({ type: 'counts', counts: computeCounts() });
+				// If we're holding for a learning card, this entry may be due sooner than
+				// the one the hold timer was armed for — re-evaluate the hold.
+				if (!currentCard && learningTimer) {
+					clearLearningTimer();
+					presentCard();
+				}
 			}
+
+			if (sessionFinished) return true;
 
 			// Store undo info — stays available until next command (e.g. "show answer")
 			undoInfo = { rating, card, addedToLearning };
 			emit({ type: 'undo_available', available: true });
-
-			playSound('/success.mp3').catch(() => {});
-			presentCard();
+			return true;
 		} catch {
-			emit({ type: 'error', message: 'Failed to save review' });
-			if (micOn) emit({ type: 'listening' });
-			else emit({ type: 'idle' });
-		} finally {
-			if (timeout) clearTimeout(timeout);
-			ratingInFlight = false;
+			if (gen !== sessionGen || destroyed) return false;
+			// The server never saw this rating: roll back the optimistic bookkeeping.
+			// The card stays due and comes back next session; siblings unblock again.
+			stats.cardsReviewed = Math.max(0, stats.cardsReviewed - 1);
+			stats.ratings[rating] = Math.max(0, stats.ratings[rating] - 1);
+			if (rating === 'again') {
+				const idx = stats.shakyFronts.indexOf(card.front);
+				if (idx !== -1) stats.shakyFronts.splice(idx, 1);
+			}
+			studiedNoteIds.delete(card.note_id);
+			if (!sessionFinished) {
+				emit({ type: 'error', message: 'Failed to save review — the card stays due' });
+			}
+			return false;
 		}
 	}
 
@@ -585,6 +685,10 @@ export function createReviewEngine(): ReviewEngine {
 		// Revert stats
 		stats.cardsReviewed = Math.max(0, stats.cardsReviewed - 1);
 		stats.ratings[rating] = Math.max(0, stats.ratings[rating] - 1);
+		if (rating === 'again') {
+			const idx = stats.shakyFronts.indexOf(card.front);
+			if (idx !== -1) stats.shakyFronts.splice(idx, 1);
+		}
 		cardsReviewedCount--;
 		studiedNoteIds.delete(card.note_id);
 
@@ -665,6 +769,7 @@ export function createReviewEngine(): ReviewEngine {
 	async function start(deckId: string, options?: StartOptions) {
 		destroyed = false;
 		sessionFinished = false;
+		sessionGen++;
 		activeDeckId = deckId;
 		prepareAudioAhead = options?.prepareAudioAhead ?? true;
 		micOn = options?.micOn ?? true;
@@ -678,6 +783,7 @@ export function createReviewEngine(): ReviewEngine {
 		stats.cardsReviewed = 0;
 		stats.ratings = { again: 0, hard: 0, good: 0, easy: 0 };
 		stats.durationMs = 0;
+		stats.shakyFronts = [];
 
 		// Microphone setup is optional and must not block cards.
 		try {
@@ -713,6 +819,10 @@ export function createReviewEngine(): ReviewEngine {
 		if (options?.prefetchedCards) {
 			data = options.prefetchedCards;
 		} else {
+			// Let any in-flight review write land before fetching what's due ("Review
+			// again" reaches this path), so a card rated at the very end of the previous
+			// session can't come straight back into the new queue.
+			await pendingReview;
 			try {
 				const params = new URLSearchParams({ deckId, limit: '50' });
 				if (options?.tags) params.set('tags', options.tags);

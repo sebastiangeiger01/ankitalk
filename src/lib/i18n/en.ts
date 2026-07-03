@@ -90,6 +90,8 @@ export const en: Record<string, string> = {
 	'help.explainDesc': 'ask the tutor about the revealed answer',
 	'help.stop': 'stop',
 	'help.stopDesc': 'end session',
+	'help.speed': 'slower / faster',
+	'help.speedDesc': 'adjust the speaking pace',
 
 	// Review - Keyboard shortcuts overlay
 	'help.title': 'Help & Commands',
@@ -124,6 +126,7 @@ export const en: Record<string, string> = {
 	'review.waitingCard': 'Card returning in {seconds}s...',
 	'review.sessionProgress': 'Session progress',
 	'review.transcriptLabel': 'Live transcript',
+	'review.speedNotice': 'Speed: {rate}×',
 
 	// Review - Ratings
 	'rating.again': 'Again',
@@ -132,6 +135,10 @@ export const en: Record<string, string> = {
 	'rating.easy': 'Easy',
 
 	// Review - Session complete
+	'session.recapFast': 'Done! {cards} cards in under two minutes.',
+	'session.recapBase': 'Done! {cards} cards in {minutes} minutes.',
+	'session.recapShaky': 'Worth another look: {cards}.',
+	'session.recapPerfect': 'No slips — a clean run.',
 	'session.completeTitle': 'Session Complete',
 	'session.cardsReviewed': 'Cards Reviewed',
 	'session.duration': 'Duration',
