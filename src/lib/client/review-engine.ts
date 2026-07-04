@@ -40,6 +40,10 @@ export type ReviewEvent =
 			tags?: string;
 			reps?: number;
 			lapses?: number;
+			/** Labeled fields the front/back don't display (Source, Back Extra, …). */
+			extrasHtml?: string;
+			/** Raw note fields JSON, for the in-review card editor. */
+			fields?: string;
 	  }
 	| { type: 'tts_loading' }
 	| { type: 'speaking' }
@@ -81,6 +85,7 @@ interface CardData {
 	back: string;
 	frontHtml: string;
 	backHtml: string;
+	extrasHtml: string;
 	intervals: IntervalLabels;
 }
 
@@ -138,6 +143,12 @@ export interface ReviewEngine {
 	 * the tutor opens so the card voice doesn't talk over the conversation.
 	 */
 	interruptSpeech(): void;
+	/**
+	 * Apply an in-review note edit: re-render the current card (and any queued sibling
+	 * cards of the same note) from the new fields and re-emit card_change so the display
+	 * updates in place. Does not replay audio; "repeat" reads the edited text.
+	 */
+	updateCurrentCard(fieldsJson: string, tags: string): void;
 	undo(): void;
 	/**
 	 * The live STT microphone stream, when the speech client exposes one. Used by the UI
@@ -368,7 +379,9 @@ export function createReviewEngine(): ReviewEngine {
 			deckId: currentCard.deck_id,
 			tags: currentCard.tags,
 			reps: currentCard.fsrs_reps,
-			lapses: currentCard.fsrs_lapses
+			lapses: currentCard.fsrs_lapses,
+			extrasHtml: currentCard.extrasHtml,
+			fields: currentCard.fields
 		});
 		emit({ type: 'counts', counts: computeCounts() });
 		emit({ type: 'phase_change', phase: 'question' });
@@ -707,7 +720,9 @@ export function createReviewEngine(): ReviewEngine {
 			deckId: card.deck_id,
 			tags: card.tags,
 			reps: card.fsrs_reps,
-			lapses: card.fsrs_lapses
+			lapses: card.fsrs_lapses,
+			extrasHtml: card.extrasHtml,
+			fields: card.fields
 		});
 		emit({ type: 'counts', counts: computeCounts() });
 		emit({ type: 'phase_change', phase: 'rating' });
@@ -835,7 +850,7 @@ export function createReviewEngine(): ReviewEngine {
 		// Parse card fronts/backs into review queue
 		const defaultIntervals: IntervalLabels = { again: '', hard: '', good: '', easy: '' };
 		reviewQueue = data.cards.map((c) => {
-			const { front, back, frontHtml, backHtml } = renderCard(
+			const { front, back, frontHtml, backHtml, extrasHtml } = renderCard(
 				c.fields as string,
 				c.card_type as string,
 				(c.ordinal as number) ?? 0,
@@ -862,6 +877,7 @@ export function createReviewEngine(): ReviewEngine {
 				back,
 				frontHtml,
 				backHtml,
+				extrasHtml,
 				intervals
 			};
 		});
@@ -904,6 +920,12 @@ export function createReviewEngine(): ReviewEngine {
 		} else {
 			speechClient?.pause();
 		}
+		// Keep the status indicator honest (the mic meter keys off 'listening'), but
+		// never stomp an active TTS ('speaking' resolves itself) or the learning hold
+		// ('waiting' has no current card).
+		if (!isSpeaking && currentCard) {
+			emit({ type: micOn ? 'listening' : 'idle' });
+		}
 		emit({ type: 'mic_change', micOn });
 	}
 
@@ -924,6 +946,66 @@ export function createReviewEngine(): ReviewEngine {
 		else emit({ type: 'idle' });
 	}
 
+	function applyNoteEdit(card: CardData, fieldsJson: string, tags: string) {
+		const rendered = renderCard(
+			fieldsJson,
+			card.card_type,
+			card.ordinal,
+			card.front_template,
+			card.back_template,
+			clientCardSanitizer
+		);
+		card.fields = fieldsJson;
+		card.tags = tags;
+		card.front = rendered.front;
+		card.back = rendered.back;
+		card.frontHtml = rendered.frontHtml;
+		card.backHtml = rendered.backHtml;
+		card.extrasHtml = rendered.extrasHtml;
+	}
+
+	function updateCurrentCard(fieldsJson: string, tags: string) {
+		if (!currentCard || sessionFinished) return;
+
+		// The edit is note-level: sibling cards of the same note waiting in the queues
+		// (and a pending undo target) would otherwise present stale content.
+		const noteId = currentCard.note_id;
+		applyNoteEdit(currentCard, fieldsJson, tags);
+		for (const card of reviewQueue) {
+			if (card.note_id === noteId) applyNoteEdit(card, fieldsJson, tags);
+		}
+		for (const entry of learningQueue) {
+			if (entry.card.note_id === noteId) applyNoteEdit(entry.card, fieldsJson, tags);
+		}
+		if (undoInfo && undoInfo.card.note_id === noteId) {
+			applyNoteEdit(undoInfo.card, fieldsJson, tags);
+		}
+
+		// Re-emit the same card index so the display refreshes in place; the phase is
+		// untouched and nothing is spoken (the user just read the text while editing it).
+		const cardState: 'new' | 'learning' | 'review' =
+			currentCard.fsrs_state === STATE_NEW ? 'new' :
+			currentCard.fsrs_state === STATE_REVIEW ? 'review' : 'learning';
+		emit({
+			type: 'card_change',
+			index: cardsReviewedCount - 1,
+			total: cardsReviewedCount,
+			front: currentCard.front,
+			back: currentCard.back,
+			frontHtml: currentCard.frontHtml,
+			backHtml: currentCard.backHtml,
+			cardState,
+			intervals: currentCard.intervals,
+			cardId: currentCard.id,
+			deckId: currentCard.deck_id,
+			tags: currentCard.tags,
+			reps: currentCard.fsrs_reps,
+			lapses: currentCard.fsrs_lapses,
+			extrasHtml: currentCard.extrasHtml,
+			fields: currentCard.fields
+		});
+	}
+
 	return {
 		start(deckId: string, options?: StartOptions) {
 			return start(deckId, options);
@@ -938,6 +1020,7 @@ export function createReviewEngine(): ReviewEngine {
 		toggleMic,
 		toggleAudio,
 		interruptSpeech,
+		updateCurrentCard,
 		undo() {
 			performUndo();
 		},
