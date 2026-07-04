@@ -110,6 +110,9 @@
 	let startingReview = $state(false);
 	let highlightRating = $state<string>('');
 	let highlightTimer: ReturnType<typeof setTimeout> | null = null;
+	// The card scroll container; card_change resets it so a new card never starts
+	// wherever the previous (scrolled) back left off.
+	let cardAreaEl = $state<HTMLDivElement | null>(null);
 	type ApiKeyStatus = { openai: boolean; deepgram: boolean; anthropic: boolean; elevenlabs: boolean };
 	let keyStatus = $state<ApiKeyStatus | null>(null);
 	let voiceSettings = $state<UserVoiceSettings>({
@@ -289,8 +292,13 @@
 			case 'phase_change':
 				phase = event.phase;
 				break;
-			case 'card_change':
+			case 'card_change': {
 				clearCountdown();
+				// Scroll back up for a new presentation — but not when the current card
+				// merely refreshes in place (in-review edit), which would yank the user
+				// away from the spot they scrolled to.
+				const newPresentation = event.cardId !== agentCardId || event.index + 1 !== cardsReviewed;
+				if (newPresentation) cardAreaEl?.scrollTo(0, 0);
 				cardsReviewed = event.index + 1;
 				frontText = event.front;
 				backText = event.back;
@@ -304,6 +312,7 @@
 				cardTags = event.tags ?? '';
 				status = 'idle';
 				break;
+			}
 			case 'tts_loading':
 				status = 'loading';
 				break;
@@ -851,7 +860,7 @@
 	     scrollable (iOS Safari often fails to make a container touch-scrollable when it
 	     only overflows after the answer reveal) — and the edit button lives below the
 	     fold, hidden until the user scrolls down once. -->
-	<div class="card-area">
+	<div class="card-area" bind:this={cardAreaEl}>
 		<div class="card-fold">
 			{#key cardsReviewed}
 				<div class="card-content" class:held={status === 'waiting'} role="region" aria-label={$t('review.cardRegion')}>
