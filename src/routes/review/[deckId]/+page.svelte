@@ -9,9 +9,10 @@
 	import ReviewHelp from '$lib/components/ReviewHelp.svelte';
 	import { clientCardSanitizer } from '$lib/client/card-sanitize';
 	import { renderCard } from '$lib/client/card-renderer';
-	import type { ReviewPhase } from '$lib/types';
+	import type { NoteField, ReviewPhase } from '$lib/types';
 	import { sttLanguageForVoiceCommandLanguage, type UserVoiceSettings } from '$lib/voice';
 	import AgentChat from '$lib/components/AgentChat.svelte';
+	import CardEditModal from '$lib/components/CardEditModal.svelte';
 
 	let agentChatOpen = $state(false);
 	let agentIntent = $state<'hint' | 'explain' | null>(null);
@@ -20,6 +21,47 @@
 	// Tutor context — populated from each card_change emit so the agent receives current
 	// card identifiers + scheduling state, not just front/back.
 	let agentCardId = $state('');
+
+	// In-review card editor: fed from card_change (raw fields JSON + tags), opened via
+	// the scroll-revealed edit button below the card.
+	let editOpen = $state(false);
+	let editFields = $state<NoteField[]>([]);
+	let editTags = $state('');
+	let editPausedReviewMic = false;
+	let cardFieldsJson = $state('');
+	let cardTags = $state('');
+
+	function openCardEditor() {
+		if (!agentCardId) return;
+		let parsed: NoteField[];
+		try {
+			parsed = JSON.parse(cardFieldsJson) as NoteField[];
+		} catch {
+			return;
+		}
+		if (!Array.isArray(parsed) || parsed.length === 0) return;
+		// Same session etiquette as the tutor: pause the mic so dictated edits don't
+		// trigger voice commands, and stop the card audio while the modal is up.
+		if (micOn) {
+			editPausedReviewMic = true;
+			engine.toggleMic();
+		}
+		engine.interruptSpeech();
+		editFields = parsed;
+		editTags = cardTags;
+		editOpen = true;
+	}
+
+	function closeCardEditor() {
+		editOpen = false;
+		if (editPausedReviewMic && !micOn) engine.toggleMic();
+		editPausedReviewMic = false;
+	}
+
+	function handleCardEdited(updated: { fields: NoteField[]; tags: string }) {
+		engine.updateCurrentCard(JSON.stringify(updated.fields), updated.tags);
+		closeCardEditor();
+	}
 
 	/**
 	 * Strip HTML so the agent receives clean text in its dynamic variables. The cards are
@@ -41,6 +83,7 @@
 	let backText = $state('');
 	let frontHtml = $state('');
 	let backHtml = $state('');
+	let extrasHtml = $state('');
 	let errorMsg = $state('');
 	let errorTimer: ReturnType<typeof setTimeout> | null = null;
 	let sessionEnded = $state(false);
@@ -253,9 +296,12 @@
 				backText = event.back;
 				frontHtml = event.frontHtml;
 				backHtml = event.backHtml;
+				extrasHtml = event.extrasHtml ?? '';
 				cardState = event.cardState;
 				intervals = event.intervals;
 				agentCardId = event.cardId ?? '';
+				cardFieldsJson = event.fields ?? '';
+				cardTags = event.tags ?? '';
 				status = 'idle';
 				break;
 			case 'tts_loading':
@@ -440,6 +486,11 @@
 		backText = '';
 		frontHtml = '';
 		backHtml = '';
+		extrasHtml = '';
+		cardFieldsJson = '';
+		cardTags = '';
+		editOpen = false;
+		editPausedReviewMic = false;
 		cardState = null;
 		intervals = { again: '', hard: '', good: '', easy: '' };
 		undoAvailable = false;
@@ -460,6 +511,9 @@
 
 	function handleKeydown(e: KeyboardEvent) {
 		if (!started || sessionEnded) return;
+		// The edit modal owns the keyboard while open (its buttons aren't inputs, so the
+		// target check below wouldn't stop e.g. 's' from suspending the card).
+		if (editOpen) return;
 		if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
 		// Toggle the shortcuts overlay with `?` at any time during an active session
@@ -793,17 +847,33 @@
 		</div>
 	</div>
 
-	<!-- Card content area -->
+	<!-- Card content area. The fold fills the full scroller height so the area is always
+	     scrollable (iOS Safari often fails to make a container touch-scrollable when it
+	     only overflows after the answer reveal) — and the edit button lives below the
+	     fold, hidden until the user scrolls down once. -->
 	<div class="card-area">
-		{#key cardsReviewed}
-			<div class="card-content" class:held={status === 'waiting'} role="region" aria-label={$t('review.cardRegion')}>
-				<div class="question-text">{@html frontHtml}</div>
-				{#if phase === 'rating'}
-					<hr class="card-divider" />
-					<div class="answer-text">{@html backHtml}</div>
-				{/if}
+		<div class="card-fold">
+			{#key cardsReviewed}
+				<div class="card-content" class:held={status === 'waiting'} role="region" aria-label={$t('review.cardRegion')}>
+					<div class="question-text">{@html frontHtml}</div>
+					{#if phase === 'rating'}
+						<hr class="card-divider" />
+						<div class="answer-text">{@html backHtml}</div>
+						{#if extrasHtml}
+							<div class="extra-fields">{@html extrasHtml}</div>
+						{/if}
+					{/if}
+				</div>
+			{/key}
+		</div>
+		{#if status !== 'waiting'}
+			<div class="edit-reveal">
+				<button class="edit-card-btn" onclick={openCardEditor}>
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+					<span>{$t('review.editCard')}</span>
+				</button>
 			</div>
-		{/key}
+		{/if}
 		{#if status === 'waiting'}
 			<!-- Learning hold: the rated card stays visible (dimmed) under a countdown pill -->
 			<div class="hold-pill" role="status">{$t('review.waitingCard', { seconds: learningCountdown })}</div>
@@ -849,6 +919,16 @@
 {/if}
 
 <ReviewHelp open={shortcutsOpen} onclose={() => shortcutsOpen = false} />
+
+<CardEditModal
+	open={editOpen}
+	deckId={deckId ?? ''}
+	cardId={agentCardId}
+	initialFields={editFields}
+	initialTags={editTags}
+	onclose={closeCardEditor}
+	onsave={handleCardEdited}
+/>
 
 <AgentChat
 	open={agentChatOpen}
@@ -1514,12 +1594,59 @@
 		bottom: 0;
 		left: 0;
 		right: 0;
+		padding: 1.5rem 1.5rem 0;
+		overflow-y: auto;
+		/* Keep flicks inside the card scroller from rubber-banding/chaining to the page. */
+		overscroll-behavior-y: contain;
+		-webkit-overflow-scrolling: touch;
+	}
+
+	/* Fills the scroller's full height so (a) the area is scrollable from the first
+	   touch — iOS Safari is unreliable about enabling touch-scroll on a container that
+	   only overflows later (answer reveal) — and (b) the edit button below stays hidden
+	   past the fold until the user deliberately scrolls down. */
+	.card-fold {
+		min-height: 100%;
+		box-sizing: border-box;
+		padding-bottom: 140px;
 		display: flex;
 		align-items: flex-start;
 		justify-content: center;
-		padding: 1.5rem;
-		padding-bottom: 140px;
-		overflow-y: auto;
+	}
+
+	.edit-reveal {
+		display: flex;
+		justify-content: center;
+		padding: 0.25rem 0 calc(140px + env(safe-area-inset-bottom, 0px));
+	}
+
+	.edit-card-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		min-height: 44px;
+		padding: 0.5rem 1.1rem;
+		background: transparent;
+		border: 1px solid var(--border);
+		border-radius: var(--r-pill);
+		color: var(--text-muted);
+		font-size: 0.875rem;
+		font-family: inherit;
+		font-weight: 500;
+		cursor: pointer;
+		touch-action: manipulation;
+		transition: border-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+	}
+
+	.edit-card-btn:hover {
+		border-color: var(--border-strong);
+		color: var(--text);
+		background: var(--surface);
+	}
+
+	.edit-card-btn:focus-visible {
+		outline: 2px solid var(--focus-ring);
+		outline-offset: 2px;
 	}
 
 	.card-content {
@@ -1569,6 +1696,46 @@
 		margin: 0;
 		color: var(--text);
 		line-height: 1.5;
+	}
+
+	/* ========== Extra Fields (not displayed by the card's own front/back) ========== */
+	.extra-fields {
+		margin-top: 2rem;
+		text-align: left;
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+	}
+
+	.extra-fields :global(.extra-field) {
+		border-top: 1px solid var(--border-muted);
+		padding-top: 0.75rem;
+	}
+
+	.extra-fields :global(.extra-field-name) {
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.07em;
+		text-transform: uppercase;
+		color: var(--text-subtle);
+		margin-bottom: 0.25rem;
+	}
+
+	.extra-fields :global(.extra-field-value) {
+		font-size: 0.95rem;
+		color: var(--text-muted);
+		line-height: 1.55;
+		overflow-wrap: anywhere;
+	}
+
+	.extra-fields :global(a) {
+		color: var(--info);
+	}
+
+	.extra-fields :global(img) {
+		max-width: 100%;
+		height: auto;
+		border-radius: 6px;
 	}
 
 	/* Anki HTML card content: support bold, italic, underline, colors, images, etc. */

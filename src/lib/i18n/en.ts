@@ -122,6 +122,7 @@ export const en: Record<string, string> = {
 	'review.showAnswer': 'Show Answer',
 	'review.undo': 'undo',
 	'review.cardSuspended': 'Card suspended',
+	'review.editCard': 'Edit card',
 	'review.waitingCard': 'Card returning in {seconds}s...',
 	'review.sessionProgress': 'Session progress',
 	'review.transcriptLabel': 'Live transcript',

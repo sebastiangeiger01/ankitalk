@@ -12,7 +12,9 @@
 		initialTags?: string;
 		createMode?: boolean;
 		onclose: () => void;
-		onsave: () => void;
+		/** Called after a successful save with the saved note content, so callers can
+		 * update their own view without refetching. */
+		onsave: (updated: { fields: NoteField[]; tags: string }) => void;
 	}
 
 	let { open, deckId, cardId, initialFields, initialTags, createMode = false, onclose, onsave }: Props = $props();
@@ -87,7 +89,7 @@
 				});
 				if (!res.ok) throw new Error($t('cards.editor.updateFailed'));
 			}
-			onsave();
+			onsave({ fields: fields.map((f) => ({ ...f })), tags });
 		} catch (err) {
 			errorMsg = err instanceof Error ? err.message : $t('cards.editor.saveFailed');
 		} finally {
