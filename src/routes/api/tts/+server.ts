@@ -131,6 +131,12 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 	}
 
 	const provider = voiceSettings.tts_provider;
+	// OpenAI's TTS API caps input at 4096 chars and the synth call would silently truncate —
+	// and the truncated clip would then be cached under the full text's hash indefinitely.
+	// Reject loudly instead of serving audio that stops mid-sentence forever.
+	if (provider !== 'elevenlabs' && text.length > 4096) {
+		throw error(413, 'Text too long for the OpenAI voice (max 4096 characters)');
+	}
 	const ttsModel = provider === 'elevenlabs' ? voiceSettings.elevenlabs_tts_model : 'tts-1';
 	const ttsVoice = provider === 'elevenlabs' ? voiceSettings.elevenlabs_voice_id : (voice ?? 'nova');
 	// For ElevenLabs the per-request `speed`/tuning live in the user's saved settings,

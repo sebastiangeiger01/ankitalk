@@ -213,10 +213,14 @@ export function createElevenLabsClient(options?: ElevenLabsOptions): SpeechClien
 				else reject(err);
 			};
 			socket.onclose = (event) => {
+				// Always settle the pending open — otherwise a stop() that closes a CONNECTING
+				// socket would leave start() awaiting forever.
+				if (!opened) {
+					reject(new Error(`ElevenLabs connection closed: ${event.code} ${event.reason}`));
+					return;
+				}
 				if (stopping || paused) return;
-				const err = new Error(`ElevenLabs connection closed: ${event.code} ${event.reason}`);
-				if (opened) errorCb?.(err);
-				else reject(err);
+				errorCb?.(new Error(`ElevenLabs connection closed: ${event.code} ${event.reason}`));
 			};
 			socket.onmessage = (event) => {
 				try {
@@ -240,12 +244,19 @@ export function createElevenLabsClient(options?: ElevenLabsOptions): SpeechClien
 
 		try {
 			await requestAudioStream(providedStream);
+			// stop() may have run while we were awaiting; release whatever this step acquired
+			// after stop()'s own cleanup had already passed.
+			if (stopping) { stop(); return; }
 			const config = await getConfig();
+			if (stopping) { stop(); return; }
 			await openSocket(buildSocketUrl(config));
+			if (stopping) { stop(); return; }
 			connectAudioProcessor();
 		} catch (err) {
+			// A stop() issued while we were awaiting isn't an error the caller should see.
+			const userStopped = stopping;
 			stop();
-			throw err;
+			if (!userStopped) throw err;
 		}
 	}
 
@@ -253,7 +264,10 @@ export function createElevenLabsClient(options?: ElevenLabsOptions): SpeechClien
 		stopping = true;
 		paused = false;
 		stopCapture();
-		if (socket && socket.readyState === WebSocket.OPEN) {
+		// close() is legal in CONNECTING too — it aborts the handshake; leaving the socket
+		// dangling would hold the single-use realtime-token session open until the server
+		// idle-times it out (and fire callbacks against the torn-down stream).
+		if (socket && socket.readyState !== WebSocket.CLOSED) {
 			socket.close(1000, 'closed');
 		}
 		socket = null;

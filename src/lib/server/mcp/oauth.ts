@@ -223,17 +223,28 @@ export async function consumeAuthCode(
 ): Promise<AuthCodeRecord | null> {
 	if (!code || !code.startsWith(CODE_PREFIX)) return null;
 	const codeHash = await hashToken(code);
+	// Single DELETE ... RETURNING makes consumption atomic: two concurrent exchanges of the same
+	// code can't both read the row before either delete lands, so exactly one caller wins. The
+	// expiry check happens in JS (the stored value is a JS ISO string, so Date.parse is exact),
+	// and an expired code is still removed by the same statement.
 	const row = await db
 		.prepare(
-			`SELECT client_id, user_id, redirect_uri, code_challenge, scope, resource
-			 FROM mcp_oauth_codes
-			 WHERE code_hash = ? AND expires_at > datetime('now')`
+			`DELETE FROM mcp_oauth_codes WHERE code_hash = ?
+			 RETURNING client_id, user_id, redirect_uri, code_challenge, scope, resource, expires_at`
 		)
 		.bind(codeHash)
-		.first<AuthCodeRecord>();
-	// Delete regardless of validity window so a leaked-but-expired code can't linger.
-	await db.prepare('DELETE FROM mcp_oauth_codes WHERE code_hash = ?').bind(codeHash).run();
-	return row ?? null;
+		.first<AuthCodeRecord & { expires_at: string }>();
+	if (!row) return null;
+	const expiresAtMs = Date.parse(row.expires_at.includes('T') ? row.expires_at : row.expires_at.replace(' ', 'T') + 'Z');
+	if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) return null;
+	return {
+		client_id: row.client_id,
+		user_id: row.user_id,
+		redirect_uri: row.redirect_uri,
+		code_challenge: row.code_challenge,
+		scope: row.scope,
+		resource: row.resource
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -337,7 +348,7 @@ export async function refreshTokens(
 			`SELECT id, user_id, scopes, client_id
 			 FROM mcp_tokens
 			 WHERE refresh_token_hash = ? AND kind = 'oauth'
-			   AND (refresh_expires_at IS NULL OR refresh_expires_at > datetime('now'))`
+			   AND (refresh_expires_at IS NULL OR datetime(refresh_expires_at) > datetime('now'))`
 		)
 		.bind(refreshHash)
 		.first<{ id: string; user_id: string; scopes: string; client_id: string | null }>();

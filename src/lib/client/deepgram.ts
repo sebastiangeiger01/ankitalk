@@ -58,7 +58,8 @@ export function createDeepgramClient(options?: DeepgramOptions): SpeechClient {
 		silentGain.connect(audioContext.destination);
 	}
 
-	function stopCapture() {
+	/** Tear down the Web Audio graph + context but leave the mic stream's tracks alone. */
+	function teardownAudioGraph() {
 		if (processor) {
 			processor.onaudioprocess = null;
 			try { processor.disconnect(); } catch { /* already disconnected */ }
@@ -73,15 +74,18 @@ export function createDeepgramClient(options?: DeepgramOptions): SpeechClient {
 		source = null;
 		silentGain = null;
 
-		if (stream) {
-			stream.getTracks().forEach((track) => track.stop());
-		}
-		stream = null;
-
 		if (audioContext) {
 			audioContext.close().catch(() => {});
 		}
 		audioContext = null;
+	}
+
+	function stopCapture() {
+		teardownAudioGraph();
+		if (stream) {
+			stream.getTracks().forEach((track) => track.stop());
+		}
+		stream = null;
 	}
 
 	function clearKeepAlive() {
@@ -126,9 +130,13 @@ export function createDeepgramClient(options?: DeepgramOptions): SpeechClient {
 					}
 				});
 			}
+			// stop() may have run while we were awaiting; release what this step acquired after
+			// stop()'s own cleanup had already passed, and don't open a socket for a dead session.
+			if (stopping) { stop(); return; }
 
 			audioContext = new AudioContextCtor();
 			if (audioContext.state === 'suspended') await audioContext.resume();
+			if (stopping) { stop(); return; }
 
 			// 3. Connect to Deepgram, declaring the raw PCM format we stream.
 			// JWT access tokens use "bearer" scheme (not "token" which is for API keys)
@@ -194,10 +202,21 @@ export function createDeepgramClient(options?: DeepgramOptions): SpeechClient {
 		clearKeepAlive();
 		stopCapture();
 
-		// Send close signal to Deepgram
-		if (socket && socket.readyState === WebSocket.OPEN) {
-			socket.send(JSON.stringify({ type: 'CloseStream' }));
-			socket.close();
+		if (socket) {
+			// Detach handlers first so a socket still CONNECTING can't fire `onopen` against the
+			// torn-down stream (spurious "Microphone is not ready" after a user-initiated stop).
+			socket.onopen = null;
+			socket.onmessage = null;
+			socket.onerror = null;
+			socket.onclose = null;
+			if (socket.readyState === WebSocket.OPEN) {
+				socket.send(JSON.stringify({ type: 'CloseStream' }));
+			}
+			// close() is legal in CONNECTING too — it aborts the handshake instead of leaking
+			// the connection until the server idle-times it out.
+			if (socket.readyState !== WebSocket.CLOSED) {
+				socket.close();
+			}
 		}
 		socket = null;
 	}
@@ -228,8 +247,21 @@ export function createDeepgramClient(options?: DeepgramOptions): SpeechClient {
 		// If Deepgram closed the socket anyway (long pause, network blip), restart the
 		// whole pipeline — re-enabling tracks alone would stream into a dead socket.
 		if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) {
-			stopCapture();
-			start().catch((err) => errorCb?.(err instanceof Error ? err : new Error('Deepgram resume failed')));
+			// Reuse the existing mic stream when its tracks are still live. Stopping it and
+			// calling getUserMedia again moments later yields a muted stream on iOS (the same
+			// failure the gesture-time acquisition works around) — only the audio graph and
+			// socket need rebuilding.
+			const reusable =
+				stream && stream.getAudioTracks().some((t) => t.readyState === 'live') ? stream : null;
+			if (reusable) {
+				reusable.getAudioTracks().forEach((track) => { track.enabled = true; });
+				teardownAudioGraph();
+			} else {
+				stopCapture();
+			}
+			start(reusable ?? undefined).catch((err) =>
+				errorCb?.(err instanceof Error ? err : new Error('Deepgram resume failed'))
+			);
 			return;
 		}
 

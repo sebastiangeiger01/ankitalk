@@ -37,7 +37,9 @@ export const GET: RequestHandler = async ({ platform, locals }) => {
 
 	const data = (await response.json()) as { access_token?: string; key?: string };
 
-	const usagePromise = logUsage(db, userId, 'deepgram', 'stt_token', 60, calculateSttCost(60));
+	const usagePromise = logUsage(db, userId, 'deepgram', 'stt_token', 60, calculateSttCost(60)).catch(
+		() => undefined
+	);
 	platform?.context?.waitUntil(usagePromise);
 
 	return json({ token: data.access_token ?? data.key });

@@ -73,20 +73,28 @@ export function extractBearer(authHeader: string | null): string | null {
 export async function resolveTokenOwner(
 	db: D1Database,
 	plaintext: string
-): Promise<{ tokenId: string; userId: string; scopes: Set<McpScope> } | null> {
+): Promise<{ tokenId: string; userId: string; scopes: Set<McpScope>; lastUsedAt: string | null } | null> {
 	if (!plaintext || !plaintext.startsWith(TOKEN_PREFIX)) return null;
 	const hash = await hashToken(plaintext);
+	// `expires_at` is written as a JS ISO string ("...T12:00:00.000Z") while `datetime('now')`
+	// yields "YYYY-MM-DD HH:MM:SS" — a raw lexicographic comparison would keep every token that
+	// expires "today" alive until midnight UTC ('T' > ' '), so normalize via datetime().
 	const row = await db
 		.prepare(
-			`SELECT id, user_id, scopes
+			`SELECT id, user_id, scopes, last_used_at
 			 FROM mcp_tokens
 			 WHERE token_hash = ?
-			   AND (expires_at IS NULL OR expires_at > datetime('now'))`
+			   AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))`
 		)
 		.bind(hash)
-		.first<{ id: string; user_id: string; scopes: string }>();
+		.first<{ id: string; user_id: string; scopes: string; last_used_at: string | null }>();
 	if (!row) return null;
-	return { tokenId: row.id, userId: row.user_id, scopes: parseScopes(row.scopes) };
+	return {
+		tokenId: row.id,
+		userId: row.user_id,
+		scopes: parseScopes(row.scopes),
+		lastUsedAt: row.last_used_at
+	};
 }
 
 export async function touchLastUsed(db: D1Database, tokenId: string): Promise<void> {

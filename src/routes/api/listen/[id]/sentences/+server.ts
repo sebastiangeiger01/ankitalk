@@ -79,7 +79,7 @@ export const GET: RequestHandler = async ({ params, url, platform, locals }) => 
 				char_count: row.char_count,
 				sentence_hash: row.sentence_hash,
 				cached,
-				duration_ms: cached ? row.cached_duration_ms! : estimateDurationMsFromChars(row.char_count)
+				duration_ms: cached ? row.cached_duration_ms! : estimateDurationMsFromChars(row.char_count, genSpeed)
 			};
 		});
 	} else {
@@ -113,7 +113,7 @@ export const GET: RequestHandler = async ({ params, url, platform, locals }) => 
 				// what the stream endpoint will actually look up.
 				sentence_hash: h,
 				cached,
-				duration_ms: cached ? dur : estimateDurationMsFromChars(row.char_count)
+				duration_ms: cached ? dur : estimateDurationMsFromChars(row.char_count, genSpeed)
 			};
 		});
 	}

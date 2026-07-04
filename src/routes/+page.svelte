@@ -21,6 +21,7 @@
 	let exportError = $state('');
 	let exportSuccess = $state('');
 	let loading = $state(true);
+	let loadDecksError = $state(false);
 	let importInput = $state<HTMLInputElement | null>(null);
 
 	function triggerImport() {
@@ -42,8 +43,10 @@
 	}
 
 	async function loadDecks() {
-		const res = await fetch('/api/decks');
-		if (res.ok) {
+		loadDecksError = false;
+		try {
+			const res = await fetch('/api/decks');
+			if (!res.ok) throw new Error(`decks fetch failed: ${res.status}`);
 			const data = (await res.json()) as { decks: DeckWithDueCount[]; has_reviewed?: boolean };
 			decks = data.decks;
 			hasReviewed = Boolean(data.has_reviewed);
@@ -52,8 +55,13 @@
 			// The audioCache is module-level so these buffers are already decoded when
 			// the user navigates to the review page.
 			prefetchDueDecksTTS(data.decks);
+		} catch {
+			// A network error (offline PWA launch) must not strand the dashboard on the
+			// skeleton forever — surface a retry instead.
+			loadDecksError = true;
+		} finally {
+			loading = false;
 		}
-		loading = false;
 	}
 
 	function prefetchDueDecksTTS(allDecks: DeckWithDueCount[]) {
@@ -248,6 +256,11 @@
 			</li>
 		{/each}
 	</ul>
+{:else if loadDecksError}
+	<div class="load-error" role="alert">
+		<p>{$t('dashboard.loadError')}</p>
+		<button class="btn-primary" onclick={() => { loading = true; loadDecks(); }}>{$t('dashboard.retry')}</button>
+	</div>
 {:else if decks.length === 0 && !showOnboarding}
 	<div class="onboarding">
 		<div class="onboarding-icon">
@@ -571,6 +584,16 @@
 		height: 0.75rem;
 		width: 28%;
 		animation-delay: 0.1s;
+	}
+
+	.load-error {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 2rem 1rem;
+		text-align: center;
+		color: var(--text-muted);
 	}
 
 </style>

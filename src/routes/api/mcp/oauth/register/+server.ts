@@ -46,11 +46,15 @@ export const POST: RequestHandler = async ({ request, platform, getClientAddress
 	}
 	try {
 		await enforceRateLimit(platform!.env.KV, clientAddress, 'oauth_register', 20, 60 * 60);
-	} catch {
-		return json(
-			{ error: 'temporarily_unavailable', error_description: 'Too many registrations' },
-			{ status: 429, headers: CORS }
-		);
+	} catch (err) {
+		// Only a real 429 from the limiter blocks registration. Any other failure (KV outage)
+		// fails open — registration only mints a public PKCE client, so availability wins.
+		if ((err as { status?: number }).status === 429) {
+			return json(
+				{ error: 'temporarily_unavailable', error_description: 'Too many registrations' },
+				{ status: 429, headers: CORS }
+			);
+		}
 	}
 
 	const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;

@@ -1,6 +1,7 @@
 // @ts-expect-error sql.js has no type declarations
 import initSqlJs from 'sql.js';
 import { zipSync } from 'fflate';
+import { decodeHtmlEntities } from '$lib/media-url';
 
 interface ExportDeck {
 	id: string;
@@ -46,11 +47,12 @@ export function extractMediaFilenames(notes: ExportNote[]): Set<string> {
 		}
 		for (const field of fields) {
 			let match;
+			// Stored HTML is entity-encoded ("a&amp;b.png"), but R2 keys use the decoded name.
 			while ((match = srcPattern.exec(field.value)) !== null) {
-				filenames.add(match[1]);
+				filenames.add(decodeHtmlEntities(match[1]));
 			}
 			while ((match = soundPattern.exec(field.value)) !== null) {
-				filenames.add(match[1]);
+				filenames.add(decodeHtmlEntities(match[1]));
 			}
 		}
 	}
@@ -133,12 +135,33 @@ export async function buildApkg(
 		}
 	};
 
+	// Cloze notes need a type-1 model with a {{cloze:...}} template: with a plain type-0 model
+	// Anki renders the {{cN::...}} markup literally and deletes every card whose ord points at
+	// a template that doesn't exist (c2 → ord 1). Detect cloze via the stored card_type or the
+	// markup itself.
+	const clozeMarkup = /\{\{c\d+::/;
+	const isClozeExport =
+		cards.some((c) => c.card_type === 'cloze') || notes.some((n) => clozeMarkup.test(n.fields));
+
+	// For basic exports, cover every ordinal present so multi-template notes' cards keep a
+	// valid template reference (Anki's "Check Database" deletes cards with a dangling ord).
+	const maxOrdinal = cards.reduce((max, c) => Math.max(max, c.ordinal ?? 0), 0);
+	const basicTemplates = Array.from({ length: maxOrdinal + 1 }, (_, i) => ({
+		name: `Card ${i + 1}`,
+		ord: i,
+		qfmt: '{{' + (fieldNames[0] ?? 'Front') + '}}',
+		afmt: '{{FrontSide}}<hr id="answer">{{' + (fieldNames[1] ?? 'Back') + '}}',
+		did: null
+	}));
+
+	const clozeBack =
+		'{{cloze:' + (fieldNames[0] ?? 'Text') + '}}' + (fieldNames[1] ? '<br>{{' + fieldNames[1] + '}}' : '');
 	const modelsJson: Record<string, object> = {
 		[String(modelId)]: {
 			id: modelId,
-			name: notes[0]?.model_name ?? 'Basic',
+			name: notes[0]?.model_name ?? (isClozeExport ? 'Cloze' : 'Basic'),
 			mod: ankiTs(),
-			type: 0,
+			type: isClozeExport ? 1 : 0,
 			flds: fieldNames.map((name, i) => ({
 				name,
 				ord: i,
@@ -147,19 +170,21 @@ export async function buildApkg(
 				font: 'Arial',
 				size: 20
 			})),
-			tmpls: [
-				{
-					name: 'Card 1',
-					ord: 0,
-					qfmt: '{{' + (fieldNames[0] ?? 'Front') + '}}',
-					afmt: '{{FrontSide}}<hr id="answer">{{' + (fieldNames[1] ?? 'Back') + '}}',
-					did: null
-				}
-			],
+			tmpls: isClozeExport
+				? [
+						{
+							name: 'Cloze',
+							ord: 0,
+							qfmt: '{{cloze:' + (fieldNames[0] ?? 'Text') + '}}',
+							afmt: clozeBack,
+							did: null
+						}
+					]
+				: basicTemplates,
 			css: '.card { font-family: arial; font-size: 20px; text-align: center; color: black; background-color: white; }',
 			usn: -1,
 			sortf: 0,
-			req: [[0, 'all', [0]]]
+			req: isClozeExport ? [] : basicTemplates.map((t) => [t.ord, 'all', [0]])
 		}
 	};
 
@@ -261,7 +286,19 @@ export async function buildApkg(
 		const type = fsrsToAnkiType(card.fsrs_state);
 		const queue = card.suspended ? -1 : fsrsToAnkiQueue(card.fsrs_state);
 		const dueMs = card.due_at ? new Date(card.due_at).getTime() : 0;
-		const due = card.fsrs_state === 0 ? 0 : (Number.isFinite(dueMs) ? Math.floor(dueMs / 86400000) : 0);
+		// Anki's `due` semantics depend on the queue: review cards (queue 2) use days relative
+		// to `col.crt` (which we set to now), learning cards (queue 1) use an epoch-seconds
+		// timestamp, new cards use a queue position. Days-since-Unix-epoch (the old formula)
+		// made every review card due ~56 years out on re-import.
+		// Keyed on `type` (not queue) so suspended cards keep meaningful due values too.
+		let due = 0;
+		if (Number.isFinite(dueMs) && dueMs > 0) {
+			if (type === 2) {
+				due = Math.max(0, Math.ceil((dueMs - now * 1000) / 86400000));
+			} else if (type === 1 || type === 3) {
+				due = Math.floor(dueMs / 1000);
+			}
+		}
 		const ivl = card.fsrs_scheduled_days ?? 0;
 		const left = card.learning_step_index ?? 0;
 

@@ -27,7 +27,16 @@ export async function enforceRateLimit(
 	}
 	// `expirationTtl` = 2× window so an in-flight slot doesn't get evicted prematurely under
 	// clock skew between isolates. The slot key naturally rolls over so old slots fall out.
-	await kv.put(key, String(current + 1), { expirationTtl: windowSec * 2 });
+	//
+	// Cloudflare KV allows only ~1 write/second to a single key; concurrent requests in the
+	// same slot (routine for parallel MCP tool calls) make the extra `put`s throw. Losing an
+	// increment just makes the limiter slightly more permissive — failing the request would
+	// turn an under-limit call into a 500, which is worse than the drift.
+	try {
+		await kv.put(key, String(current + 1), { expirationTtl: windowSec * 2 });
+	} catch {
+		// Swallow write contention/outage: fail open on the increment, not the request.
+	}
 }
 
 /**

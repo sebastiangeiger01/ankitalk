@@ -67,7 +67,14 @@ const handleMcp: RequestHandler = async ({ request, url, platform }) => {
 		return rpcError(status, -32603, status === 429 ? 'Rate limit exceeded' : 'Rate limiter unavailable');
 	}
 
-	platform!.context.waitUntil(touchLastUsed(db, owner.tokenId).catch(() => undefined));
+	// "Last seen" only needs minute-level granularity in the settings UI, so skip the write when
+	// it's fresh — at the allowed 120 calls/min this saves ~119 pointless D1 row writes a minute.
+	const lastUsedMs = owner.lastUsedAt
+		? Date.parse(owner.lastUsedAt.includes('T') ? owner.lastUsedAt : owner.lastUsedAt.replace(' ', 'T') + 'Z')
+		: NaN;
+	if (!Number.isFinite(lastUsedMs) || Date.now() - lastUsedMs > 60_000) {
+		platform!.context.waitUntil(touchLastUsed(db, owner.tokenId).catch(() => undefined));
+	}
 	const server = createMcpServer({
 		db,
 		userId: owner.userId,

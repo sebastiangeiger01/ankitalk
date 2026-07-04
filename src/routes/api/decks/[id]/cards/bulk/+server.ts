@@ -29,9 +29,10 @@ export const POST: RequestHandler = async ({ params, request, platform, locals }
 
 	const suspended = body.action === 'suspend' ? 1 : 0;
 
-	// Batch update in chunks of 500
+	// D1 caps a single statement at 100 bound parameters; each chunk binds the ids plus
+	// `suspended`, `deck_id`, and `user_id`, so anything above 97 ids per chunk throws.
 	let updated = 0;
-	const chunkSize = 500;
+	const chunkSize = 90;
 
 	for (let i = 0; i < body.cardIds.length; i += chunkSize) {
 		const chunk = body.cardIds.slice(i, i + chunkSize);

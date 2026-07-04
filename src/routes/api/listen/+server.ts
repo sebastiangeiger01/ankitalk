@@ -54,7 +54,7 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 
 	const userId = locals.userId;
 	const db = getDb(platform!);
-	const body = (await request.json()) as {
+	const body = (await request.json().catch(() => ({}))) as {
 		text?: unknown;
 		title?: unknown;
 		voiceId?: unknown;

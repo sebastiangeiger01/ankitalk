@@ -2,7 +2,6 @@ import { json, error } from '@sveltejs/kit';
 import { getDb, newId } from '$lib/server/db';
 import {
 	IMPORT_LIMITS,
-	assertMaxBytes,
 	mediaContentTypeForFilename,
 	mediaContentTypeSafetyError,
 	mediaFilenameSafetyError,
@@ -10,6 +9,7 @@ import {
 	sanitizeMediaBlob,
 	sanitizePlainText
 } from '$lib/sanitize';
+import { sanitizeNoteFields } from '$lib/server/note-fields';
 import type { RequestHandler } from './$types';
 
 interface ImportDeck {
@@ -43,24 +43,6 @@ function assertArrayLimit<T>(value: T[], max: number, label: string): void {
 	}
 }
 
-function sanitizeFields(fields: { name: string; value: string }[]): { name: string; value: string }[] {
-	if (!Array.isArray(fields) || fields.length === 0) {
-		throw error(400, 'Invalid note fields');
-	}
-	if (fields.length > IMPORT_LIMITS.maxFieldsPerNote) {
-		throw error(413, 'Field limit exceeded');
-	}
-
-	return fields.map((field, index) => {
-		const name = sanitizePlainText(field?.name ?? `Field ${index + 1}`, 1_000);
-		const value = field?.value ?? '';
-		assertMaxBytes(value, IMPORT_LIMITS.maxFieldBytes, 'Card field');
-		return {
-			name: name || `Field ${index + 1}`,
-			value: sanitizeCardHtml(value)
-		};
-	});
-}
 
 export const POST: RequestHandler = async ({ request, platform, locals }) => {
 	if (!locals.userId) throw error(401, 'Unauthorized');
@@ -148,18 +130,16 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 		);
 	}
 
-	if (deckStmts.length > 0) {
-		await db.batch(deckStmts);
-	}
-
-	// Create notes in batches
+	// Build (and thereby validate/sanitize) ALL note and card statements BEFORE executing any
+	// batch. `sanitizeFields` throws 400/413 on bad input — if that happened after the deck
+	// batch had already committed, a rejected import would leave orphan empty decks behind.
 	const noteStmts: D1PreparedStatement[] = [];
 	for (const note of notes) {
 		const id = newId();
 		noteIdMap.set(note.ankiId, id);
 		const deckUuid = deckIdMap.get(note.deckId) ?? Array.from(deckIdMap.values())[0];
 		if (!deckUuid) continue;
-		const fields = sanitizeFields(note.fields);
+		const fields = sanitizeNoteFields(note.fields);
 		const modelName = sanitizePlainText(note.modelName, 2_000);
 		const tags = sanitizePlainText(note.tags, IMPORT_LIMITS.maxTagsBytes);
 		noteStmts.push(
@@ -177,10 +157,6 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 					tags
 				)
 		);
-	}
-
-	for (let i = 0; i < noteStmts.length; i += BATCH_SIZE) {
-		await db.batch(noteStmts.slice(i, i + BATCH_SIZE));
 	}
 
 	// Create cards in batches
@@ -215,6 +191,14 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 		);
 	}
 
+	// All statements validated — now execute: decks first (notes/cards reference them), then
+	// notes, cards, and counts.
+	if (deckStmts.length > 0) {
+		await db.batch(deckStmts);
+	}
+	for (let i = 0; i < noteStmts.length; i += BATCH_SIZE) {
+		await db.batch(noteStmts.slice(i, i + BATCH_SIZE));
+	}
 	for (let i = 0; i < cardStmts.length; i += BATCH_SIZE) {
 		await db.batch(cardStmts.slice(i, i + BATCH_SIZE));
 	}
@@ -230,14 +214,19 @@ export const POST: RequestHandler = async ({ request, platform, locals }) => {
 		await db.batch(countStmts);
 	}
 
-	// Upload media files to R2
+	// Upload media files to R2. Pass the Blob straight through (no arrayBuffer() copy that
+	// doubles memory) and upload with bounded concurrency instead of one-at-a-time round trips.
 	const mediaKeys: string[] = [];
-	for (const { filename, blob, contentType } of mediaUploads) {
-		const r2Key = `${userId}/${filename}`;
-		await platform!.env.MEDIA.put(r2Key, await blob.arrayBuffer(), {
-			httpMetadata: { contentType }
-		});
-		mediaKeys.push(r2Key);
+	const UPLOAD_CONCURRENCY = 8;
+	for (let i = 0; i < mediaUploads.length; i += UPLOAD_CONCURRENCY) {
+		const batch = mediaUploads.slice(i, i + UPLOAD_CONCURRENCY);
+		await Promise.all(
+			batch.map(async ({ filename, blob, contentType }) => {
+				const r2Key = `${userId}/${filename}`;
+				await platform!.env.MEDIA.put(r2Key, blob, { httpMetadata: { contentType } });
+				mediaKeys.push(r2Key);
+			})
+		);
 	}
 
 	return json({

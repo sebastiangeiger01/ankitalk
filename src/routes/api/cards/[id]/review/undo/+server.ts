@@ -77,6 +77,15 @@ export const POST: RequestHandler = async ({ params, platform, locals }) => {
 				params.id,
 				locals.userId
 			),
+		// The undone review buried this card's siblings; restore them too, or they'd stay
+		// hidden from the queue until the next day despite the review no longer existing.
+		db
+			.prepare(
+				`UPDATE cards SET buried_until = NULL
+				 WHERE user_id = ? AND id != ?
+				   AND note_id = (SELECT note_id FROM cards WHERE id = ? AND user_id = ?)`
+			)
+			.bind(locals.userId, params.id, params.id, locals.userId),
 		db.prepare('DELETE FROM reviews WHERE id = ?').bind(review.id)
 	]);
 

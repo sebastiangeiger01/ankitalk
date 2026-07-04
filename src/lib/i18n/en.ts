@@ -24,6 +24,8 @@ export const en: Record<string, string> = {
 	'dashboard.stats': 'Stats',
 	'dashboard.delete': 'Delete',
 	'dashboard.deleteConfirm': 'Delete "{name}" and all its cards?',
+	'dashboard.loadError': 'Couldn’t load your decks. Check your connection and try again.',
+	'dashboard.retry': 'Try again',
 	'dashboard.exportFailed': 'Export failed: {error}',
 	'dashboard.exportDone': '“{name}” exported.',
 

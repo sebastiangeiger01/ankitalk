@@ -55,7 +55,7 @@ export const GET: RequestHandler = async ({ params, platform, locals }) => {
 export const PATCH: RequestHandler = async ({ params, request, platform, locals }) => {
 	if (!locals.userId) throw error(401, 'Unauthorized');
 
-	const body = (await request.json()) as { title?: unknown };
+	const body = (await request.json().catch(() => ({}))) as { title?: unknown };
 	const title = typeof body.title === 'string' ? body.title.trim().slice(0, 120) : '';
 	if (!title) throw error(400, 'Missing title');
 

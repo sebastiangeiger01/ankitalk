@@ -82,6 +82,21 @@ describe('extractMediaFilenames', () => {
 		const html = '<img src="https://example.com/a.png"><img src="data:image/png;base64,AAAA">';
 		expect(extractMediaFilenames(html)).toEqual([]);
 	});
+
+	it('decodes entity-encoded src values (stored HTML is sanitizer-serialized)', () => {
+		const html = '<img src="a&amp;b.png">';
+		expect(extractMediaFilenames(html)).toEqual(['a&b.png']);
+	});
+
+	it('collects Anki [sound:...] references', () => {
+		const html = '<p>word</p>[sound:speech.mp3]';
+		expect(extractMediaFilenames(html)).toEqual(['speech.mp3']);
+	});
+
+	it('survives malformed percent-escapes in rewritten URLs', () => {
+		const html = '<img src="/api/media/50%.png"><img src="ok.png">';
+		expect(extractMediaFilenames(html)).toEqual(['ok.png']);
+	});
 });
 
 function fakeBucket() {

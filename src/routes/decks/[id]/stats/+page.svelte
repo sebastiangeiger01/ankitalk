@@ -56,13 +56,19 @@
 		return n >= 10 ? String(Math.round(n)) : n.toFixed(1);
 	}
 
+	// Monotonic request id: a slower stale response (rapid 7d→90d clicks) must not land after
+	// a newer one and paint the wrong chart against the active button.
+	let requestSeq = 0;
+
 	async function loadStats() {
+		const seq = ++requestSeq;
 		loading = true;
 		try {
 			const [deckRes, statsRes] = await Promise.all([
 				fetch(`/api/decks/${deckId}`),
 				fetch(`/api/decks/${deckId}/stats?days=${period}`)
 			]);
+			if (seq !== requestSeq) return; // superseded by a newer request
 
 			if (deckRes.ok) {
 				const data = (await deckRes.json()) as { deck: { name: string } };
@@ -84,12 +90,13 @@
 		} catch {
 			// silently fail
 		}
-		loading = false;
+		if (seq === requestSeq) loading = false;
 	}
 
 	function setPeriod(days: number) {
+		// The $effect below tracks `period` (read synchronously in loadStats), so assigning it
+		// already triggers a reload — calling loadStats() here too doubled every fetch.
 		period = days;
-		loadStats();
 	}
 
 	function stateBarWidth(count: number): string {

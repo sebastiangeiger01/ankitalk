@@ -10,6 +10,7 @@
  * reads are user-scoped in `/api/media/[key]`.
  */
 import { IMPORT_LIMITS, isSafeMediaFilename, mediaContentTypeForFilename, sanitizeMediaBytes } from '$lib/sanitize';
+import { decodeHtmlEntities } from '$lib/media-url';
 
 /** Extensions accepted by the image-upload paths (raster + sanitized SVG). */
 export const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'] as const;
@@ -38,12 +39,26 @@ export function extractMediaFilenames(html: string): string[] {
 	const re = /<(?:img|audio|source)\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi;
 	let match: RegExpExecArray | null;
 	while ((match = re.exec(html)) !== null) {
-		let src = match[1].trim();
+		// The regex captures attribute text as stored, i.e. entity-ENCODED ("a&amp;b.png").
+		let src = decodeHtmlEntities(match[1].trim());
 		if (/^https?:\/\//i.test(src) || /^data:/i.test(src)) continue;
 		const api = src.match(/^\/api\/media\/([^/?#]+)$/);
-		if (api) src = decodeURIComponent(api[1]);
+		if (api) {
+			try {
+				src = decodeURIComponent(api[1]);
+			} catch {
+				continue; // malformed percent-escape — not a resolvable media ref
+			}
+		}
 		if (src.includes('/') || src.includes('\\')) continue;
 		if (isSafeMediaFilename(src)) out.add(src);
+	}
+	// Anki-style [sound:file.mp3] references count as media too — export includes them, so
+	// validation must see them as well.
+	const soundRe = /\[sound:([^\]]+)\]/gi;
+	while ((match = soundRe.exec(html)) !== null) {
+		const src = decodeHtmlEntities(match[1].trim());
+		if (!src.includes('/') && !src.includes('\\') && isSafeMediaFilename(src)) out.add(src);
 	}
 	return [...out];
 }

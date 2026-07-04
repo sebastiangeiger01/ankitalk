@@ -372,7 +372,10 @@ export async function findCards(
 ) {
 	const offset = decodeCursor(input.cursor);
 	const statusSql: Record<CardFinderStatus, string> = {
-		due: "c.due_at <= datetime('now') AND c.suspended = 0",
+		// `due_at` mixes formats: review writes store JS ISO strings ("...T09:00:00.000Z") while
+		// freshly created cards carry SQLite `datetime('now')` values — so normalize via
+		// `datetime()` (which parses both) instead of comparing lexicographically.
+		due: "datetime(c.due_at) <= datetime('now') AND c.suspended = 0",
 		struggling: 'c.fsrs_lapses > 0 AND c.suspended = 0',
 		leech: 'c.fsrs_lapses >= 3',
 		new: 'c.fsrs_state = 0 AND c.suspended = 0',
@@ -429,7 +432,7 @@ export async function getStudyProgress(
 			.prepare(
 				`SELECT
 					COUNT(*) AS total,
-					SUM(CASE WHEN due_at <= datetime('now') AND suspended = 0 THEN 1 ELSE 0 END) AS due,
+					SUM(CASE WHEN datetime(due_at) <= datetime('now') AND suspended = 0 THEN 1 ELSE 0 END) AS due,
 					SUM(CASE WHEN fsrs_state = 0 AND suspended = 0 THEN 1 ELSE 0 END) AS new_count,
 					SUM(CASE WHEN fsrs_state IN (1, 3) AND suspended = 0 THEN 1 ELSE 0 END) AS learning,
 					SUM(CASE WHEN fsrs_state = 2 AND suspended = 0 THEN 1 ELSE 0 END) AS review,
@@ -461,7 +464,7 @@ export async function getStudyProgress(
 					d.id AS deck_id,
 					d.name,
 					COUNT(c.id) AS card_count,
-					SUM(CASE WHEN c.due_at <= datetime('now') AND c.suspended = 0 THEN 1 ELSE 0 END) AS due_count,
+					SUM(CASE WHEN datetime(c.due_at) <= datetime('now') AND c.suspended = 0 THEN 1 ELSE 0 END) AS due_count,
 					SUM(CASE WHEN c.fsrs_lapses > 0 AND c.suspended = 0 THEN 1 ELSE 0 END) AS struggling_count
 				 FROM decks d
 				 LEFT JOIN cards c ON c.deck_id = d.id AND c.user_id = d.user_id

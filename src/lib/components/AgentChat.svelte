@@ -43,6 +43,10 @@
 	let messages = $state<{ role: 'user' | 'agent'; text: string; streaming?: boolean }[]>([]);
 	let streamingIndex = $state(-1);
 	let conversation = $state<ConversationType | null>(null);
+	// Bumped by every start()/stop(): lets a start() that resolves after the user already
+	// closed/retried recognize that its freshly opened session is orphaned and end it —
+	// otherwise the WebRTC session keeps the mic hot and bills agent minutes invisibly.
+	let sessionGen = 0;
 	let transcriptEl = $state<HTMLDivElement | null>(null);
 	// Screen-reader announcements. The transcript itself is NOT a live region — growing the
 	// agent bubble token-by-token would make a reader stutter the reply word-by-word. Instead we
@@ -321,6 +325,7 @@
 	});
 
 	async function start() {
+		const gen = ++sessionGen;
 		phase = 'connecting';
 		errorMsg = '';
 		messages = [];
@@ -370,7 +375,7 @@
 			const { Conversation } = await import('@elevenlabs/client');
 
 			sessionStartMs = Date.now();
-			conversation = await Conversation.startSession({
+			const session = await Conversation.startSession({
 				conversationToken: data.conversationToken,
 				connectionType: 'webrtc',
 				dynamicVariables: data.dynamicVariables,
@@ -457,6 +462,19 @@
 				}
 			});
 
+			// The user may have closed/retried while startSession was connecting; adopting the
+			// session then would leave a live WebRTC connection (open mic, per-minute billing)
+			// with the modal already gone — end it instead.
+			if (gen !== sessionGen) {
+				try {
+					await session.endSession();
+				} catch {
+					/* already disconnected */
+				}
+				return;
+			}
+			conversation = session;
+
 			// Trigger the agent's first turn immediately so it leads with a hint/explanation
 			// rather than waiting on the now-empty greeting. Non-fatal if it fails — the
 			// student can simply speak first.
@@ -507,6 +525,8 @@
 	}
 
 	async function stop() {
+		// Invalidate any start() still awaiting startSession so it ends its session on arrival.
+		sessionGen++;
 		try {
 			await conversation?.endSession();
 		} catch {

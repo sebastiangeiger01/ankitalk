@@ -147,12 +147,23 @@ export const handle: Handle = async ({ event, resolve }) => {
 				);
 			}
 		} else {
+			// A brand-new user's first page view fires several parallel requests (page + data +
+			// API fetches), each seeing "no row yet". `hanko_id` is UNIQUE, so a bare INSERT 500s
+			// for every request that loses the race — tolerate the conflict and re-read instead.
 			const userId = newId();
-			await db
-				.prepare('INSERT INTO users (id, hanko_id) VALUES (?, ?)')
+			const inserted = await db
+				.prepare('INSERT INTO users (id, hanko_id) VALUES (?, ?) ON CONFLICT(hanko_id) DO NOTHING')
 				.bind(userId, hankoId)
 				.run();
-			event.locals.userId = userId;
+			if (inserted.meta.changes === 0) {
+				const winner = await db
+					.prepare('SELECT id FROM users WHERE hanko_id = ?')
+					.bind(hankoId)
+					.first<{ id: string }>();
+				event.locals.userId = winner?.id ?? null;
+			} else {
+				event.locals.userId = userId;
+			}
 		}
 	}
 

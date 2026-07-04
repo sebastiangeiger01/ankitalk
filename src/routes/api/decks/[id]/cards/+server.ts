@@ -1,5 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { getDb, newId } from '$lib/server/db';
+import { sanitizeNoteFields, sanitizeNoteTags } from '$lib/server/note-fields';
+import { sanitizePlainText } from '$lib/sanitize';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ params, url, platform, locals }) => {
@@ -89,6 +91,10 @@ export const POST: RequestHandler = async ({ params, request, platform, locals }
 	if (!body.fields || body.fields.length === 0) {
 		throw error(400, 'Fields are required');
 	}
+	// Same validation/sanitization as the import path — size limits + HTML sanitization.
+	const fields = sanitizeNoteFields(body.fields);
+	const tags = sanitizeNoteTags(body.tags ?? '');
+	const modelName = sanitizePlainText(body.modelName ?? 'Basic', 2_000) || 'Basic';
 
 	const db = getDb(platform!);
 
@@ -112,9 +118,9 @@ export const POST: RequestHandler = async ({ params, request, platform, locals }
 				noteId,
 				locals.userId,
 				params.id,
-				body.modelName ?? 'Basic',
-				JSON.stringify(body.fields),
-				body.tags ?? '',
+				modelName,
+				JSON.stringify(fields),
+				tags,
 				now
 			),
 		db

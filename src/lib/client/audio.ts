@@ -96,9 +96,10 @@ async function fetchTTSAudio(
 	deckId?: string,
 	generate = true
 ): Promise<Blob | null> {
-	const params: Record<string, string | boolean> = { text, generate };
+	const params: Record<string, string | number | boolean> = { text, generate };
 	if (voice) params.voice = voice;
-	if (speed) params.speed = String(speed);
+	// Must stay a number — the server ignores non-numeric `speed` values.
+	if (speed) params.speed = speed;
 	// deckId doesn't change the audio (so it's intentionally absent from the client cache key);
 	// it only tells the server which deck's exam-pin retention this clip belongs to.
 	if (deckId) params.deckId = deckId;

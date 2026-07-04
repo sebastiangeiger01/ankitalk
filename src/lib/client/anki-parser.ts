@@ -60,7 +60,15 @@ export async function parseApkg(file: File): Promise<ParsedApkg> {
 		throw new Error('APKG expands to too much data');
 	}
 
-	// Find the SQLite database file
+	// Find the SQLite database file. Anki 23.10+ default exports ship `collection.anki21b`
+	// (zstd-compressed, new schema) alongside a legacy `collection.anki2` stub that contains
+	// only a "please update" note — silently importing the stub loses the whole deck, so fail
+	// with an actionable message instead.
+	if (zip['collection.anki21b'] && !zip['collection.anki21']) {
+		throw new Error(
+			'This .apkg uses the new Anki format. Re-export it from Anki with "Support older Anki versions" checked.'
+		);
+	}
 	const dbFile =
 		zip['collection.anki21'] ?? zip['collection.anki2'] ?? zip['collection'];
 	if (!dbFile) {
@@ -107,18 +115,12 @@ export async function parseApkg(file: File): Promise<ParsedApkg> {
 		});
 	}
 
-	// Parse decks (skip "Default" if empty)
+	// Parse all decks; whether the built-in "Default" deck is dropped is decided AFTER the
+	// cards are read — dropping it unconditionally would silently merge any cards that really
+	// live in Default (did=1) into the first surviving deck.
 	const decks: ParsedDeck[] = [];
 	for (const [, deck] of Object.entries(decksJson)) {
-		if (deck.name === 'Default' && deck.id === 1) continue;
 		decks.push({ ankiId: deck.id, name: sanitizePlainText(deck.name, 2_000) });
-	}
-
-	// If we filtered everything, keep default
-	if (decks.length === 0) {
-		for (const [, deck] of Object.entries(decksJson)) {
-			decks.push({ ankiId: deck.id, name: sanitizePlainText(deck.name, 2_000) });
-		}
 	}
 	if (decks.length > IMPORT_LIMITS.maxDecks) {
 		throw new Error('APKG contains too many decks');
@@ -128,6 +130,7 @@ export async function parseApkg(file: File): Promise<ParsedApkg> {
 	const noteRows = db.exec('SELECT id, mid, flds, tags FROM notes')[0];
 	const notes: ParsedNote[] = [];
 	const noteModelMap = new Map<number, number>(); // note ID → model ID
+	const noteClozeMap = new Map<number, boolean>(); // note ID → fields contain {{cN::...}}
 
 	if (noteRows) {
 		for (const row of noteRows.values) {
@@ -160,6 +163,7 @@ export async function parseApkg(file: File): Promise<ParsedApkg> {
 				fields.push({ name: `Field ${i + 1}`, value: sanitizeCardHtml(value) });
 			}
 
+			noteClozeMap.set(noteId, fields.some((f) => /\{\{c\d+::/.test(f.value)));
 			notes.push({
 				ankiId: noteId,
 				modelName: model?.name ?? 'Unknown',
@@ -191,9 +195,8 @@ export async function parseApkg(file: File): Promise<ParsedApkg> {
 			const modelId = noteModelMap.get(noteAnkiId);
 			const model = modelId ? modelMap.get(modelId) : undefined;
 			// model.type 1 = cloze note type; also detect cloze syntax in fields as fallback
-			const note = notes.find((n) => n.ankiId === noteAnkiId);
-			const hasClozeFields = note?.fields.some((f) => /\{\{c\d+::/.test(f.value)) ?? false;
-			const isCloze = model?.type === 1 || hasClozeFields;
+			// (precomputed per note — a `notes.find` + regex per CARD is O(notes × cards)).
+			const isCloze = model?.type === 1 || (noteClozeMap.get(noteAnkiId) ?? false);
 			const template = isCloze
 				? model?.templates[0]
 				: model?.templates[ordinal];
@@ -213,9 +216,16 @@ export async function parseApkg(file: File): Promise<ParsedApkg> {
 		throw new Error('APKG contains too many cards');
 	}
 
+	// Drop Anki's built-in "Default" deck only when no card actually lives in it.
+	const usedDeckIds = new Set(cards.map((c) => c.deckAnkiId));
+	const prunedDecks = decks.filter(
+		(d) => d.ankiId !== 1 || d.name !== 'Default' || usedDeckIds.has(1)
+	);
+	const finalDecks = prunedDecks.length > 0 ? prunedDecks : decks;
+
 	// Set deck IDs on notes
 	for (const note of notes) {
-		note.deckId = noteDeckMap.get(note.ankiId) ?? decks[0]?.ankiId ?? 0;
+		note.deckId = noteDeckMap.get(note.ankiId) ?? finalDecks[0]?.ankiId ?? 0;
 	}
 
 	// Extract media
@@ -253,5 +263,5 @@ export async function parseApkg(file: File): Promise<ParsedApkg> {
 
 	db.close();
 
-	return { decks, notes, cards, media };
+	return { decks: finalDecks, notes, cards, media };
 }

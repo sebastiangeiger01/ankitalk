@@ -43,6 +43,14 @@ describe('sanitizeCardHtml', () => {
 		expect(result).toContain('<img src="" />');
 		expect(result).not.toContain('secret.png');
 	});
+
+	it('decodes entity-encoded filenames before building the media URL', () => {
+		// The sanitizer serializes src="a&b.png" as src="a&amp;b.png"; the rewrite must target
+		// the DECODED filename (the R2 key) or every name containing & 404s.
+		const result = sanitizeAndRewriteCardHtml('<img src="a&b.png">');
+		expect(result).toContain('src="/api/media/a%26b.png"');
+		expect(result).not.toContain('amp');
+	});
 });
 
 describe('import safety helpers', () => {

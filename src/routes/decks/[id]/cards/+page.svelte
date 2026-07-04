@@ -30,7 +30,12 @@
 	let modalTags = $state('');
 	let modalCreateMode = $state(false);
 
+	// Monotonic request id: a debounced search response resolving AFTER a newer filter/page
+	// request must not overwrite the list with stale results.
+	let requestSeq = 0;
+
 	async function loadCards() {
+		const seq = ++requestSeq;
 		loading = true;
 		loadError = false;
 		const params = new URLSearchParams({
@@ -42,13 +47,16 @@
 
 		try {
 			const res = await fetch(`/api/decks/${deckId}/cards?${params}`);
+			if (seq !== requestSeq) return; // superseded by a newer request
 			if (!res.ok) throw new Error(`cards fetch failed: ${res.status}`);
 			const data = (await res.json()) as { cards: BrowseCard[]; total: number; page: number; pageSize: number };
+			if (seq !== requestSeq) return;
 			cards = data.cards;
 			total = data.total;
 			currentPage = data.page;
 			pageSize = data.pageSize;
 		} catch {
+			if (seq !== requestSeq) return;
 			loadError = true;
 		}
 		loading = false;
@@ -189,8 +197,13 @@
 	const totalPages = $derived(Math.max(1, Math.ceil(total / pageSize)));
 
 	onMount(() => {
-		loadDeckName();
+		loadDeckName().catch(() => undefined);
 		loadCards();
+		return () => {
+			// Don't let a pending debounce fire a fetch + state writes for a dead page.
+			if (debounceTimer) clearTimeout(debounceTimer);
+			requestSeq++; // in-flight responses become stale no-ops
+		};
 	});
 </script>
 

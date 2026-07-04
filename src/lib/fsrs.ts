@@ -158,19 +158,50 @@ export function scheduleCard(
 		request_retention: options?.requestRetention ?? 0.9,
 		maximum_interval: options?.maximumInterval ?? 36500
 	});
+	const graduationScheduler = makeGraduationScheduler(options);
 
 	// For New (0) and Learning (1): use traditional learning steps
 	if ((state === State.New || state === State.Learning) && learningSteps.length > 0) {
-		return scheduleLearning(card, rating, now, scheduler, learningSteps, currentStepIndex);
+		return scheduleLearning(card, rating, now, scheduler, graduationScheduler, learningSteps, currentStepIndex);
 	}
 
 	// For Relearning (3): use relearning steps
 	if (state === State.Relearning && relearningSteps.length > 0) {
-		return scheduleRelearning(card, rating, now, scheduler, relearningSteps, currentStepIndex);
+		return scheduleRelearning(card, rating, now, scheduler, graduationScheduler, relearningSteps, currentStepIndex);
 	}
 
 	// Review (2) or empty steps: pure FSRS
 	return scheduleFsrs(card, rating, now, scheduler, relearningSteps);
+}
+
+/**
+ * Build the scheduler used for graduation intervals. The default (short-term) scheduler keeps a
+ * New card in the Learning state on Good — `repeat(New)[Good]` yields `due = now + 10m` — so a
+ * deck configured with a single learning step would "graduate" to a 10-minute interval instead
+ * of a real review interval. The long-term scheduler (`enable_short_term: false`) always
+ * produces a Review-state card with a day-scale interval, which is what graduation means.
+ */
+export function makeGraduationScheduler(options?: FsrsOptions): ReturnType<typeof fsrs> {
+	return fsrs({
+		request_retention: options?.requestRetention ?? 0.9,
+		maximum_interval: options?.maximumInterval ?? 36500,
+		enable_short_term: false
+	});
+}
+
+/**
+ * Pick the FSRS result to graduate with: the normal scheduler's result when it already reached
+ * Review state, otherwise the long-term scheduler's result (New card graduating directly).
+ */
+function graduationCard(
+	sched: FSRSCard,
+	graduationScheduler: ReturnType<typeof fsrs>,
+	fsrsCard: FSRSCard,
+	fsrsRating: Grade,
+	now: Date
+): FSRSCard {
+	if (sched.state === State.Review) return sched;
+	return graduationScheduler.repeat(fsrsCard, now)[fsrsRating].card;
 }
 
 /**
@@ -181,6 +212,7 @@ function scheduleLearning(
 	rating: RatingName,
 	now: Date,
 	scheduler: ReturnType<typeof fsrs>,
+	graduationScheduler: ReturnType<typeof fsrs>,
 	steps: number[],
 	stepIndex: number
 ): ScheduleResult {
@@ -224,11 +256,14 @@ function scheduleLearning(
 			const nextStep = stepIndex + 1;
 			if (nextStep >= steps.length) {
 				// Graduate! FSRS determines the graduation interval
+				const grad = graduationCard(sched, graduationScheduler, fsrsCard, fsrsRating, now);
 				return {
 					...base,
+					fsrsStability: grad.stability,
+					fsrsDifficulty: grad.difficulty,
 					fsrsState: State.Review,
-					fsrsScheduledDays: sched.scheduled_days,
-					dueAt: sched.due.toISOString(),
+					fsrsScheduledDays: grad.scheduled_days,
+					dueAt: grad.due.toISOString(),
 					learningStepIndex: 0
 				};
 			}
@@ -241,15 +276,19 @@ function scheduleLearning(
 			};
 		}
 
-		case 'easy':
+		case 'easy': {
 			// Graduate immediately with Easy bonus (FSRS Easy interval)
+			const grad = graduationCard(sched, graduationScheduler, fsrsCard, fsrsRating, now);
 			return {
 				...base,
+				fsrsStability: grad.stability,
+				fsrsDifficulty: grad.difficulty,
 				fsrsState: State.Review,
-				fsrsScheduledDays: sched.scheduled_days,
-				dueAt: sched.due.toISOString(),
+				fsrsScheduledDays: grad.scheduled_days,
+				dueAt: grad.due.toISOString(),
 				learningStepIndex: 0
 			};
+		}
 	}
 }
 
@@ -261,6 +300,7 @@ function scheduleRelearning(
 	rating: RatingName,
 	now: Date,
 	scheduler: ReturnType<typeof fsrs>,
+	graduationScheduler: ReturnType<typeof fsrs>,
 	steps: number[],
 	stepIndex: number
 ): ScheduleResult {
@@ -301,11 +341,14 @@ function scheduleRelearning(
 			const nextStep = stepIndex + 1;
 			if (nextStep >= steps.length) {
 				// Done with relearning → back to Review
+				const grad = graduationCard(sched, graduationScheduler, fsrsCard, fsrsRating, now);
 				return {
 					...base,
+					fsrsStability: grad.stability,
+					fsrsDifficulty: grad.difficulty,
 					fsrsState: State.Review,
-					fsrsScheduledDays: sched.scheduled_days,
-					dueAt: sched.due.toISOString(),
+					fsrsScheduledDays: grad.scheduled_days,
+					dueAt: grad.due.toISOString(),
 					learningStepIndex: 0
 				};
 			}
@@ -317,15 +360,19 @@ function scheduleRelearning(
 			};
 		}
 
-		case 'easy':
+		case 'easy': {
 			// Skip remaining relearning, back to Review with FSRS interval
+			const grad = graduationCard(sched, graduationScheduler, fsrsCard, fsrsRating, now);
 			return {
 				...base,
+				fsrsStability: grad.stability,
+				fsrsDifficulty: grad.difficulty,
 				fsrsState: State.Review,
-				fsrsScheduledDays: sched.scheduled_days,
-				dueAt: sched.due.toISOString(),
+				fsrsScheduledDays: grad.scheduled_days,
+				dueAt: grad.due.toISOString(),
 				learningStepIndex: 0
 			};
+		}
 	}
 }
 

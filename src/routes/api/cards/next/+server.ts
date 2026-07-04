@@ -2,7 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { getDb } from '$lib/server/db';
 import { fsrs, createEmptyCard, Rating, State } from 'ts-fsrs';
 import type { Card as FSRSCard } from 'ts-fsrs';
-import { parseSteps, hardDelayMinutes } from '$lib/fsrs';
+import { parseSteps, hardDelayMinutes, makeGraduationScheduler } from '$lib/fsrs';
 import type { RequestHandler } from './$types';
 
 /**
@@ -62,6 +62,7 @@ function rowToFsrsCard(row: Record<string, unknown>): FSRSCard {
 function computeIntervals(
 	row: Record<string, unknown>,
 	scheduler: ReturnType<typeof fsrs>,
+	gradScheduler: ReturnType<typeof fsrs>,
 	now: Date,
 	learningSteps: number[],
 	relearningSteps: number[]
@@ -69,19 +70,26 @@ function computeIntervals(
 	const state = ((row.fsrs_state as number) ?? 0) as State;
 	const stepIndex = (row.learning_step_index as number) ?? 0;
 
+	// Preview the graduation result the way scheduleCard computes it: the short-term result if
+	// it already reached Review, otherwise the long-term scheduler (a New card graduating).
+	const gradPreview = (fsrsCard: FSRSCard, rating: Rating.Good | Rating.Easy) => {
+		const shortTerm = scheduler.repeat(fsrsCard, now)[rating].card;
+		return shortTerm.state === State.Review ? shortTerm : gradScheduler.repeat(fsrsCard, now)[rating].card;
+	};
+
 	// For New/Learning: show learning step intervals
 	if ((state === State.New || state === State.Learning) && learningSteps.length > 0) {
 		const fsrsCard = rowToFsrsCard(row);
-		const fsrsGood = scheduler.repeat(fsrsCard, now)[Rating.Good];
-		const fsrsEasy = scheduler.repeat(fsrsCard, now)[Rating.Easy];
+		const fsrsGood = gradPreview(fsrsCard, Rating.Good);
+		const fsrsEasy = gradPreview(fsrsCard, Rating.Easy);
 
 		const againInterval = formatMinutes(learningSteps[0]);
 		const hardInterval = formatMinutes(hardDelayMinutes(learningSteps, stepIndex));
 		const nextStep = stepIndex + 1;
 		const goodInterval = nextStep >= learningSteps.length
-			? formatInterval(fsrsGood.card.scheduled_days, fsrsGood.card.due, now)
+			? formatInterval(fsrsGood.scheduled_days, fsrsGood.due, now)
 			: formatMinutes(learningSteps[nextStep]);
-		const easyInterval = formatInterval(fsrsEasy.card.scheduled_days, fsrsEasy.card.due, now);
+		const easyInterval = formatInterval(fsrsEasy.scheduled_days, fsrsEasy.due, now);
 
 		return { again: againInterval, hard: hardInterval, good: goodInterval, easy: easyInterval };
 	}
@@ -89,16 +97,16 @@ function computeIntervals(
 	// For Relearning: show relearning step intervals
 	if (state === State.Relearning && relearningSteps.length > 0) {
 		const fsrsCard = rowToFsrsCard(row);
-		const fsrsGood = scheduler.repeat(fsrsCard, now)[Rating.Good];
-		const fsrsEasy = scheduler.repeat(fsrsCard, now)[Rating.Easy];
+		const fsrsGood = gradPreview(fsrsCard, Rating.Good);
+		const fsrsEasy = gradPreview(fsrsCard, Rating.Easy);
 
 		const againInterval = formatMinutes(relearningSteps[0]);
 		const hardInterval = formatMinutes(hardDelayMinutes(relearningSteps, stepIndex));
 		const nextStep = stepIndex + 1;
 		const goodInterval = nextStep >= relearningSteps.length
-			? formatInterval(fsrsGood.card.scheduled_days, fsrsGood.card.due, now)
+			? formatInterval(fsrsGood.scheduled_days, fsrsGood.due, now)
 			: formatMinutes(relearningSteps[nextStep]);
-		const easyInterval = formatInterval(fsrsEasy.card.scheduled_days, fsrsEasy.card.due, now);
+		const easyInterval = formatInterval(fsrsEasy.scheduled_days, fsrsEasy.due, now);
 
 		return { again: againInterval, hard: hardInterval, good: goodInterval, easy: easyInterval };
 	}
@@ -119,7 +127,13 @@ function computeIntervals(
 	};
 }
 
-/** Day boundary: 4 AM UTC (matches Anki's default rollover) */
+/**
+ * Day boundary: 4 AM UTC (matches Anki's default rollover).
+ * Returned in SQLite `datetime('now')` format (`YYYY-MM-DD HH:MM:SS`) because it is compared
+ * lexicographically against `reviews.created_at`, which D1 writes in that format. A JS
+ * `toISOString()` value ("...T04:00:00.000Z") would sort AFTER every same-day SQLite timestamp
+ * ('T' > ' '), making the daily-limit counts permanently zero.
+ */
 function todayStart(): string {
 	const now = new Date();
 	const d = new Date(now);
@@ -128,7 +142,7 @@ function todayStart(): string {
 		// Before 4 AM UTC — "today" started yesterday at 4 AM
 		d.setUTCDate(d.getUTCDate() - 1);
 	}
-	return d.toISOString();
+	return d.toISOString().slice(0, 19).replace('T', ' ');
 }
 
 export const GET: RequestHandler = async ({ url, platform, locals }) => {
@@ -178,6 +192,10 @@ export const GET: RequestHandler = async ({ url, platform, locals }) => {
 		request_retention: fsrsSettings?.desired_retention ?? 0.9,
 		maximum_interval: fsrsSettings?.max_interval ?? 36500
 	});
+	const gradScheduler = makeGraduationScheduler({
+		requestRetention: fsrsSettings?.desired_retention ?? 0.9,
+		maximumInterval: fsrsSettings?.max_interval ?? 36500
+	});
 	const learningSteps = parseSteps(fsrsSettings?.learning_steps ?? '1,10');
 	const relearningSteps = parseSteps(fsrsSettings?.relearning_steps ?? '10');
 	const intervalNow = new Date();
@@ -211,7 +229,7 @@ export const GET: RequestHandler = async ({ url, platform, locals }) => {
 
 		const cramCards = (cards.results as Record<string, unknown>[]).map((c) => ({
 			...c,
-			intervals: computeIntervals(c, scheduler, intervalNow, learningSteps, relearningSteps)
+			intervals: computeIntervals(c, scheduler, gradScheduler, intervalNow, learningSteps, relearningSteps)
 		}));
 		return json({ cards: cramCards, deckName: deck.name, mode: 'cram' });
 	}
@@ -326,7 +344,7 @@ export const GET: RequestHandler = async ({ url, platform, locals }) => {
 
 	const results = rawCards.map((c) => ({
 		...c,
-		intervals: computeIntervals(c, scheduler, intervalNow, learningSteps, relearningSteps)
+		intervals: computeIntervals(c, scheduler, gradScheduler, intervalNow, learningSteps, relearningSteps)
 	}));
 
 	return json({

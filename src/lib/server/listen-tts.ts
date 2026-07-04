@@ -246,19 +246,20 @@ export async function cleanupExpiredSentenceCache(
 	media: R2Bucket,
 	userId: string
 ): Promise<void> {
-	const expired = await db
+	// Delete the rows FIRST (RETURNING tells us exactly which ones we own), then their R2
+	// objects. The old select-then-delete order raced with a concurrent regeneration: the R2
+	// key is deterministic, so cleanup could delete a freshly re-billed object while the
+	// refreshed row (no longer expired) survived — a live cache row pointing at nothing.
+	const removed = await db
 		.prepare(
-			`SELECT sentence_hash, r2_key FROM listen_sentence_cache
-			 WHERE user_id = ? AND expires_at <= datetime('now')`
+			`DELETE FROM listen_sentence_cache
+			 WHERE user_id = ? AND expires_at <= datetime('now')
+			 RETURNING r2_key`
 		)
 		.bind(userId)
-		.all<{ sentence_hash: string; r2_key: string }>();
+		.all<{ r2_key: string }>();
 
-	if (!expired.results.length) return;
+	if (!removed.results.length) return;
 
-	await Promise.allSettled(expired.results.map((r) => media.delete(r.r2_key)));
-	await db
-		.prepare("DELETE FROM listen_sentence_cache WHERE user_id = ? AND expires_at <= datetime('now')")
-		.bind(userId)
-		.run();
+	await Promise.allSettled(removed.results.map((r) => media.delete(r.r2_key)));
 }

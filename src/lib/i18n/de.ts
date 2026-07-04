@@ -24,6 +24,8 @@ export const de: Record<string, string> = {
 	'dashboard.stats': 'Statistiken',
 	'dashboard.delete': 'L\u00f6schen',
 	'dashboard.deleteConfirm': '"{name}" und alle Karten l\u00f6schen?',
+	'dashboard.loadError': 'Deine Stapel konnten nicht geladen werden. Prüfe deine Verbindung und versuche es erneut.',
+	'dashboard.retry': 'Erneut versuchen',
 	'dashboard.exportFailed': 'Export fehlgeschlagen: {error}',
 	'dashboard.exportDone': '„{name}“ exportiert.',
 

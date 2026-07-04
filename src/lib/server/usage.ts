@@ -72,6 +72,8 @@ export async function getUsageSummary(
 	db: D1Database,
 	userId: string
 ): Promise<{ today: UsagePeriod; week: UsagePeriod; month: UsagePeriod }> {
+	// All three windows lie within the last 31 days, so bound the scan (via
+	// idx_api_usage_user_date) instead of aggregating the user's entire usage history.
 	const query = `
 		SELECT
 			service,
@@ -79,7 +81,7 @@ export async function getUsageSummary(
 			SUM(CASE WHEN created_at >= datetime('now', '-7 days')         THEN estimated_cost_usd ELSE 0 END) AS week,
 			SUM(CASE WHEN created_at >= datetime('now', 'start of month')  THEN estimated_cost_usd ELSE 0 END) AS month
 		FROM api_usage
-		WHERE user_id = ?
+		WHERE user_id = ? AND created_at >= datetime('now', '-31 days')
 		GROUP BY service
 	`;
 
