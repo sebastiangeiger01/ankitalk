@@ -7,7 +7,7 @@
 	import SavedFlag from '$lib/components/SavedFlag.svelte';
 	import ElevenLabsSettings from '$lib/components/ElevenLabsSettings.svelte';
 	import { SavedFlags } from '$lib/client/saved-flags.svelte';
-	import type { UserVoiceSettings, VoiceCommandLanguage, VoiceProvider } from '$lib/voice';
+	import type { SttProvider, TtsProvider, UserVoiceSettings, VoiceCommandLanguage } from '$lib/voice';
 
 	function setLocale(l: Locale) {
 		locale.set(l);
@@ -133,7 +133,8 @@
 		elevenlabs: null,
 	});
 	let voiceSettings = $state<UserVoiceSettings>({
-		voice_provider: 'elevenlabs',
+		tts_provider: 'elevenlabs',
+		stt_provider: 'elevenlabs',
 		voice_command_language: 'en',
 		elevenlabs_voice_id: 'JBFqnCBsd6RMkjVDRZzb',
 		elevenlabs_tts_model: 'eleven_flash_v2_5',
@@ -441,14 +442,24 @@
 		}
 	}
 
-	async function updateVoiceProvider(provider: VoiceProvider) {
-		if (voiceSettings.voice_provider === provider) return;
+	async function updateTtsProvider(provider: TtsProvider) {
+		if (voiceSettings.tts_provider === provider) return;
 		const previous = { ...voiceSettings };
 		const ok = await saveVoiceSettings(
-			{ ...voiceSettings, voice_provider: provider },
+			{ ...voiceSettings, tts_provider: provider },
 			previous
 		);
-		savedFlags.flash('provider', ok);
+		savedFlags.flash('ttsProvider', ok);
+	}
+
+	async function updateSttProvider(provider: SttProvider) {
+		if (voiceSettings.stt_provider === provider) return;
+		const previous = { ...voiceSettings };
+		const ok = await saveVoiceSettings(
+			{ ...voiceSettings, stt_provider: provider },
+			previous
+		);
+		savedFlags.flash('sttProvider', ok);
 	}
 
 	async function updateElevenLabsSettings(partial: Partial<UserVoiceSettings>): Promise<boolean> {
@@ -615,6 +626,13 @@
 	const advancedServices: Service[] = ['openai', 'deepgram'];
 	const usageServices: Service[] = ['elevenlabs', 'openai', 'deepgram'];
 	const voiceCommandLanguages: VoiceCommandLanguage[] = ['auto', 'en', 'de'];
+	// Plain display names for the key-missing hints (the settings.apiKeys.* labels
+	// carry parenthetical role suffixes that read oddly mid-sentence).
+	const providerNames: Record<TtsProvider | SttProvider, string> = {
+		elevenlabs: 'ElevenLabs',
+		openai: 'OpenAI',
+		deepgram: 'Deepgram'
+	};
 
 	function serviceLabel(s: Service): string {
 		return $t(`settings.apiKeys.${s}`);
@@ -816,44 +834,89 @@
 
 	<section class="section card" id="section-audio">
 		<h2>{$t('appSettings.audio')}</h2>
-		<div class="voice-provider-group" aria-label={$t('settings.voice.title')}>
+		<!-- TTS and STT are independent axes: e.g. Deepgram can take over the always-on
+		     review microphone (cheap per minute) while ElevenLabs keeps reading the cards. -->
+		<div class="voice-provider-group" aria-label={$t('settings.voice.ttsTitle')}>
 			<div class="voice-provider-copy">
-				<span class="preference-title">{$t('settings.voice.title')} <SavedFlag status={savedFlags.get('provider')} /></span>
-				<span class="preference-desc">{$t('settings.voice.desc')}</span>
+				<span class="preference-title">{$t('settings.voice.ttsTitle')} <SavedFlag status={savedFlags.get('ttsProvider')} /></span>
+				<span class="preference-desc">{$t('settings.voice.ttsDesc')}</span>
 			</div>
 			<div class="provider-options">
-				<label class="provider-option" class:active={voiceSettings.voice_provider === 'elevenlabs'}>
+				<label class="provider-option" class:active={voiceSettings.tts_provider === 'elevenlabs'}>
 					<input
 						type="radio"
-						name="voice-provider"
+						name="tts-provider"
 						value="elevenlabs"
-						checked={voiceSettings.voice_provider === 'elevenlabs'}
+						checked={voiceSettings.tts_provider === 'elevenlabs'}
 						disabled={savingVoiceSettings}
-						onchange={() => updateVoiceProvider('elevenlabs')}
+						onchange={() => updateTtsProvider('elevenlabs')}
 					/>
 					<span>
 						<strong>{$t('settings.voice.elevenlabs')}</strong>
-						<small>{$t('settings.voice.elevenlabsDesc')}</small>
+						<small>{$t('settings.voice.ttsElevenlabsDesc')}</small>
 					</span>
 				</label>
-				<label class="provider-option" class:active={voiceSettings.voice_provider === 'openai_deepgram'}>
+				<label class="provider-option" class:active={voiceSettings.tts_provider === 'openai'}>
 					<input
 						type="radio"
-						name="voice-provider"
-						value="openai_deepgram"
-						checked={voiceSettings.voice_provider === 'openai_deepgram'}
+						name="tts-provider"
+						value="openai"
+						checked={voiceSettings.tts_provider === 'openai'}
 						disabled={savingVoiceSettings}
-						onchange={() => updateVoiceProvider('openai_deepgram')}
+						onchange={() => updateTtsProvider('openai')}
 					/>
 					<span>
-						<strong>{$t('settings.voice.legacy')}</strong>
-						<small>{$t('settings.voice.legacyDesc')}</small>
+						<strong>{$t('settings.voice.openai')}</strong>
+						<small>{$t('settings.voice.ttsOpenaiDesc')}</small>
 					</span>
 				</label>
 			</div>
+			{#if !keyStatus[voiceSettings.tts_provider]}
+				<p class="provider-key-warn">{$t('settings.voice.keyMissing', { service: providerNames[voiceSettings.tts_provider] })}</p>
+			{/if}
 		</div>
 
-		{#if voiceSettings.voice_provider === 'elevenlabs'}
+		<div class="voice-provider-group" aria-label={$t('settings.voice.sttTitle')}>
+			<div class="voice-provider-copy">
+				<span class="preference-title">{$t('settings.voice.sttTitle')} <SavedFlag status={savedFlags.get('sttProvider')} /></span>
+				<span class="preference-desc">{$t('settings.voice.sttDesc')}</span>
+			</div>
+			<div class="provider-options">
+				<label class="provider-option" class:active={voiceSettings.stt_provider === 'elevenlabs'}>
+					<input
+						type="radio"
+						name="stt-provider"
+						value="elevenlabs"
+						checked={voiceSettings.stt_provider === 'elevenlabs'}
+						disabled={savingVoiceSettings}
+						onchange={() => updateSttProvider('elevenlabs')}
+					/>
+					<span>
+						<strong>{$t('settings.voice.elevenlabs')}</strong>
+						<small>{$t('settings.voice.sttElevenlabsDesc')}</small>
+					</span>
+				</label>
+				<label class="provider-option" class:active={voiceSettings.stt_provider === 'deepgram'}>
+					<input
+						type="radio"
+						name="stt-provider"
+						value="deepgram"
+						checked={voiceSettings.stt_provider === 'deepgram'}
+						disabled={savingVoiceSettings}
+						onchange={() => updateSttProvider('deepgram')}
+					/>
+					<span>
+						<strong>{$t('settings.voice.deepgram')}</strong>
+						<small>{$t('settings.voice.sttDeepgramDesc')}</small>
+					</span>
+				</label>
+			</div>
+			{#if !keyStatus[voiceSettings.stt_provider]}
+				<p class="provider-key-warn">{$t('settings.voice.keyMissing', { service: providerNames[voiceSettings.stt_provider] })}</p>
+			{/if}
+		</div>
+
+		{#if voiceSettings.tts_provider === 'elevenlabs'}
 			<ElevenLabsSettings
 				settings={voiceSettings}
 				keyConfigured={keyStatus.elevenlabs}
@@ -1285,12 +1348,12 @@
 	}
 
 	.section-nav a {
+		position: relative;
 		flex: 0 0 auto;
 		display: inline-flex;
 		align-items: center;
 		min-height: 44px;
-		padding: 0.35rem 0.9rem;
-		border: 1px solid transparent;
+		padding: 0 0.9rem;
 		border-radius: var(--r-pill);
 		font-size: 0.85rem;
 		font-weight: 600;
@@ -1298,10 +1361,7 @@
 		text-decoration: none;
 		white-space: nowrap;
 		touch-action: manipulation;
-		transition:
-			color var(--t-fast) var(--ease),
-			background var(--t-fast) var(--ease),
-			border-color var(--t-fast) var(--ease);
+		transition: color var(--t-fast) var(--ease);
 	}
 
 	.section-nav a:hover {
@@ -1310,8 +1370,23 @@
 
 	.section-nav a.active {
 		color: var(--text);
+	}
+
+	/* 44px tap target, but the visible highlight is a slimmer pill behind the label —
+	   a full-height background makes the whole bar read oversized (same as the app nav). */
+	.section-nav a.active::before {
+		content: '';
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 50%;
+		height: 30px;
+		box-sizing: border-box;
+		transform: translateY(-50%);
+		border: 1px solid var(--border);
+		border-radius: var(--r-pill);
 		background: var(--surface-elevated);
-		border-color: var(--border);
+		z-index: -1;
 	}
 
 	/* Grouped iOS-Settings-style cards; .card (app.css) supplies surface/border/radius.
@@ -1368,6 +1443,17 @@
 	.provider-options {
 		display: grid;
 		gap: 0.5rem;
+	}
+
+	.provider-key-warn {
+		margin: 0.5rem 0 0;
+		padding: 0.5rem 0.75rem;
+		font-size: 0.82rem;
+		font-weight: 500;
+		color: var(--warning);
+		background: var(--warning-tint);
+		border: 1px solid var(--warning-border);
+		border-radius: var(--r-md);
 	}
 
 	.provider-option {

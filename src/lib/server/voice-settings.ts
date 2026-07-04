@@ -13,7 +13,7 @@ export async function getUserVoiceSettings(
 ): Promise<UserVoiceSettings> {
 	const row = await db
 		.prepare(
-			`SELECT voice_provider, voice_command_language, elevenlabs_voice_id, elevenlabs_tts_model, elevenlabs_stt_model,
+			`SELECT tts_provider, stt_provider, voice_provider, voice_command_language, elevenlabs_voice_id, elevenlabs_tts_model, elevenlabs_stt_model,
 				elevenlabs_tts_speed, elevenlabs_stability, elevenlabs_similarity, elevenlabs_style, elevenlabs_speaker_boost,
 				elevenlabs_agent_id
 			 FROM user_voice_settings
@@ -34,6 +34,8 @@ export async function saveUserVoiceSettings(
 		.prepare(
 			`INSERT INTO user_voice_settings (
 				user_id,
+				tts_provider,
+				stt_provider,
 				voice_provider,
 				voice_command_language,
 				elevenlabs_voice_id,
@@ -47,8 +49,10 @@ export async function saveUserVoiceSettings(
 				elevenlabs_agent_id,
 				updated_at
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 			ON CONFLICT(user_id) DO UPDATE SET
+				tts_provider = excluded.tts_provider,
+				stt_provider = excluded.stt_provider,
 				voice_provider = excluded.voice_provider,
 				voice_command_language = excluded.voice_command_language,
 				elevenlabs_voice_id = excluded.elevenlabs_voice_id,
@@ -64,7 +68,11 @@ export async function saveUserVoiceSettings(
 		)
 		.bind(
 			userId,
-			settings.voice_provider,
+			settings.tts_provider,
+			settings.stt_provider,
+			// Keep the legacy combined column roughly in sync so a rollback to pre-split
+			// code still lands users on a working (if approximate) provider choice.
+			settings.tts_provider === 'openai' ? 'openai_deepgram' : 'elevenlabs',
 			settings.voice_command_language || DEFAULT_VOICE_SETTINGS.voice_command_language,
 			settings.elevenlabs_voice_id || DEFAULT_VOICE_SETTINGS.elevenlabs_voice_id,
 			settings.elevenlabs_tts_model || DEFAULT_VOICE_SETTINGS.elevenlabs_tts_model,

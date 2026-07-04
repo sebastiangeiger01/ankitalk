@@ -5,7 +5,7 @@ import type { SpeechClient } from './speech';
 import { renderCard } from './card-renderer';
 import { clientCardSanitizer } from './card-sanitize';
 import { matchCommand } from '../commands';
-import type { VoiceProvider } from '../voice';
+import type { SttProvider } from '../voice';
 import type { ReviewPhase, VoiceCommand, RatingName } from '../types';
 
 export interface IntervalLabels {
@@ -112,7 +112,18 @@ export interface StartOptions {
 	prepareAudioAhead?: boolean;
 	/** Language code for STT (e.g. 'en', 'de'). Defaults to 'multi'. */
 	sttLanguage?: string;
-	voiceProvider?: VoiceProvider;
+	sttProvider?: SttProvider;
+	/** Start the session with the microphone muted (STT stays untouched until unmuted). */
+	micOn?: boolean;
+	/** Start the session with card audio muted. */
+	audioOn?: boolean;
+	/**
+	 * A mic stream already acquired inside the Start tap (for the permission fix).
+	 * Handed to the STT client instead of re-acquiring: on iOS, a second getUserMedia
+	 * right after stopping the first can come up muted — the recorder then sends no
+	 * audio and Deepgram closes the socket (net0001). The engine owns it from here.
+	 */
+	micStream?: MediaStream;
 }
 
 export interface ReviewEngine {
@@ -122,6 +133,11 @@ export interface ReviewEngine {
 	executeCommand(command: VoiceCommand): void;
 	toggleMic(): void;
 	toggleAudio(): void;
+	/**
+	 * Stop any in-flight card audio without changing the audioOn setting — used when
+	 * the tutor opens so the card voice doesn't talk over the conversation.
+	 */
+	interruptSpeech(): void;
 	undo(): void;
 	/**
 	 * The live STT microphone stream, when the speech client exposes one. Used by the UI
@@ -142,8 +158,12 @@ const LEARNING_QUEUE_MAX_MS = 30 * 60 * 1000;
 /** If the next learning card is ≤ this far away, wait for it instead of ending session */
 const LEARNING_WAIT_THRESHOLD_MS = 30 * 1000;
 
-/** Timeout for review API call */
-const REVIEW_API_TIMEOUT_MS = 3000;
+/**
+ * Timeout for the review API call. Generous: the write happens in the background
+ * (the UI has already advanced), and aborting a write the server may have committed
+ * would produce a phantom "failed to save" for a rating that actually saved.
+ */
+const REVIEW_API_TIMEOUT_MS = 10000;
 
 export function createReviewEngine(): ReviewEngine {
 	let eventCb: EventCallback | null = null;
@@ -160,7 +180,16 @@ export function createReviewEngine(): ReviewEngine {
 	let undoTimer: ReturnType<typeof setTimeout> | null = null;
 	let learningTimer: ReturnType<typeof setTimeout> | null = null;
 	let isCramMode = false;
+	// Whether speechClient.start() has run for this session. Starting muted skips it
+	// entirely (no getUserMedia, no socket), so the first unmute must start — not
+	// resume — the client (Deepgram's resume() is a no-op without a live socket).
+	let speechStarted = false;
 	let ratingInFlight = false;
+	// Review writes are chained so rapid ratings reach the server in card order, and
+	// stamped with a session generation so a write landing after "Review again" can't
+	// reconcile into (or roll back) the wrong session.
+	let pendingReview: Promise<unknown> = Promise.resolve();
+	let sessionGen = 0;
 	let undoInFlight = false;
 	let sessionFinished = false;
 	let prepareAudioAhead = true;
@@ -308,7 +337,9 @@ export function createReviewEngine(): ReviewEngine {
 		}
 
 		if (result === 'wait') {
-			// Wait for next learning card
+			// Wait for next learning card. Clear the current card so commands arriving
+			// during the hold can't act on the just-rated card (e.g. re-rate it).
+			currentCard = null;
 			const waitMs = learningQueue[0].dueAt - Date.now();
 			scheduleNextLearningCard(waitMs);
 			return;
@@ -365,9 +396,9 @@ export function createReviewEngine(): ReviewEngine {
 		if (sessionFinished && command !== 'stop') return;
 
 		interruptTTS();
-		clearLearningTimer();
 
-		// Undo must be handled before clearUndo() wipes the undo info
+		// Undo must be handled before clearUndo() wipes the undo info. It works during
+		// the learning hold too (performUndo clears the hold timer itself).
 		if (command === 'undo') {
 			if (undoInfo) {
 				emit({ type: 'command', command });
@@ -376,11 +407,21 @@ export function createReviewEngine(): ReviewEngine {
 			return;
 		}
 
+		// Stop must work even during the learning hold, when no card is current.
+		if (command === 'stop') {
+			emit({ type: 'command', command });
+			endSession();
+			return;
+		}
+
+		// No current card means we're in the learning hold: ignore everything else so a
+		// stray key or transcript can't re-rate the just-rated card or, by falling
+		// through, kill the hold timer and strand the session.
+		if (!currentCard) return;
+
 		clearUndo();
 
 		emit({ type: 'command', command });
-
-		if (!currentCard) return;
 
 		switch (command) {
 			case 'answer':
@@ -411,7 +452,7 @@ export function createReviewEngine(): ReviewEngine {
 			case 'good':
 			case 'easy': {
 				if (phase !== 'rating') break;
-				void submitRating(command);
+				submitRating(command);
 				break;
 			}
 
@@ -421,10 +462,6 @@ export function createReviewEngine(): ReviewEngine {
 
 			case 'suspend':
 				handleSuspend();
-				break;
-
-			case 'stop':
-				endSession();
 				break;
 		}
 	}
@@ -449,30 +486,83 @@ export function createReviewEngine(): ReviewEngine {
 		presentCard();
 	}
 
-	async function submitRating(rating: RatingName) {
+	/** Is another card presentable right now (without waiting or ending)? */
+	function hasImmediateNextCard(): boolean {
+		if (learningQueue.length > 0 && learningQueue[0].dueAt <= Date.now()) return true;
+		return reviewQueue.some((c) => !studiedNoteIds.has(c.note_id));
+	}
+
+	/**
+	 * Rating advances the UI immediately: the next card's front is already preloaded,
+	 * so all the old `await` bought was a silent, frozen gap of one network round trip
+	 * per card. The write runs in the background and is reconciled when it lands
+	 * (learning re-queue, leech suspend, undo availability). Only when no next card is
+	 * immediately presentable does the submit stay blocking, because the end-vs-hold
+	 * decision depends on whether this rating re-queues the card for learning.
+	 */
+	function submitRating(rating: RatingName) {
 		if (!currentCard || ratingInFlight || sessionFinished) return;
 
 		const card = currentCard;
 		const durationMs = Date.now() - cardStartTime;
+		const gen = sessionGen;
 
-		// Submit to server and get fsrsState + dueAt back
-		let addedToLearning = false;
-		let leeched = false;
+		// Optimistic bookkeeping — postReview rolls it back if the write fails.
+		stats.cardsReviewed++;
+		stats.ratings[rating]++;
+		studiedNoteIds.add(card.note_id);
 
+		const write = () => postReview(card, rating, durationMs, gen);
+
+		if (hasImmediateNextCard()) {
+			pendingReview = pendingReview.then(write);
+			playSound('/success.mp3').catch(() => {});
+			presentCard();
+			return;
+		}
+
+		// Last presentable card: wait for the authoritative result before deciding
+		// between session end and the learning hold.
 		ratingInFlight = true;
-		let timeout: ReturnType<typeof setTimeout> | null = null;
+		pendingReview = pendingReview.then(write).then((ok) => {
+			ratingInFlight = false;
+			if (gen !== sessionGen || sessionFinished || destroyed) return;
+			if (!ok) {
+				// Rolled back: stay on the card in rating phase so the user can retry.
+				if (micOn) emit({ type: 'listening' });
+				else emit({ type: 'idle' });
+				return;
+			}
+			playSound('/success.mp3').catch(() => {});
+			presentCard();
+		});
+	}
+
+	/**
+	 * Background half of a rating: POST to the server, then reconcile the session with
+	 * the authoritative result. Returns false — after rolling back the optimistic
+	 * bookkeeping — when the write failed; the card then simply stays due server-side.
+	 */
+	async function postReview(
+		card: CardData,
+		rating: RatingName,
+		durationMs: number,
+		gen: number
+	): Promise<boolean> {
 		try {
 			const controller = new AbortController();
-			timeout = setTimeout(() => controller.abort(), REVIEW_API_TIMEOUT_MS);
-
-			const res = await fetch(`/api/cards/${card.id}/review`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ rating, durationMs }),
-				signal: controller.signal
-			});
-			clearTimeout(timeout);
-			timeout = null;
+			const timeout = setTimeout(() => controller.abort(), REVIEW_API_TIMEOUT_MS);
+			let res: Response;
+			try {
+				res = await fetch(`/api/cards/${card.id}/review`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ rating, durationMs }),
+					signal: controller.signal
+				});
+			} finally {
+				clearTimeout(timeout);
+			}
 
 			if (!res.ok) {
 				throw new Error(`Review API failed: ${res.status}`);
@@ -485,26 +575,23 @@ export function createReviewEngine(): ReviewEngine {
 				leeched?: boolean;
 			};
 
-			if (sessionFinished || destroyed) return;
-
-			stats.cardsReviewed++;
-			stats.ratings[rating]++;
-			studiedNoteIds.add(card.note_id);
+			// Committed server-side, but a newer session owns the queues now.
+			if (gen !== sessionGen || destroyed) return true;
 
 			const newState = data.fsrsState;
 			const dueAt = new Date(data.dueAt).getTime();
-			const now = Date.now();
-			leeched = Boolean(data.leeched);
+			let addedToLearning = false;
 
 			// If card is still learning/relearning and due within 30 min, add to learning queue
 			// If leeched, emit suspended event and don't add to learning queue
 			// In cram mode, skip learning queue insertion
-			if (leeched) {
+			if (data.leeched) {
 				emit({ type: 'card_suspended', cardId: card.id });
 			} else if (
 				!isCramMode &&
+				!sessionFinished &&
 				(newState === STATE_LEARNING || newState === STATE_RELEARNING) &&
-				dueAt - now < LEARNING_QUEUE_MAX_MS
+				dueAt - Date.now() < LEARNING_QUEUE_MAX_MS
 			) {
 				const updatedCard: CardData = { ...card, fsrs_state: newState };
 				// Insert sorted by dueAt
@@ -516,21 +603,32 @@ export function createReviewEngine(): ReviewEngine {
 					learningQueue.splice(insertIdx, 0, entry);
 				}
 				addedToLearning = true;
+				emit({ type: 'counts', counts: computeCounts() });
+				// If we're holding for a learning card, this entry may be due sooner than
+				// the one the hold timer was armed for — re-evaluate the hold.
+				if (!currentCard && learningTimer) {
+					clearLearningTimer();
+					presentCard();
+				}
 			}
+
+			if (sessionFinished) return true;
 
 			// Store undo info — stays available until next command (e.g. "show answer")
 			undoInfo = { rating, card, addedToLearning };
 			emit({ type: 'undo_available', available: true });
-
-			playSound('/success.mp3').catch(() => {});
-			presentCard();
+			return true;
 		} catch {
-			emit({ type: 'error', message: 'Failed to save review' });
-			if (micOn) emit({ type: 'listening' });
-			else emit({ type: 'idle' });
-		} finally {
-			if (timeout) clearTimeout(timeout);
-			ratingInFlight = false;
+			if (gen !== sessionGen || destroyed) return false;
+			// The server never saw this rating: roll back the optimistic bookkeeping.
+			// The card stays due and comes back next session; siblings unblock again.
+			stats.cardsReviewed = Math.max(0, stats.cardsReviewed - 1);
+			stats.ratings[rating] = Math.max(0, stats.ratings[rating] - 1);
+			studiedNoteIds.delete(card.note_id);
+			if (!sessionFinished) {
+				emit({ type: 'error', message: 'Failed to save review — the card stays due' });
+			}
+			return false;
 		}
 	}
 
@@ -632,11 +730,29 @@ export function createReviewEngine(): ReviewEngine {
 		emit({ type: 'session_end', stats });
 	}
 
+	function startListening(client: SpeechClient, micStream?: MediaStream) {
+		speechStarted = true;
+		void client.start(micStream).catch((err: unknown) => {
+			if (destroyed || sessionFinished || speechClient !== client) return;
+			client.stop();
+			micOn = false;
+			emit({ type: 'mic_change', micOn: false });
+			emit({
+				type: 'error',
+				message: `Microphone error: ${err instanceof Error ? err.message : 'Unknown'}`
+			});
+		});
+	}
+
 	async function start(deckId: string, options?: StartOptions) {
 		destroyed = false;
 		sessionFinished = false;
+		sessionGen++;
 		activeDeckId = deckId;
 		prepareAudioAhead = options?.prepareAudioAhead ?? true;
+		micOn = options?.micOn ?? true;
+		audioOn = options?.audioOn ?? true;
+		speechStarted = false;
 		startTime = Date.now();
 		isCramMode = options?.mode === 'cram';
 
@@ -648,7 +764,7 @@ export function createReviewEngine(): ReviewEngine {
 
 		// Microphone setup is optional and must not block cards.
 		try {
-			const client = options?.voiceProvider === 'openai_deepgram'
+			const client = options?.sttProvider === 'deepgram'
 				? createDeepgramClient({ language: options?.sttLanguage })
 				: createElevenLabsClient({ language: options?.sttLanguage });
 			speechClient = client;
@@ -663,17 +779,12 @@ export function createReviewEngine(): ReviewEngine {
 			client.onError((err) => {
 				emit({ type: 'error', message: err.message });
 			});
-			void client.start().catch((err: unknown) => {
-				if (destroyed || sessionFinished || speechClient !== client) return;
-				client.stop();
-				micOn = false;
-				emit({ type: 'mic_change', micOn: false });
-				emit({
-					type: 'error',
-					message: `Microphone error: ${err instanceof Error ? err.message : 'Unknown'}`
-				});
-			});
+			if (micOn) startListening(client, options?.micStream);
+			else options?.micStream?.getTracks().forEach((track) => track.stop());
 		} catch (err) {
+			// The client never adopted the handed-in stream — release it here so the
+			// browser's mic indicator doesn't stay lit on a failed setup.
+			options?.micStream?.getTracks().forEach((track) => track.stop());
 			speechClient = null;
 			micOn = false;
 			emit({ type: 'mic_change', micOn: false });
@@ -689,6 +800,10 @@ export function createReviewEngine(): ReviewEngine {
 		if (options?.prefetchedCards) {
 			data = options.prefetchedCards;
 		} else {
+			// Let any in-flight review write land before fetching what's due ("Review
+			// again" reaches this path), so a card rated at the very end of the previous
+			// session can't come straight back into the new queue.
+			await pendingReview;
 			try {
 				const params = new URLSearchParams({ deckId, limit: '50' });
 				if (options?.tags) params.set('tags', options.tags);
@@ -784,7 +899,8 @@ export function createReviewEngine(): ReviewEngine {
 	function toggleMic() {
 		micOn = !micOn;
 		if (micOn) {
-			speechClient?.resume();
+			if (speechClient && !speechStarted) startListening(speechClient);
+			else speechClient?.resume();
 		} else {
 			speechClient?.pause();
 		}
@@ -797,6 +913,15 @@ export function createReviewEngine(): ReviewEngine {
 			interruptTTS();
 		}
 		emit({ type: 'audio_change', audioOn });
+	}
+
+	function interruptSpeech() {
+		// Bumping the speak generation (via interruptTTS) also suppresses the stopped
+		// clip's finish chime and its trailing listening/idle emit.
+		interruptTTS();
+		if (destroyed || sessionFinished) return;
+		if (micOn) emit({ type: 'listening' });
+		else emit({ type: 'idle' });
 	}
 
 	return {
@@ -812,6 +937,7 @@ export function createReviewEngine(): ReviewEngine {
 		},
 		toggleMic,
 		toggleAudio,
+		interruptSpeech,
 		undo() {
 			performUndo();
 		},

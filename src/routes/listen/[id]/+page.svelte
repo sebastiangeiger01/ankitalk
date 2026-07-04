@@ -292,6 +292,25 @@
 		navigator.mediaSession.setActionHandler('nexttrack', () =>
 			jumpTo(Math.min(sentences.length - 1, activeSeq + 1))
 		);
+		// Lock-screen scrubbing: map the document-level target time back to the sentence
+		// containing it and restart the stream there (same semantics as tapping a sentence).
+		// Deliberately NO seekbackward/seekforward: registering those makes iOS replace the
+		// prev/next-sentence buttons with generic ±10s — worse for a sentence-based reader.
+		try {
+			navigator.mediaSession.setActionHandler('seekto', (details) => {
+				const target = details.seekTime;
+				if (target == null || !sentences.length) return;
+				let acc = 0;
+				for (let i = 0; i < sentences.length; i++) {
+					acc += sentences[i].duration_ms / 1000;
+					if (target < acc) {
+						void jumpTo(i);
+						return;
+					}
+				}
+				void jumpTo(sentences.length - 1);
+			});
+		} catch { /* seekto unsupported on this platform */ }
 	}
 
 	function teardownMediaSession() {
@@ -301,6 +320,7 @@
 			navigator.mediaSession.setActionHandler('pause', null);
 			navigator.mediaSession.setActionHandler('previoustrack', null);
 			navigator.mediaSession.setActionHandler('nexttrack', null);
+			navigator.mediaSession.setActionHandler('seekto', null);
 		} catch { /* no-op */ }
 	}
 
@@ -319,6 +339,22 @@
 				]
 			});
 			navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
+
+			// Whole-document position for the lock-screen progress bar. The stream element's
+			// currentTime is relative to the stream's start sentence, so offset it by the
+			// (actual-or-estimated) durations of everything before that sentence.
+			const durationSec = sentences.reduce((sum, s) => sum + s.duration_ms, 0) / 1000;
+			if ('setPositionState' in navigator.mediaSession && durationSec > 0) {
+				let beforeStreamSec = 0;
+				for (let i = 0; i < streamStartSeq && i < sentences.length; i++) {
+					beforeStreamSec += sentences[i].duration_ms / 1000;
+				}
+				navigator.mediaSession.setPositionState({
+					duration: durationSec,
+					position: Math.min(durationSec, beforeStreamSec + curTime),
+					playbackRate: audioEl?.playbackRate ?? playbackRate
+				});
+			}
 		} catch { /* no-op */ }
 	}
 

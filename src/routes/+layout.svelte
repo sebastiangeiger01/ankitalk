@@ -63,8 +63,10 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		padding: 0.75rem 1.5rem;
-		padding-top: max(0.75rem, env(safe-area-inset-top));
+		/* Tight vertical padding: the 44px tap targets inside already give the bar
+		   its height — more padding just makes the whole menu read oversized. */
+		padding: 0.35rem 1.5rem;
+		padding-top: max(0.35rem, env(safe-area-inset-top));
 		border-bottom: 1px solid var(--border-muted);
 		background: rgba(10, 10, 10, 0.85);
 		-webkit-backdrop-filter: blur(12px);
@@ -86,14 +88,18 @@
 	}
 
 	.nav-tab {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		min-height: 44px;
 		color: var(--text-muted);
 		text-decoration: none;
 		font-weight: 600;
 		font-size: 0.9rem;
 		white-space: nowrap;
-		padding: 0.4rem 0.9rem;
+		padding: 0 0.9rem;
 		border-radius: var(--r-pill);
-		transition: color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+		transition: color var(--t-fast) var(--ease);
 	}
 
 	.nav-tab:hover {
@@ -102,7 +108,21 @@
 
 	.nav-tab.active {
 		color: var(--text);
+	}
+
+	/* The tap target stays 44px, but the visible highlight is a slimmer pill drawn
+	   behind the label — a full-height background dominates the whole bar. */
+	.nav-tab.active::before {
+		content: '';
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 50%;
+		height: 30px;
+		transform: translateY(-50%);
+		border-radius: var(--r-pill);
 		background: var(--surface-elevated);
+		z-index: -1;
 	}
 
 	/* All nav targets sized to the WCAG 2.5.8 / Apple HIG 44px minimum tap target. */

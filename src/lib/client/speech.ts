@@ -2,7 +2,13 @@ export type TranscriptCallback = (transcript: string, isFinal: boolean) => void;
 export type ErrorCallback = (error: Error) => void;
 
 export interface SpeechClient {
-	start(): Promise<void>;
+	/**
+	 * Start capturing. When `stream` is provided the client adopts it (and owns its
+	 * lifecycle from then on) instead of calling getUserMedia itself — on iOS,
+	 * stopping one mic stream and re-acquiring moments later can yield a muted
+	 * second stream, so the caller acquires once and hands it through.
+	 */
+	start(stream?: MediaStream): Promise<void>;
 	stop(): void;
 	pause(): void;
 	resume(): void;

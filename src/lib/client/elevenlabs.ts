@@ -127,12 +127,14 @@ export function createElevenLabsClient(options?: ElevenLabsOptions): SpeechClien
 		return url.toString();
 	}
 
-	async function requestAudioStream() {
+	async function requestAudioStream(providedStream?: MediaStream) {
 		const AudioContextCtor =
 			window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
 		if (!AudioContextCtor) throw new Error('Browser does not support Web Audio microphone capture');
 
-		stream = await navigator.mediaDevices.getUserMedia({
+		// Adopt a caller-acquired stream when given — re-acquiring right after a prior
+		// getUserMedia can hand back a muted stream on iOS.
+		stream = providedStream ?? await navigator.mediaDevices.getUserMedia({
 			audio: {
 				echoCancellation: true,
 				noiseSuppression: true,
@@ -232,12 +234,12 @@ export function createElevenLabsClient(options?: ElevenLabsOptions): SpeechClien
 		});
 	}
 
-	async function start() {
+	async function start(providedStream?: MediaStream) {
 		stopping = false;
 		paused = false;
 
 		try {
-			await requestAudioStream();
+			await requestAudioStream(providedStream);
 			const config = await getConfig();
 			await openSocket(buildSocketUrl(config));
 			connectAudioProcessor();

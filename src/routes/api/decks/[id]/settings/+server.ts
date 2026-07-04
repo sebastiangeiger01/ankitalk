@@ -79,11 +79,17 @@ export const PUT: RequestHandler = async ({ params, request, platform, locals })
 			.run();
 	}
 
-	const newCardsPerDay = Math.max(0, Math.min(9999, Number(body.new_cards_per_day ?? DEFAULTS.new_cards_per_day)));
-	const maxReviewsPerDay = Math.max(0, Math.min(9999, Number(body.max_reviews_per_day ?? DEFAULTS.max_reviews_per_day)));
-	const desiredRetention = Math.max(0.5, Math.min(0.99, Number(body.desired_retention ?? DEFAULTS.desired_retention)));
-	const maxInterval = Math.max(1, Math.min(36500, Math.round(Number(body.max_interval ?? DEFAULTS.max_interval))));
-	const leechThreshold = Math.max(1, Math.min(99, Math.round(Number(body.leech_threshold ?? DEFAULTS.leech_threshold))));
+	// Math.min/max propagate NaN, so a non-numeric value would be persisted as NaN
+	// and later poison the daily-limit math in /api/cards/next — fall back instead.
+	const num = (value: unknown, fallback: number) => {
+		const n = Number(value ?? fallback);
+		return Number.isFinite(n) ? n : fallback;
+	};
+	const newCardsPerDay = Math.max(0, Math.min(9999, num(body.new_cards_per_day, DEFAULTS.new_cards_per_day)));
+	const maxReviewsPerDay = Math.max(0, Math.min(9999, num(body.max_reviews_per_day, DEFAULTS.max_reviews_per_day)));
+	const desiredRetention = Math.max(0.5, Math.min(0.99, num(body.desired_retention, DEFAULTS.desired_retention)));
+	const maxInterval = Math.max(1, Math.min(36500, Math.round(num(body.max_interval, DEFAULTS.max_interval))));
+	const leechThreshold = Math.max(1, Math.min(99, Math.round(num(body.leech_threshold, DEFAULTS.leech_threshold))));
 
 	// Validate learning steps: must be comma-separated positive numbers
 	const rawLearningSteps = typeof body.learning_steps === 'string' ? body.learning_steps : DEFAULTS.learning_steps;

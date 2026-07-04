@@ -13,13 +13,36 @@ describe('voice settings', () => {
 		expect(normalizeVoiceSettings(null)).toEqual(DEFAULT_VOICE_SETTINGS);
 	});
 
-	it('preserves explicit legacy provider while filling missing ElevenLabs defaults', () => {
+	it('derives both provider axes from the legacy combined voice_provider', () => {
 		const settings = normalizeVoiceSettings({ voice_provider: 'openai_deepgram' });
-		expect(settings.voice_provider).toBe('openai_deepgram');
+		expect(settings.tts_provider).toBe('openai');
+		expect(settings.stt_provider).toBe('deepgram');
 		expect(settings.voice_command_language).toBe(DEFAULT_VOICE_SETTINGS.voice_command_language);
 		expect(settings.elevenlabs_voice_id).toBe(DEFAULT_VOICE_SETTINGS.elevenlabs_voice_id);
 		expect(settings.elevenlabs_tts_model).toBe(DEFAULT_VOICE_SETTINGS.elevenlabs_tts_model);
 		expect(settings.elevenlabs_stt_model).toBe(DEFAULT_VOICE_SETTINGS.elevenlabs_stt_model);
+	});
+
+	it('lets explicit split providers override the legacy value', () => {
+		const settings = normalizeVoiceSettings({
+			voice_provider: 'openai_deepgram',
+			tts_provider: 'elevenlabs',
+			stt_provider: 'deepgram'
+		});
+		expect(settings.tts_provider).toBe('elevenlabs');
+		expect(settings.stt_provider).toBe('deepgram');
+	});
+
+	it('supports the mixed combo: ElevenLabs card audio with Deepgram voice commands', () => {
+		const settings = normalizeVoiceSettings({ tts_provider: 'elevenlabs', stt_provider: 'deepgram' });
+		expect(settings.tts_provider).toBe('elevenlabs');
+		expect(settings.stt_provider).toBe('deepgram');
+	});
+
+	it('falls back to ElevenLabs on unknown provider values', () => {
+		const settings = normalizeVoiceSettings({ tts_provider: 'someday_provider', stt_provider: 'whisper' });
+		expect(settings.tts_provider).toBe('elevenlabs');
+		expect(settings.stt_provider).toBe('elevenlabs');
 	});
 
 	it('defaults command language from the UI locale when no explicit setting exists', () => {
