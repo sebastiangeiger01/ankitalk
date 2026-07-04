@@ -122,6 +122,7 @@ export const de: Record<string, string> = {
 	'review.showAnswer': 'Antwort zeigen',
 	'review.undo': 'R\u00fcckg\u00e4ngig',
 	'review.cardSuspended': 'Karte ausgesetzt',
+	'review.editCard': 'Karte bearbeiten',
 	'review.waitingCard': 'Karte kommt in {seconds}s zur\u00fcck...',
 	'review.sessionProgress': 'Fortschritt der Sitzung',
 	'review.transcriptLabel': 'Live-Transkript',
