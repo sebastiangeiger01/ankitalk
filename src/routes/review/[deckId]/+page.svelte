@@ -166,6 +166,13 @@
 		transcriptFinal = false;
 	}
 
+	// The PWA can freeze the page mid-utterance and thaw it days later with all state
+	// intact — drop the live caption at the freeze boundary so a stale transcript can
+	// never greet the user on resume looking like fresh speech.
+	function onVisibilityChange() {
+		if (document.visibilityState === 'hidden') clearTranscript();
+	}
+
 	const cardsPerMinute = $derived(
 		stats && stats.durationMs > 0
 			? (stats.cardsReviewed / (stats.durationMs / 60000)).toFixed(1)
@@ -298,7 +305,12 @@
 				// merely refreshes in place (in-review edit), which would yank the user
 				// away from the spot they scrolled to.
 				const newPresentation = event.cardId !== agentCardId || event.index + 1 !== cardsReviewed;
-				if (newPresentation) cardAreaEl?.scrollTo(0, 0);
+				if (newPresentation) {
+					cardAreaEl?.scrollTo(0, 0);
+					// A leftover interim caption is speech that belongs to the previous
+					// card; finals (e.g. the rating command itself) fade on their own timer.
+					if (!transcriptFinal) clearTranscript();
+				}
 				cardsReviewed = event.index + 1;
 				frontText = event.front;
 				backText = event.back;
@@ -329,14 +341,15 @@
 				transcriptText = event.text;
 				transcriptFinal = event.isFinal;
 				if (transcriptTimer) clearTimeout(transcriptTimer);
-				transcriptTimer = null;
-				if (event.isFinal) {
-					transcriptTimer = setTimeout(() => {
-						transcriptTimer = null;
-						transcriptText = '';
-						transcriptFinal = false;
-					}, 2000);
-				}
+				// Interims must expire too, just on a longer leash than finals: when a mute
+				// or an app freeze cuts an utterance short, no final ever follows, and an
+				// unexpired interim would sit on screen indefinitely (for days, via the
+				// PWA's preserved page state).
+				transcriptTimer = setTimeout(() => {
+					transcriptTimer = null;
+					transcriptText = '';
+					transcriptFinal = false;
+				}, event.isFinal ? 2000 : 5000);
 				break;
 			}
 			case 'command':
@@ -366,6 +379,9 @@
 				break;
 			case 'mic_change':
 				micOn = event.micOn;
+				// Muting freezes the caption mid-utterance (no final will follow) — drop it
+				// so it can't linger as a seemingly live transcript next to a muted mic.
+				if (!event.micOn) clearTranscript();
 				break;
 			case 'audio_change':
 				audioOn = event.audioOn;
@@ -647,6 +663,7 @@
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
+<svelte:document onvisibilitychange={onVisibilityChange} />
 
 {#if !keyStatusLoading && missingRequiredKeys}
 	<div class="review-container">

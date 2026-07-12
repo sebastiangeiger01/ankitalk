@@ -784,6 +784,10 @@ export function createReviewEngine(): ReviewEngine {
 				: createElevenLabsClient({ language: options?.sttLanguage });
 			speechClient = client;
 			client.onTranscript((transcript, isFinal) => {
+				// Results can straggle in after a mute: pause() keeps the socket open
+				// (Deepgram even KeepAlives it) and audio streamed before the pause may
+				// finalize afterwards. A muted mic must neither caption nor rate cards.
+				if (!micOn) return;
 				emit({ type: 'transcript', text: transcript, isFinal });
 
 				if (isFinal) {
