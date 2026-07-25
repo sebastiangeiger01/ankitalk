@@ -169,12 +169,46 @@ dazu. Die Integrationsfläche ist genau eine Funktion.
 
 | Modell | Größe | Deutsch? | Bewertung |
 |---|---:|:---:|---|
-| **Whisper-tiny (multilingual)** | ~40 MB | ✅ | **einziger realistischer Kandidat** |
+| **Whisper-tiny (multilingual)** | ~40 MB | ✅ | **bester Startpunkt** |
 | Moonshine | klein | ❌ **nur Englisch** | 5× schneller als Whisper, Rechenzeit skaliert mit Audiolänge statt fixer 30-s-Fenster — technisch ideal, scheitert aber an Deutsch |
-| Eigenes Keyword-Spotting-CNN | <1 MB | trainierbar | <10 ms, extrem robust — aber Wochen Aufwand plus deutsche Trainingsdaten |
+| Eigenes Keyword-Spotting-Modell | <1 MB | trainierbar | <10 ms — machbar, aber als *zweiter* Schritt (siehe unten) |
 
 Whisper-tiny läuft über **Transformers.js / ONNX Runtime Web**, mit WebGPU (5–10× schneller)
 und automatischem WASM-Fallback. Moonshine ist der bessere Ansatz, sobald es Deutsch kann.
+
+#### Ein eigenes Befehlsmodell: machbar, aber nicht zuerst
+
+Der Aufwand hängt vollständig vom gewählten Weg ab:
+
+| Weg | Datenbedarf | Aufwand | Bewertung |
+|---|---|---|---|
+| Von Grund auf trainieren | ~1.000–3.000 Äußerungen **pro Wort** | Wochen | unrealistisch nebenher |
+| Nur mit TTS erzeugten Daten | keine echten Aufnahmen | Tage | **funktioniert nicht** — in der Literatur ~46 % False-Reject-Rate |
+| **Few-Shot über Sprach-Embeddings** | **~5–50 echte Aufnahmen pro Befehl** | Tage | **realistisch** |
+
+Der Few-Shot-Ansatz (prototypische Netze auf einem vortrainierten mehrsprachigen
+Sprach-Embedding) macht es tatsächlich machbar: Ein Befehl wird durch wenige Beispiele
+„eingelernt", statt ein Modell von Null zu trainieren. Für Deutsch + Englisch gibt es
+genau dafür mehrsprachige Embeddings.
+
+**Drei Gründe, es trotzdem nicht als Ersten Schritt zu machen:**
+
+1. **Neue Befehle werden teuer.** Heute ist ein neuer Sprachbefehl *eine Zeile* in der
+   Aliasliste von `commands.ts` — die Liste hat schon ~63 Sprechformen und wächst. Mit einem
+   eigenen Modell bedeutet jeder neue Befehl Neu-Einlernen und ein neu ausgeliefertes Modell.
+2. **Fehlauslöser sind hier besonders schädlich.** Das Mikrofon läuft die ganze Sitzung und
+   hört Vorlesung, Gespräche, Verkehr. Ein Klassifikator gibt *immer* eine Klasse aus, wenn
+   man die Rückweisung nicht sehr sorgfältig baut. `matchCommand` liefert dagegen `null` für
+   alles Unbekannte — ein sicherer No-Op. Ein falsch erkanntes „easy" bewertet still eine
+   Karte falsch und verfälscht die FSRS-Planung.
+3. **Freie Sprache braucht es ohnehin.** Der Tutor verarbeitet ganze Fragen. Ein
+   Befehlsmodell könnte den allgemeinen Pfad also nie ersetzen, nur überholen.
+
+**Die elegante Reihenfolge:** Erst Whisper-tiny messen. Zeigt der Spike, dass deutsche
+Einzelwörter zu ungenau oder zu langsam sind, wird Few-Shot-KWS für die ~7 häufigsten
+Befehle als schneller Pfad davor gesetzt — und der **Shadow-Modus aus Schritt 2 hat bis dahin
+genau die echten Aufnahmen geliefert, die man zum Einlernen braucht.** Die Stufen bauen also
+aufeinander auf, statt sich zu ersetzen.
 
 #### Ehrliche Risiken — alle nur durch Messen zu klären
 
