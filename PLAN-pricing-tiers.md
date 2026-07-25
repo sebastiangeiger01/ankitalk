@@ -142,21 +142,68 @@ Teilergebnis nach 300 ms eines 900-ms-Wortes bringt nichts — man kann auf ein 
 | **Voxtral/Scribe Realtime** (echtes Streaming, während des Sprechens transkribiert) | ~0,3 s | S |
 | **Lokale Schlüsselworterkennung** (siehe unten) | ~0 s, 0 $ | M–L |
 
-### Perspektive: lokale Schlüsselworterkennung
+### Lokale Spracherkennung im Browser (hoch priorisiert)
 
-Unsere Sprachbefehle sind ein **geschlossener Satz von ~9 Wörtern pro Sprache**
-(`answer`, `hint`, `repeat`, `explain`, `again`, `hard`, `good`, `easy`, `stop`). Dafür
-braucht es kein allgemeines STT. Ein kleines Modell direkt im Browser könnte diese Wörter
-erkennen — **ohne Netzwerk, ohne Kosten, ohne Latenz, offline**.
+Unsere Sprachbefehle sind ein **geschlossener Satz von ~11 Kommandos** mit deutschen und
+englischen Aliassen. Dafür braucht es kein Cloud-STT. Läuft die Erkennung lokal im Browser,
+ist der häufigste Pfad **ohne Netzwerk, ohne Kosten, ohne Round-Trip-Latenz und offline** —
+schneller als jede Cloud-Lösung. Server-STT bliebe nur für freie Sprache (Tutor-Fragen).
 
-Server-STT bräuchte man dann nur noch für freie Sprache (Tutor-Fragen). Das wäre für den
-häufigsten Pfad schneller als jede Cloud-Lösung und würde Free-STT auf 0 $ senken.
+#### Warum das hier ungewöhnlich einfach ist
 
-**Ehrliche Einschränkung:** Robustheit bei Dialekt, Straßenlärm und Nebengeräuschen ist der
-kritische Punkt, und es braucht ein Modell für Deutsch *und* Englisch. Deshalb ist das eine
-Option für später, nicht für v1 — aber sie sollte die Architektur nicht ausschließen. Der
-`SpeechClient`-Vertrag in `src/lib/client/speech.ts` erlaubt genau das: eine weitere
-Implementierung ohne Umbau.
+Die Befehlserkennung ist bereits vollständig vom Audio-Pfad entkoppelt:
+
+- `src/lib/commands.ts` bietet `matchCommand(transcript, phase) → VoiceCommand | null`.
+  Sie arbeitet auf **reinem Text**, kennt keinen Provider, ist bereits **zweisprachig**
+  (DE+EN in einer Aliasliste) und in `commands.test.ts` abgedeckt — inklusive der kniffligen
+  „nochmal"-Kollision.
+- `src/lib/client/speech.ts` definiert den `SpeechClient`-Vertrag; `deepgram.ts` und
+  `elevenlabs.ts` implementieren ihn bereits.
+- `review-engine.ts:790` ruft schlicht `matchCommand(transcript, phase)`.
+
+**Eine lokale Erkennung muss also nur einen String liefern.** Weder die Kommandologik noch
+die Review-Engine werden angefasst — es kommt eine dritte `SpeechClient`-Implementierung
+dazu. Die Integrationsfläche ist genau eine Funktion.
+
+#### Modellwahl
+
+| Modell | Größe | Deutsch? | Bewertung |
+|---|---:|:---:|---|
+| **Whisper-tiny (multilingual)** | ~40 MB | ✅ | **einziger realistischer Kandidat** |
+| Moonshine | klein | ❌ **nur Englisch** | 5× schneller als Whisper, Rechenzeit skaliert mit Audiolänge statt fixer 30-s-Fenster — technisch ideal, scheitert aber an Deutsch |
+| Eigenes Keyword-Spotting-CNN | <1 MB | trainierbar | <10 ms, extrem robust — aber Wochen Aufwand plus deutsche Trainingsdaten |
+
+Whisper-tiny läuft über **Transformers.js / ONNX Runtime Web**, mit WebGPU (5–10× schneller)
+und automatischem WASM-Fallback. Moonshine ist der bessere Ansatz, sobald es Deutsch kann.
+
+#### Ehrliche Risiken — alle nur durch Messen zu klären
+
+1. **Deutsche Genauigkeit bei Einzelwörtern.** Tiny ist das schwächste multilinguale
+   Whisper-Modell. Ausgaben wie „gud"/„guht" für „gut" sind zu erwarten.
+   → Gegenmittel: toleranter Abgleich (Levenshtein) gegen die Aliasliste. Das hilft auch dem
+   Server-Pfad. Aber Vorsicht, es erhöht Fehlauslöser („gut"/„Blut", „schwer"/„sehr") —
+   die bestehende Testsuite ist die Grundlage, um das abzusichern.
+2. **iOS Safari.** WASM-Speichergrenzen und AudioWorklet-Verhalten in der PWA. Genau hier
+   ist bei euch schon die Web Speech API gescheitert.
+3. **Latenz auf Mittelklasse-Android** ohne WebGPU (reines WASM).
+4. **40 MB Erstdownload** — über Mobilfunk spürbar. Braucht bewusstes Lazy-Loading.
+
+#### Vorgehen: erst messen, dann integrieren
+
+**Schritt 1 — Spike als eigenständige Testseite, ohne die App anzufassen.** Mikrofon → VAD →
+Whisper-tiny → Transkript + Latenz anzeigen. Auf echten Geräten testen (iPhone, Android).
+Beantwortet Risiken 1–4, bevor irgendetwas integriert wird.
+
+**Schritt 2 — Shadow-Modus.** Lokale Erkennung *parallel* zum Server-Pfad laufen lassen,
+nur die Übereinstimmungsrate protokollieren, ausgeführt wird weiter der Server-Befehl. Kein
+Nutzerrisiko, echte Daten. Das Telemetriemuster existiert bereits (`recordCacheEvent`,
+`mcp_tool_audit`).
+
+**Schritt 3 — Umschalten mit Fallback.** Lokal zuerst; bei niedriger Konfidenz, fehlendem
+Modell oder freier Sprache automatisch auf Server-STT. Die Kosten können dadurch nur sinken.
+
+Dieses Vorgehen ist bewusst risikoarm: Jede Stufe ist für sich nützlich, und der Abbruch ist
+auf jeder Stufe folgenlos.
 
 ### Risiko, das auf Staging zu prüfen ist
 
@@ -307,6 +354,7 @@ korrekt zeigt); USD nur für Pay-as-you-go.
 | # | Schritt | Aufwand | Wirkung |
 |---|---|---|---|
 | 0 | **Hörtest: Voxtral vs. OpenAI vs. ElevenLabs** an echten deutschen Karten | S | Entscheidet §10.1, blockiert Schritt 2 |
+| 0b | **Spike: lokale Spracherkennung** als Testseite (§4) | S | Klärt die vier Risiken, bevor irgendetwas integriert wird |
 | 1 | Kostenraten in `usage.ts` korrigieren | XS | Ehrliche Zahlen als Grundlage |
 | 2 | Platform-TTS-Provider ergänzen (§7.1) | S | Günstigeres TTS, sofort auch für BYOK-Nutzer |
 | 3 | VAD + Whisper-STT (§7.4) | M | Senkt STT-Kosten um ~90 %, unabhängig vom Provider |
