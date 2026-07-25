@@ -68,9 +68,75 @@ die Anschubfinanzierung für die ersten Nutzer: bei ungedeckeltem Dauer-Stream r
 | Ressource | Free-Grenze | Worst-Case-Kosten |
 |---|---|---:|
 | Vertonte Karten | 50 / Monat | 0,16 $ |
-| Sprachsteuerung | **noch zu entscheiden** (§7) | – |
+| Sprachsteuerung | keine harte Grenze — Kosten sinken über VAD (§4a) | ~0,5–1,4 $ |
 | Erklären / Hinweis | nicht enthalten (BYOK) | 0 $ |
 | Karten erstellen, MCP, Review, FSRS, Import/Export, Statistiken | unbegrenzt | 0 $ |
+
+## 4a. VAD: viel kleiner als gedacht — der Mechanismus existiert bereits
+
+Entscheidung: Statt die Sprachsteuerung zu deckeln, wird die Ursache behoben. Zwei Funde
+machen das erheblich einfacher als im Zielbild angenommen:
+
+**1. Deepgram rechnet nach gesendetem Audio ab, nicht nach Verbindungsdauer.** Ein offener
+WebSocket ohne Audio kostet nichts, KeepAlive-Nachrichten ebenfalls nicht. Es genügt also,
+*während Stille keine Frames zu senden* — die Verbindung darf offen bleiben.
+
+**2. Genau dieser Mechanismus ist schon gebaut und in Produktion erprobt.**
+`src/lib/client/deepgram.ts` hat bereits:
+
+```ts
+processor.onaudioprocess = (event) => {
+    if (paused || socket?.readyState !== WebSocket.OPEN) return;   // :47–48
+    …
+}
+```
+und ein `pause()` (:205), das `paused` setzt **und** ein KeepAlive-Intervall startet, sowie
+`resume()` (:224), das es wieder abräumt.
+
+**VAD ist damit im Kern: das manuelle `paused`-Flag durch eine automatische Entscheidung im
+selben Callback ersetzen.** Kein neuer Endpunkt, kein Workers AI, kein Whisper, kein
+40-MB-Modell.
+
+### Warum das die ursprünglich geplante Variante schlägt
+
+| | Zielbild-Variante (VAD + Whisper-Batch) | **Diese Variante (VAD-Gating)** |
+|---|---|---|
+| Neuer Endpunkt / Provider | ja | **nein** |
+| Modell-Download | ~40 MB | **0** |
+| Latenz | ~1 s (Batch nach Sprechende) | **~300 ms (unverändert)** |
+| Kommt BYOK-Nutzern zugute | nein | **ja, sofort** |
+
+Die Latenz bleibt also bei Deepgrams `endpointing: 300` — die Sprachsteuerung wird nicht
+langsamer, nur billiger.
+
+### Umsetzung: energiebasiert zuerst
+
+`connectAudioProcessor` nutzt `createScriptProcessor` (:43), **nicht** AudioWorklet — läuft
+also auf iOS bereits nachweislich. Der Callback bekommt den PCM-Puffer ohnehin in die Hand:
+
+1. RMS des Puffers berechnen (wenige Zeilen, keine Abhängigkeit)
+2. Sprache/Stille mit Hysterese halten, plus Nachlauf (~1 s weitersenden nach Sprechende,
+   damit Wortenden nicht abgeschnitten werden)
+3. **Vorlauf-Ringpuffer** (~300 ms), der beim Auslösen vorangestellt wird — sonst fehlt der
+   Wortanfang. Das ist der einzige wirklich neue Baustein.
+4. Während Stille: KeepAlive senden (Mechanismus vorhanden)
+
+Echo- und Rauschunterdrückung sind bereits aktiv (`echoCancellation`, `noiseSuppression`
+bei `getUserMedia`), das Signal ist also vorgereinigt — gute Voraussetzung für ein
+Energieverfahren.
+
+**Risikoprofil ist günstig:** Löst die Erkennung fälschlich aus, wird etwas mehr Audio
+gesendet — nur Kosten, kein Funktionsverlust. Verpasst sie leise Sprache, geht ein Befehl
+verloren; dagegen helfen niedrige Schwelle, großzügiger Vorlauf und Nachlauf.
+
+Erwartete Ersparnis: ~70–80 % (statt ~90 % mit Silero), also **4,62 $ → ~1,00–1,40 $**.
+Bei ~100 Zeilen ohne neue Abhängigkeit und ohne iOS-Risiko ist das der richtige erste Schritt.
+
+**Ausbaustufe**, falls das Energieverfahren zu undicht ist: Silero VAD (ONNX/WASM) hinter
+derselben Schnittstelle — dann greifen die iOS-Risiken aus `PLAN-pricing-tiers.md` §4, aber
+erst dann und nur, wenn Messdaten es rechtfertigen.
+
+Dasselbe Muster gilt für `elevenlabs.ts` (Scribe-Pfad) und sollte dort gespiegelt werden.
 
 ## 5. Technische Umsetzung
 
@@ -143,28 +209,23 @@ blockierte Sitzung und erhält den FSRS-Fluss.
 
 ## 6. Reihenfolge
 
-| # | Schritt | Aufwand |
-|---|---|---|
-| 1 | Kostenerfassung korrigieren (§5.5) | XS–S |
-| 2 | Migration + `resolveKey` + Platform-Keys (§5.1/5.2) | S |
-| 3 | Quota-Modul + Durchsetzung (§5.3/5.4) | M |
-| 4 | Onboarding + Einstellungen + Quotenanzeige (§5.6/5.7) | M |
+| # | Schritt | Aufwand | Ergebnis |
+|---|---|---|---|
+| 1 | Kostenerfassung korrigieren (§5.5) | XS–S | Zahlen stimmen, bevor wir gegen sie deckeln |
+| 2 | Migration + `resolveKey` + Platform-Keys (§5.1/5.2) | S | **Schwester kann sich ohne eigene Keys anmelden und lernen** |
+| 3 | VAD-Gating in `deepgram.ts` (§4a) | S–M | STT-Kosten ~70–80 % runter, kommt auch BYOK zugute |
+| 4 | TTS-Quota + Durchsetzung (§5.3/5.4) | M | Betrieb für Fremde abgesichert |
+| 5 | Onboarding + Einstellungen + Quotenanzeige (§5.6/5.7) | M | Einrichtungshürde weg |
 
-Nach Schritt 2 kann sich deine Schwester bereits **ohne eigene Keys** anmelden und lernen —
-Schritte 3–4 sichern den Betrieb für Fremde ab. Bei Bedarf ist also nach Schritt 2 schon
-etwas Nutzbares da.
+Nach **Schritt 2** ist der eigentliche Anlassfall erledigt. Die Schritte 3–5 machen daraus
+etwas, das man Fremden geben kann.
 
-## 7. Zu entscheiden: Grenze für die Sprachsteuerung
+## 7. Offene Punkte
 
-Der einzige offene Punkt. Da STT ~29× teurer ist als TTS, braucht es eine Grenze — die Frage
-ist welche Art:
-
-| Variante | Umsetzung | Bewertung |
-|---|---|---|
-| **Sitzungsminuten/Monat** (z. B. 300) | braucht Dauererfassung aus §5.5 | am ehrlichsten, deckelt genau die Kosten |
-| **Sitzungen/Monat** (z. B. 40) | trivial, zählt nur Token-Ausgaben | grob — eine lange Sitzung zählt wie eine kurze |
-| **Vorerst offen lassen** | nichts zu tun | Deepgram-Guthaben als Puffer (~43 Nutzermonate), Daten sammeln, später justieren |
-
-Empfehlung: **Sitzungsminuten**, weil §5.5 die Dauererfassung ohnehin einführt und es die
-einzige Variante ist, die den tatsächlichen Kostenposten trifft. 300 Minuten/Monat sind
-10 Minuten täglich — für den Anlassfall reichlich, und im Worst Case 2,31 $/Nutzer.
+- **Höhe der TTS-Quote.** 50 Karten/Monat ist gesetzt, sollte aber nach den ersten echten
+  Nutzungsdaten überprüft werden — mit korrigierter Erfassung (§5.5) sehen wir erstmals
+  belastbare Zahlen.
+- **Silero-Ausbaustufe** nur, falls das Energieverfahren messbar zu undicht ist (§4a).
+- **Missbrauchsschutz** bei offener Registrierung: Die bestehenden `RATE_LIMITS` decken
+  Burst-Missbrauch ab, aber ein Konto pro E-Mail ohne weitere Hürde lädt zu Mehrfachkonten
+  ein. Relevant erst, wenn die Registrierung wirklich öffentlich ist — vorher nicht lösen.
