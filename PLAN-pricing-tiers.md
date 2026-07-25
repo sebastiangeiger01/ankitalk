@@ -6,6 +6,58 @@
 > **Status: Planung. Noch nichts implementiert.** Dieses Dokument hält das vollständige
 > Zielbild fest; offene Entscheidungen stehen in §10.
 
+## 0. Realitätscheck — bitte zuerst lesen
+
+**Die Ausgangsfrage ist heute schon beantwortet, ohne eine Zeile Code.**
+
+Die Einstellungsseite bietet bereits Auswahlknöpfe für `tts_provider = 'openai'` und
+`stt_provider = 'deepgram'` (`src/routes/settings/+page.svelte:859` und `:899`). Beide
+Anbieter rechnen nutzungsbasiert ab, ohne Abo:
+
+| | Kosten für die Studentin |
+|---|---|
+| OpenAI TTS | 2.000-Karten-Deck einmalig **6,00 $**, danach ~0,90 $/Monat für neue Karten |
+| Deepgram STT | **0 $** — Neukonten bekommen 200 $ Startguthaben ohne Kreditkarte, das nicht verfällt (≈430 Stunden ≈ mehrere Jahre) |
+| **Erstes Jahr gesamt** | **≈ 17 $** statt 264 €/Jahr mit ElevenLabs |
+
+Das €22-Problem war nie eine Produktgrenze, sondern eine **Voreinstellungs- und
+Empfehlungsfrage**: Der günstige Pfad existiert und ist in der UI sichtbar — nur führt das
+Onboarding an ihm vorbei.
+
+### Was daraus folgt
+
+Der Rest dieses Dokuments beschreibt ein durchdachtes Zielbild, aber der Weg dorthin ist für
+den heutigen Stand **deutlich überdimensioniert**. Konkret verfrüht sind:
+
+- **Stripe, EU-OSS-Umsatzsteuer, Tiers, Quoten** — Abrechnungsinfrastruktur für einen
+  Nutzerkreis, den es noch nicht gibt. Billing zu bauen, bevor jemand zahlen will, ist die
+  klassische Falle.
+- **Platform-Keys und Quota-Durchsetzung** — lösen ein Skalierungsproblem ohne Skalierung.
+- **VAD, lokale Spracherkennung, Few-Shot-KWS** — optimieren Kosten von 0,02–0,24 $ pro
+  Nutzer und Monat sowie eine Latenz, über die sich niemand beschwert hat.
+
+Nicht verfrüht sind zwei kleine Dinge:
+
+1. **Die falschen Kostenraten in `usage.ts`** (§8) — ein echter Anzeigefehler, XS-Aufwand.
+2. **Das Onboarding, das zu ElevenLabs führt** — verursacht genau das Problem, das die
+   Ausgangsfrage stellt. S-Aufwand.
+
+### Auslösebedingungen für den Rest
+
+Damit dieses Dokument nicht zur Abarbeitungsliste wird, hier die Bedingungen, ab denen die
+einzelnen Bausteine tatsächlich gerechtfertigt sind:
+
+| Baustein | Bauen, sobald… |
+|---|---|
+| Platform-Keys + Free-Tier | Leute außerhalb des Bekanntenkreises es nutzen wollen und beim „Lege einen API-Key an" abspringen |
+| Stripe-Billing | jemand konkret fragt, ob er zahlen kann |
+| VAD | STT-Kosten auf einer echten Rechnung sichtbar werden (bzw. das Deepgram-Guthaben zur Neige geht) |
+| Lokale Spracherkennung | Latenz oder Offline-Fähigkeit als Beschwerde auftaucht |
+| Few-Shot-KWS | die lokale Erkennung gemessen zu ungenau ist |
+
+Bis dahin ist dieses Dokument eine **Landkarte, keine Aufgabenliste**. Die Zahlen darin sind
+verifiziert und halten; sie müssen nicht neu recherchiert werden, wenn der Zeitpunkt kommt.
+
 ## 1. Ausgangslage
 
 AnkiTalk ist heute vollständig BYOK. Es gibt im Code **keinerlei** Tier-, Plan- oder
