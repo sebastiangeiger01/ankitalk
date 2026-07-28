@@ -149,14 +149,14 @@ sequenceDiagram
   M->>C: call find_cards(status="due")
   C->>E: POST tools/call + Bearer mcp_...
   E->>E: Origin check
-  E->>E: SHA-256 -> mcp_tokens row -> user_id + scopes
+  E->>E: SHA-256 lookup to user + scopes
   E->>E: KV rate limit
   E->>T: dispatch, args validated by Zod
-  T->>D: parameterised query, always WHERE user_id = ?
+  T->>D: query, always WHERE user_id = ?
   D-->>T: rows
   T-->>E: content + structuredContent
   E-->>C: JSON-RPC result
-  E->>D: audit row via waitUntil, after the response
+  E->>D: audit row via waitUntil
   C-->>M: tool result
 ```
 
@@ -211,23 +211,23 @@ sequenceDiagram
   CL->>AS: GET /.well-known/oauth-protected-resource/api/mcp
   AS-->>CL: RFC 9728 — who the auth server is
   CL->>AS: GET /.well-known/oauth-authorization-server
-  AS-->>CL: RFC 8414 — authorize / token / register URLs, S256 required
+  AS-->>CL: RFC 8414 — endpoints, S256 required
 
   CL->>AS: POST /api/mcp/oauth/register
   AS-->>CL: RFC 7591 — client_id, public PKCE client, no secret
 
   CL->>U: Open /oauth/authorize?code_challenge=...
-  U->>AS: Sign in, tick "allow card authoring", Approve
+  U->>AS: Sign in, allow card authoring, Approve
   AS-->>CL: Redirect with single-use code
 
   CL->>AS: POST /api/mcp/oauth/token<br/>code + code_verifier
-  AS->>AS: Verify PKCE, client and redirect_uri, then delete the code
+  AS->>AS: Verify PKCE + client + redirect_uri,<br/>then delete the code
   AS-->>CL: access_token 1h + refresh_token 30d
 
   CL->>RS: POST /api/mcp with Bearer access_token
   RS-->>CL: Tools, filtered by the approved scopes
 
-  Note over CL,AS: After 1h: refresh grant rotates BOTH tokens
+  Note over CL,AS: After 1h: refresh rotates BOTH tokens
 ```
 
 Hard-won details from building this:
@@ -250,18 +250,18 @@ read-only token doesn't get write tools hidden behind a permission error — it
 never learns they exist.
 
 ```mermaid
-graph LR
+graph TB
   T1["Study token<br/>cards:read + study:read"] --> RD
   T2["Author token / consented OAuth grant<br/>+ cards:write"] --> RD
   T2 --> WR
 
   subgraph RD["Read surface"]
     R1["get_card_context"]
-    R2["search_study_material — FTS5 + BM25"]
+    R2["search_study_material<br/>FTS5 + BM25"]
     R3["find_cards — due / new / leech"]
     R4["list_decks, list_notes"]
     R5["get_study_progress"]
-    R6["validate_note_media, validate_deck_media"]
+    R6["validate_note_media<br/>validate_deck_media"]
   end
 
   subgraph WR["Write surface"]
@@ -283,7 +283,7 @@ possible without the client knowing anything about flashcards.
 ## 8. Making writes safe
 
 ```mermaid
-flowchart LR
+flowchart TD
   A["Model drafts cards"] --> B["validate_card_drafts<br/>read-only preview"]
   B --> C{"Valid?"}
   C -->|"No"| A
@@ -342,21 +342,21 @@ flowchart TD
   S2["2. Install the MCP SDK<br/>register tools with Zod in/out schemas"]
   S3["3. Write descriptions for a model, not a developer<br/>say when to use it and when not to"]
   S4["4. Mount one HTTP endpoint<br/>stateless streamable transport"]
-  S5["5. Authenticate<br/>hashed bearer tokens first, OAuth 2.1 + PKCE when a client needs it"]
+  S5["5. Authenticate<br/>hashed bearer tokens first,<br/>OAuth 2.1 + PKCE when a client needs it"]
   S6["6. Scope, annotate, rate-limit, audit<br/>read vs write; readOnly / destructive hints"]
   S7["7. Make writes replay-safe<br/>validate-then-write + idempotency keys"]
 
   S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7
-  S7 --> SHIP["Point a client at the URL and watch<br/>the audit table tells you which tools the model actually reaches for"]
+  S7 --> SHIP["Point a client at the URL and watch —<br/>the audit table shows<br/>which tools it reaches for"]
 ```
 
 ### The four mistakes worth warning an audience about
 
 ```mermaid
 graph LR
-  M1["Mirroring your REST API<br/>50 CRUD tools the model can't choose between"] --> F1["Design task-shaped tools.<br/>find_cards beats GET /cards?filter=..."]
+  M1["Mirroring your REST API<br/>50 CRUD tools the model<br/>can't choose between"] --> F1["Design task-shaped tools.<br/>find_cards beats GET /cards?filter=..."]
   M2["Returning whatever the DB returns"] --> F2["Every token costs money and attention.<br/>Paginate, cap limits, trim fields."]
-  M3["Pushing binaries through tool calls"] --> F3["We deleted base64 image tools.<br/>Now: server-side fetch or a short-lived upload URL."]
+  M3["Pushing binaries through tool calls"] --> F3["We deleted base64 image tools.<br/>Now: server-side fetch or a<br/>short-lived upload URL."]
   M4["Treating tenant data as instructions"] --> F4["Card content is untrusted.<br/>Say so in the server instructions."]
 ```
 
