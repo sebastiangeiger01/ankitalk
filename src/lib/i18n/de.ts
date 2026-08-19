@@ -429,6 +429,8 @@ export const de: Record<string, string> = {
 	'listen.next': 'Nächster Satz',
 	'listen.streamError': 'Audio konnte nicht geladen werden. Prüfe deinen ElevenLabs-Schlüssel.',
 	'listen.rateLimited': 'Zu viele Anfragen — bitte kurz warten und erneut versuchen.',
+	'listen.reconnecting': 'Verbindung wird wiederhergestellt — Wiedergabe läuft gleich weiter …',
+	'listen.offlineWaiting': 'Offline — Wiedergabe wird fortgesetzt, sobald du wieder Netz hast.',
 	'listen.retry': 'Erneut versuchen',
 	'listen.resumeFromTitle': 'Weiter, wo du aufgehört hast',
 	'listen.resumeFromHint': 'Du warst zuletzt bei Satz {from} von {total}',

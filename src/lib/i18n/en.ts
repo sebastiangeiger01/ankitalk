@@ -429,6 +429,8 @@ export const en: Record<string, string> = {
 	'listen.genSpeedSub': 'Re-synthesizes audio at the new tempo. Uses credits for uncached sentences.',
 	'listen.streamError': 'Audio failed to load. Check your ElevenLabs key.',
 	'listen.rateLimited': 'Too many requests — wait a moment and try again.',
+	'listen.reconnecting': 'Reconnecting — playback resumes in a moment…',
+	'listen.offlineWaiting': 'Offline — playback resumes as soon as you are back online.',
 	'listen.retry': 'Retry',
 	'listen.resumeFromTitle': 'Continue where you left off',
 	'listen.resumeFromHint': 'You last reached sentence {from} of {total}',

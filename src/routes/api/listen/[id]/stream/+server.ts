@@ -5,6 +5,7 @@ import { getUserVoiceSettings } from '$lib/server/voice-settings';
 import { buildListenTtsSettings, type ListenDocumentRow } from '$lib/server/listen';
 import { getOrSynthesizeSentence } from '$lib/server/listen-tts';
 import { hashSentence } from '$lib/listen/sentences';
+import { clampPlaybackRate, throttleTargetElapsedMs } from '$lib/listen/throttle';
 import { enforceRateLimit, RATE_LIMITS } from '$lib/server/rate-limit';
 import type { RequestHandler } from './$types';
 
@@ -43,6 +44,9 @@ export const GET: RequestHandler = async ({ params, url, platform, locals }) => 
 	const from = Math.max(0, Number(url.searchParams.get('from') ?? 0));
 	if (!Number.isFinite(from)) throw error(400, 'Invalid from');
 	const genSpeed = clampSpeed(url.searchParams.get('speed'));
+	// The client sends its current playbackRate so the run-ahead throttle below can stay ahead
+	// of a 1.5×/2× listener instead of starving them.
+	const playbackRate = clampPlaybackRate(url.searchParams.get('rate'));
 
 	const db = getDb(platform!);
 	const doc = await db
@@ -87,10 +91,11 @@ export const GET: RequestHandler = async ({ params, url, platform, locals }) => 
 	// can start consuming. waitUntil keeps the loop alive even if the client disconnects
 	// mid-stream, so the *current* sentence finishes its R2 cache write (the user paid for it).
 	//
-	// Throttle: cap how far ahead we run-ahead of audible playback by sleeping
-	// `durationMs / 2` between sentence writes. That keeps generation at ~2× real-time,
-	// which is enough to stay ahead of the browser buffer but stops us from pre-generating
-	// 5 minutes of audio that the user may never hear after pausing.
+	// Throttle: cap how far we run ahead of audible playback (see `throttleTargetElapsedMs`).
+	// The first RUN_AHEAD_LEAD_MS of audio is generated flat out so playback starts with a
+	// cushion; after that we pace at twice the listener's actual playback rate — fast enough
+	// that the browser buffer keeps growing at any speed, slow enough that pausing doesn't
+	// leave minutes of pre-billed audio behind.
 	ctx.waitUntil(
 		(async () => {
 			let writtenMs = 0;
@@ -121,7 +126,7 @@ export const GET: RequestHandler = async ({ params, url, platform, locals }) => 
 					await writer.write(result.bytes);
 					writtenMs += result.durationMs;
 					const elapsed = Date.now() - realStart;
-					const targetElapsed = writtenMs / 2; // 2× real-time
+					const targetElapsed = throttleTargetElapsedMs(writtenMs, playbackRate);
 					if (elapsed < targetElapsed) {
 						await new Promise((r) => setTimeout(r, targetElapsed - elapsed));
 					}
