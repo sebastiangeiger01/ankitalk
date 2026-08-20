@@ -91,11 +91,11 @@ export const GET: RequestHandler = async ({ params, url, platform, locals }) => 
 	// can start consuming. waitUntil keeps the loop alive even if the client disconnects
 	// mid-stream, so the *current* sentence finishes its R2 cache write (the user paid for it).
 	//
-	// Throttle: cap how far we run ahead of audible playback (see `throttleTargetElapsedMs`).
-	// The first RUN_AHEAD_LEAD_MS of audio is generated flat out so playback starts with a
-	// cushion; after that we pace at twice the listener's actual playback rate — fast enough
-	// that the browser buffer keeps growing at any speed, slow enough that pausing doesn't
-	// leave minutes of pre-billed audio behind.
+	// Throttle: hold a fixed lead over the playhead (see `throttleTargetElapsedMs`). The lead is
+	// generated flat out so playback starts with a cushion, then maintained — never grown. A
+	// growing lead pre-bills audio a pause discards, and piles up a browser-side buffer this
+	// endpoint cannot serve twice: with no Range support, anything Safari evicts can only come
+	// back by refetching from byte zero, which restarts the stream at its first sentence.
 	ctx.waitUntil(
 		(async () => {
 			let writtenMs = 0;

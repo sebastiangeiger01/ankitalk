@@ -13,6 +13,7 @@
 		clampDocumentTime,
 		documentOffsetSec,
 		isSeekableTo,
+		isUnrequestedRestart,
 		seqAtDocumentTime
 	} from '$lib/listen/timeline';
 	import type { ListenSentenceInfo, ListenSentencesResponse } from '$lib/listen/types';
@@ -67,6 +68,13 @@
 	 * early again, the shortfall is duration estimation, not a truncated stream.
 	 */
 	let lastTruncatedResumeSeq = -1;
+	/**
+	 * Last element clock we saw, so an *unrequested* jump backwards can be told apart from one
+	 * we asked for. Every deliberate position change updates this alongside `curTime`.
+	 */
+	let lastCurTime = 0;
+	/** Timestamps of recent phantom-restart recoveries, to stop a fight with the browser. */
+	let phantomRestarts: number[] = [];
 	/** Audio-session type found on mount, restored on unmount. */
 	let previousAudioSession: ReturnType<typeof setAudioSessionType> = null;
 
@@ -549,6 +557,7 @@
 	async function startStream(fromSeq: number, opts?: { resume?: boolean }) {
 		streamStartSeq = fromSeq;
 		curTime = 0;
+		lastCurTime = 0;
 		if (!opts?.resume) {
 			errorMsg = '';
 			resetReconnect();
@@ -786,6 +795,7 @@
 			try {
 				audioEl.currentTime = withinStream;
 				curTime = withinStream;
+				lastCurTime = withinStream;
 				updateMediaMetadata();
 				return;
 			} catch {
@@ -894,9 +904,43 @@
 	/** Seconds of uninterrupted playback that count a recovered stream as genuinely healthy. */
 	const RECOVERY_CONFIRM_SEC = 2;
 
+	/** How many phantom restarts we correct inside `PHANTOM_WINDOW_MS` before standing down. */
+	const PHANTOM_LIMIT = 3;
+	const PHANTOM_WINDOW_MS = 120_000;
+
+	/**
+	 * The element restarted the stream on its own and is now replaying it from the first
+	 * sentence, minutes behind the listener. Reopen at the sentence they were actually on.
+	 *
+	 * Immediate, with no backoff and no "reconnecting" notice: audio is playing, just the wrong
+	 * audio, so every millisecond spent deliberating is heard. The seq comes from the tick
+	 * before the clock reset, because `activeSeq` has already followed `curTime` back to the
+	 * top of the stream by the time we get here.
+	 *
+	 * If this keeps happening we stop correcting. Repeated restarts mean something upstream is
+	 * refusing to stay open, and a page that reopens the stream every few seconds is worse than
+	 * one that lets the browser replay: the listener at least keeps hearing words.
+	 */
+	function recoverFromPhantomRestart(resumeSeq: number) {
+		if (userPaused || reconnecting || reconnectHandle) return;
+		const now = Date.now();
+		phantomRestarts = [...phantomRestarts.filter((t) => now - t < PHANTOM_WINDOW_MS), now];
+		if (phantomRestarts.length > PHANTOM_LIMIT) return;
+		void startStream(Math.min(resumeSeq, Math.max(0, sentences.length - 1)), { resume: true });
+	}
+
 	function onTimeUpdate() {
 		if (!audioEl) return;
+		// Capture the sentence we were on before the clock moves — if the element restarted the
+		// stream behind our back, this is the only record of where the listener actually was.
+		const seqBeforeTick = activeSeq;
+		const previous = lastCurTime;
 		curTime = audioEl.currentTime;
+		lastCurTime = curTime;
+		if (isUnrequestedRestart(previous, curTime)) {
+			recoverFromPhantomRestart(seqBeforeTick);
+			return;
+		}
 		// The stream has actually been playing, so whatever went wrong before is behind us:
 		// arm the full backoff ladder again for the next drop.
 		if (curTime > 0) clearStartWatchdog();
@@ -952,9 +996,9 @@
 		playbackRate = value;
 		if (audioEl) audioEl.playbackRate = value;
 		// The open stream keeps the pace it was started with; that's deliberate — restarting it
-		// would rewind to the start of the current sentence just to change speed. The 30s lead
-		// buffer absorbs the difference, and if it ever doesn't, the stall watchdog reopens the
-		// stream, which then carries the new rate.
+		// would rewind to the start of the current sentence just to change speed. The server's
+		// run-ahead lead absorbs the difference, and if it ever doesn't, the stall watchdog
+		// reopens the stream, which then carries the new rate.
 		try {
 			localStorage.setItem(RATE_KEY, String(value));
 		} catch {

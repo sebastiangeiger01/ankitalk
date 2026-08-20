@@ -67,3 +67,26 @@ export function isSeekableTo(el: Pick<HTMLMediaElement, 'seekable' | 'buffered'>
 		return false;
 	}
 }
+
+/**
+ * Whether the media element's clock jumped backwards on its own.
+ *
+ * The listen stream carries no Range support, so a browser that loses or evicts part of it can
+ * only recover by refetching the URL — which makes the server replay from the stream's first
+ * sentence while `currentTime` restarts at zero. To the listener that is the whole session
+ * snapping back to wherever they pressed play, several minutes ago, with no error anywhere.
+ *
+ * Distinguishing that from ordinary playback is easy, as long as the caller excludes the
+ * position changes it asked for (a seek, a fresh stream): time only ever moves forward on its
+ * own, so a large drop to near the start of the stream is a restart, not a rewind. The
+ * thresholds keep small backwards wobbles — which some browsers emit around a stall — from
+ * being mistaken for one.
+ */
+export function isUnrequestedRestart(
+	previousSec: number,
+	nextSec: number,
+	{ minProgressSec = 20, restartWindowSec = 3 } = {}
+): boolean {
+	if (!Number.isFinite(previousSec) || !Number.isFinite(nextSec)) return false;
+	return previousSec >= minProgressSec && nextSec <= restartWindowSec && nextSec < previousSec;
+}

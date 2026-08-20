@@ -3,6 +3,7 @@ import {
 	clampDocumentTime,
 	documentOffsetSec,
 	isSeekableTo,
+	isUnrequestedRestart,
 	seqAtDocumentTime,
 	totalDurationSec
 } from './timeline';
@@ -94,5 +95,35 @@ describe('isSeekableTo', () => {
 	it('rejects everything on a live stream that reports nothing seekable', () => {
 		const el = { seekable: ranges(), buffered: ranges([0, 30]) };
 		expect(isSeekableTo(el, 5)).toBe(false);
+	});
+});
+
+describe('isUnrequestedRestart', () => {
+	it('recognises the element restarting the stream from the top', () => {
+		expect(isUnrequestedRestart(412, 0)).toBe(true);
+		expect(isUnrequestedRestart(65.4, 0.3)).toBe(true);
+	});
+
+	it('ignores ordinary forward playback', () => {
+		expect(isUnrequestedRestart(30, 30.25)).toBe(false);
+		expect(isUnrequestedRestart(0, 0.25)).toBe(false);
+	});
+
+	it('ignores a small backwards wobble around a stall', () => {
+		expect(isUnrequestedRestart(120, 119.5)).toBe(false);
+	});
+
+	it('ignores a rewind that lands well inside the stream', () => {
+		// A −10s skip from 2 minutes in is a real position, not a restart.
+		expect(isUnrequestedRestart(120, 110)).toBe(false);
+	});
+
+	it('ignores the first seconds of a stream that has barely started', () => {
+		expect(isUnrequestedRestart(4, 0)).toBe(false);
+	});
+
+	it('ignores non-finite clocks', () => {
+		expect(isUnrequestedRestart(Number.NaN, 0)).toBe(false);
+		expect(isUnrequestedRestart(100, Number.NaN)).toBe(false);
 	});
 });
