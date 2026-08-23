@@ -57,6 +57,13 @@ export const RATE_LIMITS = {
 	 */
 	listen_download_per_hour: { limit: 20, windowSec: 3600 },
 	/**
+	 * Batched synthesis for "generate the whole document". The client loops over this endpoint
+	 * one bounded batch at a time, so a long document legitimately makes many calls in a row —
+	 * the bucket has to cover a few hundred sentences per minute without tripping. Spend is
+	 * already bounded per sentence by the cache: a repeat call generates nothing.
+	 */
+	listen_generate_per_minute: { limit: 120, windowSec: 60 },
+	/**
 	 * Agent session minting. Each session can run for minutes and bills both LLM + voice
 	 * minutes through the user's ElevenLabs Conversational AI quota. Bring-your-own-key
 	 * means the spend is the user's, but the rate limit protects them from a buggy client
