@@ -8,6 +8,15 @@
 	import PromptDialog from '$lib/components/PromptDialog.svelte';
 	import { elevenLabsModelCreditMultiplier } from '$lib/voice';
 	import { estimateCredits } from '$lib/listen/estimate';
+	import { setAudioSessionType } from '$lib/client/audio-session';
+	import { downloadFilename } from '$lib/listen/mp3';
+	import {
+		clampDocumentTime,
+		documentOffsetSec,
+		isSeekableTo,
+		isUnrequestedRestart,
+		seqAtDocumentTime
+	} from '$lib/listen/timeline';
 	import type { ListenSentenceInfo, ListenSentencesResponse } from '$lib/listen/types';
 
 
@@ -35,6 +44,40 @@
 	let editingSeq = $state<number | null>(null);
 	let editingText = $state('');
 	let pollHandle: ReturnType<typeof setInterval> | null = null;
+
+	/**
+	 * Auto-recovery for a dropped stream. The endpoint is a single long-lived chunked MP3
+	 * response with no Range support, so *any* connectivity change — a WLAN→cellular handover,
+	 * a lift-doors dead zone, an iOS background socket teardown — kills it permanently and the
+	 * element just goes silent. Rather than dead-ending on an error banner we reopen the stream
+	 * from the sentence the user was on, with backoff, and only surface the banner once the
+	 * retries are exhausted. Cached sentences replay for free, so a recovery mid-document is
+	 * cheap: the only sentence that can be re-billed is one that was still being synthesized
+	 * when the connection dropped.
+	 */
+	const RECONNECT_DELAYS_MS = [400, 1200, 3000, 6000, 10000];
+	let reconnectAttempt = $state(0);
+	let reconnecting = $state(false);
+	let reconnectHandle: ReturnType<typeof setTimeout> | null = null;
+	/** Set while the user is deliberately paused, so recovery never resumes a paused document. */
+	let userPaused = true;
+	let offline = $state(false);
+	/** When the current buffering spell began — drives the stall watchdog. */
+	let bufferingSince = 0;
+	/**
+	 * Guards against an `ended`-driven reconnect loop: if a resume from this same sentence ends
+	 * early again, the shortfall is duration estimation, not a truncated stream.
+	 */
+	let lastTruncatedResumeSeq = -1;
+	/**
+	 * Last element clock we saw, so an *unrequested* jump backwards can be told apart from one
+	 * we asked for. Every deliberate position change updates this alongside `curTime`.
+	 */
+	let lastCurTime = 0;
+	/** Timestamps of recent phantom-restart recoveries, to stop a fight with the browser. */
+	let phantomRestarts: number[] = [];
+	/** Audio-session type found on mount, restored on unmount. */
+	let previousAudioSession: ReturnType<typeof setAudioSessionType> = null;
 
 	// Per-document persisted progress: where you last paused (lastSeq) and the farthest you've
 	// ever reached (maxSeq, used for the resume banner). Restored on mount so reopening a long
@@ -70,22 +113,78 @@
 
 	// "Jump to current sentence" and "scroll to top" affordances. Both visibilities are derived
 	// from scroll position so the floating pills appear only when actually useful.
-	let activeSentenceEl = $state<HTMLElement | null>(null);
 	let scrolledAway = $state(false);
 	let activeOffScreen = $state(false);
 	// Throttle the auto-scroll so it doesn't fight the user mid-flick.
 	let lastAutoScrollSeq = -1;
+	/** False once the user scrolls the active sentence out of view — see `onScroll`. */
+	let followingAlong = true;
+	/** Deadline during which incoming scroll events are our own smooth scrolling, not the user's. */
+	let programmaticScrollUntil = 0;
+	/** The fixed player bar, measured so every bottom offset tracks its real height. */
+	let playerBarEl = $state<HTMLElement | null>(null);
+	let playerHeight = $state(96);
 
-	// Track the DOM node of the currently-active sentence so the floating "jump to current"
-	// pill can scroll to it. Re-resolved whenever activeSeq or the sentence list changes;
-	// a querySelector pass is cheaper than a per-sentence bind:this for long documents.
+	/**
+	 * Resolve a sentence's DOM node on demand. This used to be cached in `$state` written from
+	 * an `$effect`, but effects flush *after* the handler that changed `activeSeq` — so
+	 * `onTimeUpdate` scrolled to the sentence that had just finished and the one now being
+	 * spoken landed below the fold, and the "jump to current" pill had the same off-by-one.
+	 * Querying at call time is one indexed attribute lookup and always matches the sentence
+	 * we're actually talking about.
+	 */
+	function sentenceEl(seq: number): HTMLElement | null {
+		if (typeof document === 'undefined') return null;
+		return document.querySelector<HTMLElement>(`.sentence-wrap[data-seq="${seq}"]`);
+	}
+
+	/** Height of the sticky app nav, so "scroll to the top" doesn't mean "hide under the nav". */
+	function topInset(): number {
+		const nav = typeof document === 'undefined' ? null : document.querySelector('nav');
+		return (nav?.getBoundingClientRect().height ?? 0) + 12;
+	}
+
+	/**
+	 * Scroll a sentence to just below the sticky nav. `scrollIntoView({ block: 'center' })` was
+	 * the wrong tool here: `.sentence-wrap` is an *inline* box, so a sentence spanning several
+	 * lines has a tall union rect, and centering that rect pushes its first line off the top on
+	 * long sentences (or leaves it under the player on short ones). Anchoring on the first
+	 * client rect puts the words about to be spoken where the eye expects them.
+	 */
+	function scrollSentenceIntoView(seq: number, behavior: ScrollBehavior = 'smooth') {
+		const el = sentenceEl(seq);
+		if (!el) return;
+		const rect = el.getClientRects()[0] ?? el.getBoundingClientRect();
+		const target = Math.max(0, rect.top + window.scrollY - topInset());
+		followingAlong = true;
+		programmaticScrollUntil = Date.now() + (behavior === 'smooth' ? 900 : 200);
+		window.scrollTo({ top: target, behavior });
+	}
+
+	// Recompute the off-screen flag whenever the highlight, the list, or the layout changes.
 	$effect(() => {
 		void activeSeq;
 		void sentences;
-		activeSentenceEl =
-			document.querySelector<HTMLElement>(`.sentence-wrap[data-seq="${activeSeq}"]`) ?? null;
-		// Recompute off-screen flag after a layout change.
+		void playing;
 		onScroll();
+	});
+
+	/**
+	 * Track the player bar's real height into `--player-h`. The bar wraps to two rows on narrow
+	 * phones and grows with the safe-area inset, and every floating layer (error toast, pills,
+	 * speed popover) plus the document's bottom padding used to hardcode guesses at that height
+	 * in rem — which is why things overlapped the bar or floated above a gap.
+	 */
+	$effect(() => {
+		const el = playerBarEl;
+		if (!el || typeof ResizeObserver === 'undefined') return;
+		const observer = new ResizeObserver(() => {
+			playerHeight = el.getBoundingClientRect().height;
+			document.documentElement.style.setProperty('--player-h', `${Math.round(playerHeight)}px`);
+			onScroll();
+		});
+		observer.observe(el);
+		return () => observer.disconnect();
 	});
 
 	const totalChars = $derived(doc?.total_chars ?? 0);
@@ -148,21 +247,65 @@
 		if (savedRate >= 0.5 && savedRate <= 3) playbackRate = savedRate;
 		const savedGen = parseFloat(localStorage.getItem(GEN_KEY) ?? '1');
 		if (savedGen >= 0.7 && savedGen <= 1.2) genSpeed = savedGen;
+		// Declare this screen as pure playback. Without it iOS keeps whatever session type the
+		// app last inferred — and after a review session (which opens the mic) that is
+		// `play-and-record`, whose voice-processing chain ducks the reading voice whenever the
+		// room gets noisy and can route it to the earpiece. See `$lib/client/audio-session`.
+		previousAudioSession = setAudioSessionType('playback');
 		await load();
 		setupMediaSession();
 		document.addEventListener('visibilitychange', onVisibility);
 		window.addEventListener('scroll', onScroll, { passive: true });
+		window.addEventListener('resize', onViewportChange);
+		window.visualViewport?.addEventListener('resize', onViewportChange);
+		window.visualViewport?.addEventListener('scroll', onViewportChange);
+		offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+		window.addEventListener('online', onOnline);
+		window.addEventListener('offline', onOffline);
+		onViewportChange();
 		await restoreScrollToLastHeard();
 	});
 
 	onDestroy(() => {
 		if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility);
-		if (typeof window !== 'undefined') window.removeEventListener('scroll', onScroll);
+		if (typeof window !== 'undefined') {
+			window.removeEventListener('scroll', onScroll);
+			window.removeEventListener('resize', onViewportChange);
+			window.removeEventListener('online', onOnline);
+			window.removeEventListener('offline', onOffline);
+			window.visualViewport?.removeEventListener('resize', onViewportChange);
+			window.visualViewport?.removeEventListener('scroll', onViewportChange);
+			document.documentElement.style.removeProperty('--player-h');
+			document.documentElement.style.removeProperty('--vv-bottom');
+		}
+		cancelReconnect();
+		clearStartWatchdog();
+		if (downloadNoticeTimer) clearTimeout(downloadNoticeTimer);
 		stopPolling();
 		teardownMediaSession();
+		// Hand the audio session back so a later review session isn't stuck in playback mode.
+		if (previousAudioSession) setAudioSessionType(previousAudioSession);
 		// Final flush of progress so a quick close after pause still persists.
 		persistProgress();
 	});
+
+	/**
+	 * Keep the fixed player bar pinned to the *visual* viewport. On iOS the collapsing URL bar
+	 * (and any accessory bar) shrinks the visual viewport without moving the layout viewport, so
+	 * a `position: fixed; bottom: 0` element renders behind — or, mid-scroll and after a
+	 * keyboard dismissal, halfway up — the screen. Publishing the gap as `--vv-bottom` and
+	 * translating the bar by it keeps it welded to the bottom edge the user actually sees.
+	 */
+	function onViewportChange() {
+		const vv = window.visualViewport;
+		const gap = vv ? Math.max(0, window.innerHeight - (vv.height + vv.offsetTop)) : 0;
+		document.documentElement.style.setProperty('--vv-bottom', `${Math.round(gap)}px`);
+		if (playerBarEl) {
+			playerHeight = playerBarEl.getBoundingClientRect().height;
+			document.documentElement.style.setProperty('--player-h', `${Math.round(playerHeight)}px`);
+		}
+		onScroll();
+	}
 
 	/**
 	 * On open, scroll the sentence the user was last on into view. If there's no saved progress
@@ -181,9 +324,7 @@
 				// active highlight too — the seek bar and "X / total" land on the right spot).
 				streamStartSeq = data.lastSeq;
 				await tick();
-				document
-					.querySelector<HTMLElement>(`[data-seq="${data.lastSeq}"]`)
-					?.scrollIntoView({ block: 'center', behavior: 'auto' });
+				scrollSentenceIntoView(data.lastSeq, 'auto');
 				lastAutoScrollSeq = data.lastSeq;
 			}
 		} catch {
@@ -205,21 +346,27 @@
 
 	function onScroll() {
 		scrolledAway = window.scrollY > 400;
-		if (!activeSentenceEl) {
+		const el = sentenceEl(activeSeq);
+		if (!el) {
 			activeOffScreen = false;
 			return;
 		}
-		const r = activeSentenceEl.getBoundingClientRect();
-		// Off-screen if outside the visible vertical band, accounting for the bottom player.
-		activeOffScreen = r.bottom < 80 || r.top > window.innerHeight - 140;
+		const rect = el.getClientRects()[0] ?? el.getBoundingClientRect();
+		// Off-screen if outside the visible band between the sticky nav and the player bar.
+		activeOffScreen = rect.bottom < topInset() || rect.top > window.innerHeight - playerHeight - 16;
+		// A scroll *the user* made that leaves the active sentence out of sight means "I'm
+		// reading somewhere else" — stop yanking the viewport back until they opt in again via
+		// the pill. Our own smooth scrolls are excluded by the deadline.
+		if (Date.now() >= programmaticScrollUntil) followingAlong = !activeOffScreen;
 	}
 
 	function scrollToTop() {
+		programmaticScrollUntil = Date.now() + 900;
 		window.scrollTo({ top: 0, behavior: 'smooth' });
 	}
 
 	function scrollToActive() {
-		activeSentenceEl?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+		scrollSentenceIntoView(activeSeq);
 	}
 
 	/**
@@ -233,7 +380,48 @@
 		pollHandle = setInterval(() => {
 			if (!document.hidden) refreshSentences();
 			persistProgress();
+			checkStallWatchdog();
 		}, 3000);
+	}
+
+	/**
+	 * A dropped connection doesn't always raise `error`: a chunked response that simply stops
+	 * arriving leaves the element wedged in `waiting` forever, which is the "playback just
+	 * stops" symptom. If we've been starved for longer than any real synthesis takes — the
+	 * server retries a failed ElevenLabs call twice with backoff, so the honest worst case is
+	 * tens of seconds — treat it as a dead stream and reconnect.
+	 */
+	const STALL_LIMIT_MS = 45_000;
+
+	function checkStallWatchdog() {
+		if (!playing || userPaused || reconnecting || !buffering || !bufferingSince) return;
+		if (Date.now() - bufferingSince < STALL_LIMIT_MS) return;
+		bufferingSince = 0;
+		scheduleReconnect();
+	}
+
+	/**
+	 * Second watchdog, for a stream that never produces a single sample: `play()` stays pending,
+	 * so the poll loop (and with it the stall watchdog) never even starts. A half-open socket
+	 * after a network handover looks exactly like this.
+	 */
+	const STREAM_START_LIMIT_MS = 45_000;
+	let startWatchdog: ReturnType<typeof setTimeout> | null = null;
+
+	function armStartWatchdog() {
+		clearStartWatchdog();
+		startWatchdog = setTimeout(() => {
+			startWatchdog = null;
+			if (userPaused || reconnectHandle || curTime > 0) return;
+			scheduleReconnect();
+		}, STREAM_START_LIMIT_MS);
+	}
+
+	function clearStartWatchdog() {
+		if (startWatchdog) {
+			clearTimeout(startWatchdog);
+			startWatchdog = null;
+		}
 	}
 
 	function stopPolling() {
@@ -281,7 +469,12 @@
 	}
 
 	function onVisibility() {
-		if (!document.hidden) refreshSentences();
+		if (document.hidden) return;
+		refreshSentences();
+		// iOS tears down background media sockets after a while. Coming back to a document we
+		// believe is playing but whose element is actually paused means the stream died while
+		// we were away — recover instead of leaving the user staring at a stuck play button.
+		if (playing && !userPaused && audioEl?.paused) scheduleReconnect();
 	}
 
 	function setupMediaSession() {
@@ -292,36 +485,44 @@
 		navigator.mediaSession.setActionHandler('nexttrack', () =>
 			jumpTo(Math.min(sentences.length - 1, activeSeq + 1))
 		);
-		// Lock-screen scrubbing: map the document-level target time back to the sentence
-		// containing it and restart the stream there (same semantics as tapping a sentence).
-		// Deliberately NO seekbackward/seekforward: registering those makes iOS replace the
-		// prev/next-sentence buttons with generic ±10s — worse for a sentence-based reader.
-		try {
-			navigator.mediaSession.setActionHandler('seekto', (details) => {
-				const target = details.seekTime;
-				if (target == null || !sentences.length) return;
-				let acc = 0;
-				for (let i = 0; i < sentences.length; i++) {
-					acc += sentences[i].duration_ms / 1000;
-					if (target < acc) {
-						void jumpTo(i);
-						return;
-					}
-				}
-				void jumpTo(sentences.length - 1);
-			});
-		} catch { /* seekto unsupported on this platform */ }
+		// Lock-screen scrubbing and skipping, both routed through our own document-time
+		// arithmetic (see `seekToDocumentTime`).
+		//
+		// We used to leave seekbackward/seekforward unregistered on the theory that iOS would
+		// then keep showing prev/next-sentence buttons. It doesn't — it shows ±10s anyway and,
+		// with no handler, applies them straight to the element. That element is a live
+		// non-seekable stream starting mid-document, so −10s made Safari reload the source
+		// (jumping back to the start of the stream, often minutes) and +10s past the buffer was
+		// dropped on the floor. Owning the actions is what makes the lock-screen skips behave;
+		// per-sentence stepping stays available in the in-app player bar.
+		const register = (action: MediaSessionAction, handler: MediaSessionActionHandler) => {
+			try {
+				navigator.mediaSession.setActionHandler(action, handler);
+			} catch { /* action unsupported on this platform */ }
+		};
+		register('seekbackward', (details) => void seekBy(-(details.seekOffset ?? SKIP_SECONDS)));
+		register('seekforward', (details) => void seekBy(details.seekOffset ?? SKIP_SECONDS));
+		register('seekto', (details) => {
+			if (details.seekTime != null) void seekToDocumentTime(details.seekTime);
+		});
 	}
 
 	function teardownMediaSession() {
 		if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
-		try {
-			navigator.mediaSession.setActionHandler('play', null);
-			navigator.mediaSession.setActionHandler('pause', null);
-			navigator.mediaSession.setActionHandler('previoustrack', null);
-			navigator.mediaSession.setActionHandler('nexttrack', null);
-			navigator.mediaSession.setActionHandler('seekto', null);
-		} catch { /* no-op */ }
+		const actions: MediaSessionAction[] = [
+			'play',
+			'pause',
+			'previoustrack',
+			'nexttrack',
+			'seekto',
+			'seekbackward',
+			'seekforward'
+		];
+		for (const action of actions) {
+			try {
+				navigator.mediaSession.setActionHandler(action, null);
+			} catch { /* action unsupported on this platform */ }
+		}
 	}
 
 	function updateMediaMetadata() {
@@ -345,10 +546,7 @@
 			// (actual-or-estimated) durations of everything before that sentence.
 			const durationSec = sentences.reduce((sum, s) => sum + s.duration_ms, 0) / 1000;
 			if ('setPositionState' in navigator.mediaSession && durationSec > 0) {
-				let beforeStreamSec = 0;
-				for (let i = 0; i < streamStartSeq && i < sentences.length; i++) {
-					beforeStreamSec += sentences[i].duration_ms / 1000;
-				}
+				const beforeStreamSec = documentOffsetSec(sentences, streamStartSeq);
 				navigator.mediaSession.setPositionState({
 					duration: durationSec,
 					position: Math.min(durationSec, beforeStreamSec + curTime),
@@ -358,16 +556,23 @@
 		} catch { /* no-op */ }
 	}
 
-	async function startStream(fromSeq: number) {
+	async function startStream(fromSeq: number, opts?: { resume?: boolean }) {
 		streamStartSeq = fromSeq;
 		curTime = 0;
-		errorMsg = '';
+		lastCurTime = 0;
+		if (!opts?.resume) {
+			errorMsg = '';
+			resetReconnect();
+		}
+		userPaused = false;
 		// Assume we're synthesizing until the element reports playable data — first-sentence
 		// generation takes a few seconds and this is what surfaces the spinner immediately.
-		buffering = true;
+		markBuffering();
 		// Pass the generation speed so the server picks the right cache lane and (on misses)
-		// synthesizes at that tempo.
-		streamSrc = `/api/listen/${docId}/stream?from=${fromSeq}&speed=${genSpeed}`;
+		// synthesizes at that tempo, and the playback rate so the server's run-ahead throttle
+		// stays ahead of a 1.5×/2× listener instead of starving them (see the stream endpoint).
+		streamSrc = `/api/listen/${docId}/stream?from=${fromSeq}&speed=${genSpeed}&rate=${playbackRate}&t=${Date.now()}`;
+		armStartWatchdog();
 		await tick();
 		if (!audioEl) {
 			buffering = false;
@@ -382,7 +587,115 @@
 		} catch {
 			playing = false;
 			buffering = false;
+			// A rejected play() right after a reconnect is usually the network still being
+			// down, not the user — keep trying instead of silently dying.
+			if (opts?.resume) scheduleReconnect();
 		}
+	}
+
+	/** Clear any pending recovery and forget the attempt counter (a fresh, deliberate start). */
+	function resetReconnect() {
+		if (reconnectHandle) {
+			clearTimeout(reconnectHandle);
+			reconnectHandle = null;
+		}
+		reconnecting = false;
+		reconnectAttempt = 0;
+	}
+
+	function cancelReconnect() {
+		if (reconnectHandle) {
+			clearTimeout(reconnectHandle);
+			reconnectHandle = null;
+		}
+		reconnecting = false;
+	}
+
+	/**
+	 * Reopen the stream from the sentence currently being spoken after an unexpected drop —
+	 * a network handover, a truncated response, a wedged buffer. Backs off between attempts and
+	 * gives up (surfacing the retry banner) once the ladder is exhausted. Replaying from the
+	 * start of the current sentence costs nothing for cached audio; at most the one sentence
+	 * that was mid-synthesis when the link died can be billed again.
+	 */
+	function scheduleReconnect() {
+		if (userPaused || reconnectHandle) return;
+		if (reconnectAttempt >= RECONNECT_DELAYS_MS.length) {
+			void giveUp();
+			return;
+		}
+		const delay = RECONNECT_DELAYS_MS[reconnectAttempt];
+		reconnectAttempt += 1;
+		reconnecting = true;
+		buffering = true;
+		stopPolling();
+		reconnectHandle = setTimeout(() => {
+			reconnectHandle = null;
+			void attemptRecovery();
+		}, delay);
+	}
+
+	/**
+	 * Stop retrying and tell the user why. The reason comes from a single probe of the stream
+	 * endpoint — the audio element only ever reports a generic MEDIA_ERR_*, while the HTTP
+	 * status distinguishes "add your API key" from "rate limited" from "this document is gone".
+	 * Deliberately only on the *final* failure: the probe is a real request that makes the
+	 * server start synthesizing, so running one per transient blip would cost credits.
+	 */
+	async function giveUp() {
+		const wasAt = activeSeq;
+		clearStartWatchdog();
+		cancelReconnect();
+		playing = false;
+		buffering = false;
+		stopPolling();
+		streamSrc = '';
+		errorMsg = $t('listen.streamError');
+		updateMediaMetadata();
+		try {
+			const probe = await fetch(`/api/listen/${docId}/stream?from=${wasAt}&speed=${genSpeed}`, {
+				headers: { Range: 'bytes=0-0' }
+			});
+			probe.body?.cancel().catch(() => undefined);
+			if (probe.status === 429) errorMsg = $t('listen.rateLimited');
+			else if (probe.status === 400) errorMsg = $t('listen.noKey');
+			else if (probe.status === 404 || probe.status === 409) errorMsg = $t('listen.notFound');
+			// A definitive server-side refusal won't fix itself when the network comes back, so
+			// park the document as paused: reconnecting past this point would just re-run the
+			// whole ladder against the same 400. Play/Retry still work, they clear the flag.
+			if (probe.status >= 400 && probe.status !== 408 && probe.status < 500) userPaused = true;
+		} catch {
+			/* the probe failing is itself evidence of a network problem — keep the generic text */
+		}
+	}
+
+	async function attemptRecovery() {
+		if (userPaused) {
+			reconnecting = false;
+			return;
+		}
+		// No radio: don't burn an attempt (and don't let the ladder run out while the phone is
+		// simply in a tunnel). The `online` event resumes us the moment connectivity is back.
+		if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+			offline = true;
+			reconnecting = true;
+			return;
+		}
+		await startStream(activeSeq, { resume: true });
+	}
+
+	function onOnline() {
+		offline = false;
+		// Come back immediately rather than waiting out the backoff the drop had scheduled.
+		if (!userPaused && (reconnecting || !playing)) {
+			cancelReconnect();
+			reconnectAttempt = 0;
+			void attemptRecovery();
+		}
+	}
+
+	function onOffline() {
+		offline = true;
 	}
 
 	/**
@@ -391,8 +704,10 @@
 	 * 30–60s ahead of playback and the server happily burns credits filling that buffer.
 	 */
 	function closeStream() {
+		clearStartWatchdog();
 		streamSrc = '';
 		buffering = false;
+		bufferingSince = 0;
 		if (audioEl) {
 			audioEl.pause();
 			audioEl.removeAttribute('src');
@@ -408,6 +723,8 @@
 		if (!sentences.length) return;
 		const wantPlay = force ?? !playing;
 		if (wantPlay) {
+			userPaused = false;
+			resetReconnect();
 			// After a pause the stream was closed; reopen from where we left off. Also covers
 			// the case where a prior stream errored and was cleared in `onAudioError`.
 			if (!streamSrc) {
@@ -415,7 +732,7 @@
 				return;
 			}
 			try {
-				buffering = true;
+				markBuffering();
 				await audioEl?.play();
 				playing = true;
 				errorMsg = '';
@@ -430,6 +747,8 @@
 				await startStream(activeSeq);
 			}
 		} else {
+			userPaused = true;
+			resetReconnect();
 			playing = false;
 			buffering = false;
 			stopPolling();
@@ -444,6 +763,49 @@
 		if (!sentences.length) return;
 		const clamped = Math.max(0, Math.min(sentences.length - 1, seq));
 		await startStream(clamped);
+	}
+
+	/** Lock-screen skip size when the platform doesn't supply one. */
+	const SKIP_SECONDS = 10;
+
+	/** Skip by a relative offset in document time (the lock-screen ±10s buttons). */
+	async function seekBy(deltaSec: number) {
+		if (!sentences.length) return;
+		// A forward skip must always move forward. Inside a long sentence the target often still
+		// belongs to the sentence being spoken, and if the stream can't seek there, reopening at
+		// that sentence would restart it — i.e. a +10s that audibly jumps *backwards*.
+		const floorSeq = deltaSec > 0 ? activeSeq + 1 : undefined;
+		await seekToDocumentTime(elapsedMs / 1000 + deltaSec, { floorSeq });
+	}
+
+	/**
+	 * Move playback to an absolute position on the *document* timeline.
+	 *
+	 * Two paths, because the stream is live: if the target is inside what the element has
+	 * already buffered we simply set `currentTime`, which is instant, gapless and free. If it
+	 * isn't — anything forward of the buffer, or back before this stream began — we reopen the
+	 * stream at the sentence containing the target, which is the only thing a non-seekable
+	 * chunked response supports. Either way the user lands where they asked to.
+	 */
+	async function seekToDocumentTime(targetSec: number, opts?: { floorSeq?: number }) {
+		if (!sentences.length) return;
+		const target = clampDocumentTime(sentences, targetSec);
+		const streamOffsetSec = documentOffsetSec(sentences, streamStartSeq);
+		const withinStream = target - streamOffsetSec;
+
+		if (streamSrc && audioEl && withinStream >= 0 && isSeekableTo(audioEl, withinStream)) {
+			try {
+				audioEl.currentTime = withinStream;
+				curTime = withinStream;
+				lastCurTime = withinStream;
+				updateMediaMetadata();
+				return;
+			} catch {
+				/* element refused the seek — fall through to reopening the stream */
+			}
+		}
+		const seq = seqAtDocumentTime(sentences, target);
+		await jumpTo(opts?.floorSeq !== undefined ? Math.max(seq, opts.floorSeq) : seq);
 	}
 
 	/** Total document duration in ms (sums actual when cached, estimated otherwise). */
@@ -512,16 +874,9 @@
 		const target = e.currentTarget as HTMLElement;
 		const rect = target.getBoundingClientRect();
 		const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-		const targetMs = pct * totalDurationMs;
-		let acc = 0;
-		for (let i = 0; i < sentences.length; i++) {
-			acc += sentences[i].duration_ms;
-			if (targetMs <= acc) {
-				void jumpTo(i);
-				return;
-			}
-		}
-		void jumpTo(sentences.length - 1);
+		// Seek in document time, not sentence steps: inside the buffered window this lands
+		// exactly where the user tapped instead of rewinding to a sentence boundary.
+		void seekToDocumentTime((pct * totalDurationMs) / 1000);
 	}
 
 	function onSeekKey(e: KeyboardEvent) {
@@ -548,9 +903,54 @@
 		}
 	}
 
+	/** Seconds of uninterrupted playback that count a recovered stream as genuinely healthy. */
+	const RECOVERY_CONFIRM_SEC = 2;
+
+	/** How many phantom restarts we correct inside `PHANTOM_WINDOW_MS` before standing down. */
+	const PHANTOM_LIMIT = 3;
+	const PHANTOM_WINDOW_MS = 120_000;
+
+	/**
+	 * The element restarted the stream on its own and is now replaying it from the first
+	 * sentence, minutes behind the listener. Reopen at the sentence they were actually on.
+	 *
+	 * Immediate, with no backoff and no "reconnecting" notice: audio is playing, just the wrong
+	 * audio, so every millisecond spent deliberating is heard. The seq comes from the tick
+	 * before the clock reset, because `activeSeq` has already followed `curTime` back to the
+	 * top of the stream by the time we get here.
+	 *
+	 * If this keeps happening we stop correcting. Repeated restarts mean something upstream is
+	 * refusing to stay open, and a page that reopens the stream every few seconds is worse than
+	 * one that lets the browser replay: the listener at least keeps hearing words.
+	 */
+	function recoverFromPhantomRestart(resumeSeq: number) {
+		if (userPaused || reconnecting || reconnectHandle) return;
+		const now = Date.now();
+		phantomRestarts = [...phantomRestarts.filter((t) => now - t < PHANTOM_WINDOW_MS), now];
+		if (phantomRestarts.length > PHANTOM_LIMIT) return;
+		void startStream(Math.min(resumeSeq, Math.max(0, sentences.length - 1)), { resume: true });
+	}
+
 	function onTimeUpdate() {
 		if (!audioEl) return;
+		// Capture the sentence we were on before the clock moves — if the element restarted the
+		// stream behind our back, this is the only record of where the listener actually was.
+		const seqBeforeTick = activeSeq;
+		const previous = lastCurTime;
 		curTime = audioEl.currentTime;
+		lastCurTime = curTime;
+		if (isUnrequestedRestart(previous, curTime)) {
+			recoverFromPhantomRestart(seqBeforeTick);
+			return;
+		}
+		// The stream has actually been playing, so whatever went wrong before is behind us:
+		// arm the full backoff ladder again for the next drop.
+		if (curTime > 0) clearStartWatchdog();
+		if (reconnectAttempt && curTime >= RECOVERY_CONFIRM_SEC) {
+			reconnectAttempt = 0;
+			lastTruncatedResumeSeq = -1;
+			errorMsg = '';
+		}
 		if (!listenedInSession.has(activeSeq)) {
 			const next = new Set(listenedInSession);
 			next.add(activeSeq);
@@ -561,9 +961,9 @@
 		// changes (not on every timeupdate tick) so we don't fight a user who deliberately
 		// scrolled elsewhere. If the user IS reading elsewhere they'll see the "current
 		// sentence" pill and can opt back in.
-		if (activeSeq !== lastAutoScrollSeq && !activeOffScreen) {
+		if (activeSeq !== lastAutoScrollSeq) {
 			lastAutoScrollSeq = activeSeq;
-			activeSentenceEl?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+			if (followingAlong) scrollSentenceIntoView(activeSeq);
 		}
 		updateMediaMetadata();
 	}
@@ -575,16 +975,32 @@
 	 * teardown in `closeStream()` (which fires spurious events) can't re-light the spinner.
 	 */
 	function onAudioWaiting() {
-		if (streamSrc) buffering = true;
+		if (streamSrc) markBuffering();
 	}
 
 	function onAudioReady() {
 		buffering = false;
+		bufferingSince = 0;
+		// Readable data again — drop the "reconnecting" notice and any timer still pending. The
+		// attempt counter deliberately survives: `canplay` can fire on a stream that dies again
+		// a moment later, and resetting here would turn that into an unbounded retry loop.
+		// `onTimeUpdate` clears the counter once audio has genuinely been playing (see below).
+		if (reconnecting || reconnectHandle) cancelReconnect();
+	}
+
+	/** Enter the buffering state, remembering since when — the watchdog below needs the clock. */
+	function markBuffering() {
+		if (!buffering) bufferingSince = Date.now();
+		buffering = true;
 	}
 
 	function onRateChange(value: number) {
 		playbackRate = value;
 		if (audioEl) audioEl.playbackRate = value;
+		// The open stream keeps the pace it was started with; that's deliberate — restarting it
+		// would rewind to the start of the current sentence just to change speed. The server's
+		// run-ahead lead absorbs the difference, and if it ever doesn't, the stall watchdog
+		// reopens the stream, which then carries the new rate.
 		try {
 			localStorage.setItem(RATE_KEY, String(value));
 		} catch {
@@ -624,6 +1040,23 @@
 
 	function onEnded() {
 		persistProgress();
+		// A chunked response has no Content-Length, so a connection cut mid-document reaches the
+		// element as a perfectly clean `ended` — indistinguishable from finishing, except that
+		// we know which sentence we're on. Anything with real content left is a dropped stream,
+		// which is the other half of "playback just stops on its own".
+		const truncated =
+			!userPaused &&
+			activeSeq < sentences.length - 1 &&
+			remainingMs > 4000 &&
+			activeSeq !== lastTruncatedResumeSeq;
+		if (truncated) {
+			lastTruncatedResumeSeq = activeSeq;
+			scheduleReconnect();
+			return;
+		}
+		lastTruncatedResumeSeq = -1;
+		userPaused = true;
+		resetReconnect();
 		playing = false;
 		buffering = false;
 		stopPolling();
@@ -631,39 +1064,43 @@
 		refreshSentences();
 	}
 
-	async function onAudioError() {
+	function onAudioError() {
 		// Suppress the spurious error fired by closeStream() — when the user pauses we call
 		// removeAttribute('src') + load(), which raises a MEDIA_ERR_* with no real failure
 		// underneath. By that point streamSrc has already been cleared, so this check
 		// distinguishes "we intentionally tore down the element" from "a real load failed
 		// while we were trying to play". Same guard catches the initial-mount empty-src case.
 		if (!streamSrc) return;
-		// Hard-reset the element so the next play attempt opens a fresh stream instead of
-		// retrying the dead source (which would silently no-op until reload).
+
+		// A media error mid-listen is usually the network (a WLAN→cellular handover, a dead
+		// spot, iOS tearing the socket down in the background) and it is recoverable, so reopen
+		// the stream from this sentence instead of stranding the user on a banner. `giveUp`
+		// takes over once the backoff ladder is exhausted and explains what actually went wrong.
+		const decoded = audioEl?.error?.code === MediaError.MEDIA_ERR_DECODE;
 		playing = false;
-		buffering = false;
 		stopPolling();
-		const wasAt = activeSeq;
 		streamSrc = '';
-		errorMsg = $t('listen.streamError');
-		// Probe the same URL to surface the actual reason. The audio element only emits a
-		// generic MEDIA_ERR_*; a follow-up fetch gives us the real HTTP status.
-		try {
-			const probe = await fetch(`/api/listen/${docId}/stream?from=${wasAt}&speed=${genSpeed}`, {
-				headers: { Range: 'bytes=0-0' }
-			});
-			probe.body?.cancel().catch(() => undefined);
-			if (probe.status === 429) errorMsg = $t('listen.rateLimited');
-			else if (probe.status === 400) errorMsg = $t('listen.noKey');
-			else if (probe.status === 401) errorMsg = $t('listen.streamError');
-		} catch {
-			/* network down: leave generic message */
+
+		if (userPaused) {
+			resetReconnect();
+			buffering = false;
+			errorMsg = $t('listen.streamError');
+			updateMediaMetadata();
+			return;
 		}
+		// A decode error means the bytes we did get are damaged rather than missing. One clean
+		// reopen is worth a try; an endless ladder against a corrupt clip is not.
+		if (decoded && reconnectAttempt >= 1) {
+			void giveUp();
+			return;
+		}
+		scheduleReconnect();
 	}
 
 	/** Retry button on the error banner: reopen the stream from the current position. */
 	async function retryStream() {
 		errorMsg = '';
+		resetReconnect();
 		await startStream(activeSeq);
 	}
 
@@ -711,6 +1148,76 @@
 	let renameOpen = $state(false);
 	let renameError = $state('');
 	let confirmRemoveOpen = $state(false);
+
+	/**
+	 * MP3 download. The reader plays a live stream that exists only while the tab does; a file
+	 * is what survives a flight, a basement or a car stereo. The endpoint concatenates the whole
+	 * document server-side and streams it to disk, so nothing is buffered in page memory.
+	 */
+	let confirmDownloadOpen = $state(false);
+	let downloadPreparing = $state(false);
+	let downloadNotice = $state('');
+	let downloadNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+
+	const downloadUrl = $derived(`/api/listen/${docId}/download?speed=${genSpeed}`);
+	const downloadName = $derived(downloadFilename(doc?.title ?? ''));
+
+	/** Sentences the download would have to synthesize, and what that costs. */
+	const uncachedCount = $derived(sentences.filter((s) => !s.cached).length);
+	const downloadCredits = $derived.by(() => {
+		if (!doc || !uncachedCount) return 0;
+		const chars = sentences.filter((s) => !s.cached).reduce((sum, s) => sum + s.char_count, 0);
+		return chars > 0 ? estimateCredits(chars, doc.tts_model) : 0;
+	});
+
+	function showDownloadNotice(message: string) {
+		downloadNotice = message;
+		if (downloadNoticeTimer) clearTimeout(downloadNoticeTimer);
+		downloadNoticeTimer = setTimeout(() => (downloadNotice = ''), 9000);
+	}
+
+	/**
+	 * Start the download without leaving the page — navigating here would tear down the reader
+	 * and stop playback. A HEAD preflight runs the server's checks first so a missing API key
+	 * surfaces as a message rather than as an error page saved under an .mp3 name.
+	 */
+	async function startDownload() {
+		if (downloadPreparing) return;
+		downloadPreparing = true;
+		try {
+			const probe = await fetch(downloadUrl, { method: 'HEAD' });
+			if (!probe.ok) {
+				showDownloadNotice(
+					probe.status === 429 ? $t('listen.rateLimited') : $t('listen.downloadError')
+				);
+				return;
+			}
+		} catch {
+			showDownloadNotice($t('listen.downloadError'));
+			return;
+		} finally {
+			downloadPreparing = false;
+		}
+
+		const a = document.createElement('a');
+		a.href = downloadUrl;
+		a.download = downloadName;
+		document.body.appendChild(a);
+		a.click();
+		a.remove();
+		showDownloadNotice($t('listen.downloadStarted'));
+	}
+
+	function download() {
+		if (!doc) return;
+		// Anything still uncached gets synthesized (and billed) by the download, so say what it
+		// costs before starting. A fully cached document downloads straight away.
+		if (uncachedCount > 0) {
+			confirmDownloadOpen = true;
+			return;
+		}
+		void startDownload();
+	}
 
 	function rename() {
 		if (!doc) return;
@@ -791,6 +1298,22 @@
 		<div class="doc-head">
 			<h1>{doc.title}</h1>
 			<div class="head-actions">
+				<button
+					class="text-btn"
+					onclick={download}
+					disabled={downloadPreparing}
+					aria-label={$t('listen.download')}
+					title={$t('listen.download')}
+				>
+					{#if downloadPreparing}
+						<Spinner size={14} />
+					{:else}
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+						<!-- Label collapses to the icon on narrow phones: three labelled actions plus
+						     the title leave nothing for the title itself at 360px. -->
+						<span class="btn-label">{$t('listen.download')}</span>
+					{/if}
+				</button>
 				<button class="text-btn" onclick={rename}>{$t('listen.rename')}</button>
 				<button class="text-btn danger" onclick={remove}>{$t('listen.delete')}</button>
 			</div>
@@ -801,6 +1324,10 @@
 			<span>{$t('listen.charsLabel', { count: totalChars.toLocaleString() })}</span>
 			<span class="expiry">{$t('listen.expiresIn', { days: expiryDays(doc.expires_at) })}</span>
 		</div>
+
+		{#if downloadNotice}
+			<p class="download-notice" role="status">{downloadNotice}</p>
+		{/if}
 
 		<p class="legend">
 			<span class="dot dot--cached"></span> {$t('listen.legendCached')}
@@ -860,17 +1387,24 @@
 				<button class="error-toast-retry" onclick={retryStream}>{$t('listen.retry')}</button>
 				<button class="error-toast-dismiss" onclick={() => (errorMsg = '')} aria-label={$t('common.dismiss')}>×</button>
 			</div>
+		{:else if reconnecting}
+			<!-- Recovery in progress: a quiet status line, not an error. The user usually only
+			     sees it during a handover, and playback resumes on its own. -->
+			<div class="reconnect-toast" role="status">
+				<Spinner size={14} />
+				<span>{offline ? $t('listen.offlineWaiting') : $t('listen.reconnecting')}</span>
+			</div>
 		{/if}
 
 		<!-- Floating affordances: surface "scroll to top" and "jump to current sentence" only
 		     when actually useful, so they never obstruct reading. -->
-		<div class="float-bar" aria-hidden={!(scrolledAway || (playing && activeOffScreen))}>
+		<div class="float-bar" aria-hidden={!(scrolledAway || (activeOffScreen && (playing || hasPosition)))}>
 			{#if scrolledAway}
 				<button class="float-pill icon-only" onclick={scrollToTop} aria-label={$t('listen.scrollToTop')} title={$t('listen.scrollToTop')}>
 					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
 				</button>
 			{/if}
-			{#if playing && activeOffScreen}
+			{#if activeOffScreen && (playing || hasPosition)}
 				<button class="float-pill primary" onclick={scrollToActive} aria-label={$t('listen.jumpToCurrent')}>
 					<svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><circle cx="5" cy="5" r="4"/></svg>
 					<span>{$t('listen.jumpToCurrent')}</span>
@@ -878,7 +1412,7 @@
 			{/if}
 		</div>
 
-		<div class="player-bar">
+		<div class="player-bar" bind:this={playerBarEl}>
 			<button class="skip-btn" onclick={() => jumpTo(activeSeq - 1)} aria-label={$t('listen.previous')} disabled={activeSeq <= 0}>
 				<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="19 20 9 12 19 4 19 20"/><rect x="4" y="4" width="2" height="16" rx="0.5"/></svg>
 			</button>
@@ -1035,6 +1569,21 @@
 />
 
 <ConfirmDialog
+	open={confirmDownloadOpen}
+	title={$t('listen.download')}
+	message={$t('listen.downloadCostBody', {
+		count: uncachedCount,
+		credits: downloadCredits.toLocaleString()
+	})}
+	confirmLabel={$t('listen.downloadStart')}
+	onconfirm={() => {
+		confirmDownloadOpen = false;
+		void startDownload();
+	}}
+	oncancel={() => (confirmDownloadOpen = false)}
+/>
+
+<ConfirmDialog
 	open={confirmRemoveOpen}
 	title={$t('listen.delete')}
 	message={doc ? $t('listen.deleteConfirm', { title: doc.title }) : ''}
@@ -1045,7 +1594,14 @@
 />
 
 <style>
-	.reader { max-width: 720px; margin: 0 auto; padding-bottom: 9rem; }
+	/* `--player-h` is measured from the real bar (see the ResizeObserver in the script), so the
+	   document's bottom padding and every floating layer track its actual height instead of
+	   guessing in rem — the guesses were what left the bar overlapping the last sentences on
+	   narrow screens and floating pills stranded in mid-air on wide ones. */
+	.reader {
+		max-width: 720px; margin: 0 auto;
+		padding-bottom: calc(var(--player-h, 96px) + 2.5rem);
+	}
 	.back-link { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
 	.back-link:hover { color: var(--text); }
 	.muted { color: var(--text-subtle); }
@@ -1078,7 +1634,21 @@
 		display: inline-flex; align-items: center;
 	}
 	.text-btn:hover { color: var(--text); }
+	.text-btn:disabled { opacity: 0.5; cursor: default; }
+	.text-btn svg { flex-shrink: 0; }
+	.text-btn .btn-label { margin-left: 0.3rem; }
+	@media (max-width: 519px) {
+		.text-btn .btn-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+	}
 	.text-btn.danger:hover { color: var(--danger-soft); }
+
+	/* Download status: informational, and long enough to wrap on a phone. */
+	.download-notice {
+		font-size: 0.8rem; color: var(--text-muted); line-height: 1.4;
+		background: var(--surface); border: 1px solid var(--border-muted);
+		border-radius: var(--r-md);
+		padding: 0.5rem 0.7rem; margin: 0 0 0.7rem;
+	}
 
 	.doc-sub { display: flex; flex-wrap: wrap; gap: 0.5rem 0.9rem; align-items: center; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.6rem; }
 	.expiry { color: var(--text-subtle); }
@@ -1215,7 +1785,7 @@
 	.error-toast {
 		position: fixed;
 		left: 0.6rem; right: 0.6rem;
-		bottom: calc(5.4rem + env(safe-area-inset-bottom));
+		bottom: calc(var(--player-h, 96px) + var(--vv-bottom, 0px) + 0.6rem);
 		background: var(--surface-elevated);
 		border: 1px solid var(--danger-border);
 		color: var(--text);
@@ -1244,11 +1814,36 @@
 	}
 	.error-toast-dismiss:hover { color: var(--text); }
 
+	/* Recovery status: same slot as the error toast, but visually a whisper — the stream is
+	   coming back by itself and nothing is asked of the user. */
+	.reconnect-toast {
+		position: fixed;
+		left: 0.6rem; right: 0.6rem;
+		bottom: calc(var(--player-h, 96px) + var(--vv-bottom, 0px) + 0.6rem);
+		background: var(--surface-elevated);
+		border: 1px solid var(--border-muted);
+		color: var(--text-muted);
+		padding: 0.5rem 0.75rem;
+		border-radius: var(--r-md);
+		display: flex; align-items: center; gap: 0.5rem;
+		box-shadow: var(--shadow-md);
+		z-index: 22;
+		font-size: 0.82rem;
+	}
+
 	/* Translucent player bar: content scrolls underneath the blur, ElevenLabs-style.
 	   flex-wrap + the narrow-viewport rules below reflow the progress block onto its own
 	   row under 420px so nothing overflows at 320px. */
 	.player-bar {
-		position: fixed; left: 0; right: 0; bottom: 0;
+		position: fixed; left: 0; right: 0;
+		/* iOS reports a *layout* viewport that stays tall while the URL bar is expanded, so a
+		   `bottom: 0` fixed bar renders below the fold — and mid-scroll, or after the keyboard
+		   collapses, it visibly parks partway up the screen. `--vv-bottom` is the measured gap
+		   between the layout and the visual viewport, so offsetting `bottom` by it welds the bar
+		   to the edge the user actually sees. It is 0 on every browser where `bottom: 0` already
+		   works. Deliberately not a `transform`: that would make the bar a containing block for
+		   the fixed-position speed popover nested inside it. */
+		bottom: var(--vv-bottom, 0px);
 		background: rgba(10, 10, 10, 0.9);
 		-webkit-backdrop-filter: blur(16px);
 		backdrop-filter: blur(16px);
@@ -1263,7 +1858,7 @@
 	.float-bar {
 		position: fixed;
 		right: 0.75rem;
-		bottom: calc(5.5rem + env(safe-area-inset-bottom));
+		bottom: calc(var(--player-h, 96px) + var(--vv-bottom, 0px) + 0.75rem);
 		display: flex; flex-direction: column; gap: 0.4rem; align-items: flex-end;
 		z-index: 21;
 		pointer-events: none;
@@ -1319,7 +1914,10 @@
 	   regardless of how the player bar lays out. */
 	.speed-pop {
 		position: fixed;
-		bottom: calc(5.4rem + env(safe-area-inset-bottom));
+		/* No `--vv-bottom` term here, unlike the other overlays: the player bar's
+		   `backdrop-filter` makes it the containing block for this fixed child, so the offset is
+		   already measured from the bar itself rather than from the viewport. */
+		bottom: calc(var(--player-h, 96px) + 0.6rem);
 		right: 0.6rem;
 		background: var(--surface);
 		border: 1px solid var(--border);
@@ -1449,8 +2047,7 @@
 	@media (max-width: 419px) {
 		.progress { flex-basis: 100%; }
 		.speed-wrap { margin-left: auto; }
-		.speed-pop { bottom: calc(9.2rem + env(safe-area-inset-bottom)); }
-		.error-toast { bottom: calc(9rem + env(safe-area-inset-bottom)); }
-		.float-bar { bottom: calc(9.2rem + env(safe-area-inset-bottom)); }
+		/* No bottom-offset overrides here any more: the taller wrapped bar is measured into
+		   `--player-h`, so the overlays follow it automatically. */
 	}
 </style>
