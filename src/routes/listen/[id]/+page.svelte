@@ -9,6 +9,7 @@
 	import { elevenLabsModelCreditMultiplier } from '$lib/voice';
 	import { estimateCredits } from '$lib/listen/estimate';
 	import { setAudioSessionType } from '$lib/client/audio-session';
+	import { downloadFilename } from '$lib/listen/mp3';
 	import {
 		clampDocumentTime,
 		documentOffsetSec,
@@ -279,6 +280,7 @@
 		}
 		cancelReconnect();
 		clearStartWatchdog();
+		if (downloadNoticeTimer) clearTimeout(downloadNoticeTimer);
 		stopPolling();
 		teardownMediaSession();
 		// Hand the audio session back so a later review session isn't stuck in playback mode.
@@ -1147,6 +1149,76 @@
 	let renameError = $state('');
 	let confirmRemoveOpen = $state(false);
 
+	/**
+	 * MP3 download. The reader plays a live stream that exists only while the tab does; a file
+	 * is what survives a flight, a basement or a car stereo. The endpoint concatenates the whole
+	 * document server-side and streams it to disk, so nothing is buffered in page memory.
+	 */
+	let confirmDownloadOpen = $state(false);
+	let downloadPreparing = $state(false);
+	let downloadNotice = $state('');
+	let downloadNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+
+	const downloadUrl = $derived(`/api/listen/${docId}/download?speed=${genSpeed}`);
+	const downloadName = $derived(downloadFilename(doc?.title ?? ''));
+
+	/** Sentences the download would have to synthesize, and what that costs. */
+	const uncachedCount = $derived(sentences.filter((s) => !s.cached).length);
+	const downloadCredits = $derived.by(() => {
+		if (!doc || !uncachedCount) return 0;
+		const chars = sentences.filter((s) => !s.cached).reduce((sum, s) => sum + s.char_count, 0);
+		return chars > 0 ? estimateCredits(chars, doc.tts_model) : 0;
+	});
+
+	function showDownloadNotice(message: string) {
+		downloadNotice = message;
+		if (downloadNoticeTimer) clearTimeout(downloadNoticeTimer);
+		downloadNoticeTimer = setTimeout(() => (downloadNotice = ''), 9000);
+	}
+
+	/**
+	 * Start the download without leaving the page — navigating here would tear down the reader
+	 * and stop playback. A HEAD preflight runs the server's checks first so a missing API key
+	 * surfaces as a message rather than as an error page saved under an .mp3 name.
+	 */
+	async function startDownload() {
+		if (downloadPreparing) return;
+		downloadPreparing = true;
+		try {
+			const probe = await fetch(downloadUrl, { method: 'HEAD' });
+			if (!probe.ok) {
+				showDownloadNotice(
+					probe.status === 429 ? $t('listen.rateLimited') : $t('listen.downloadError')
+				);
+				return;
+			}
+		} catch {
+			showDownloadNotice($t('listen.downloadError'));
+			return;
+		} finally {
+			downloadPreparing = false;
+		}
+
+		const a = document.createElement('a');
+		a.href = downloadUrl;
+		a.download = downloadName;
+		document.body.appendChild(a);
+		a.click();
+		a.remove();
+		showDownloadNotice($t('listen.downloadStarted'));
+	}
+
+	function download() {
+		if (!doc) return;
+		// Anything still uncached gets synthesized (and billed) by the download, so say what it
+		// costs before starting. A fully cached document downloads straight away.
+		if (uncachedCount > 0) {
+			confirmDownloadOpen = true;
+			return;
+		}
+		void startDownload();
+	}
+
 	function rename() {
 		if (!doc) return;
 		renameError = '';
@@ -1226,6 +1298,22 @@
 		<div class="doc-head">
 			<h1>{doc.title}</h1>
 			<div class="head-actions">
+				<button
+					class="text-btn"
+					onclick={download}
+					disabled={downloadPreparing}
+					aria-label={$t('listen.download')}
+					title={$t('listen.download')}
+				>
+					{#if downloadPreparing}
+						<Spinner size={14} />
+					{:else}
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+						<!-- Label collapses to the icon on narrow phones: three labelled actions plus
+						     the title leave nothing for the title itself at 360px. -->
+						<span class="btn-label">{$t('listen.download')}</span>
+					{/if}
+				</button>
 				<button class="text-btn" onclick={rename}>{$t('listen.rename')}</button>
 				<button class="text-btn danger" onclick={remove}>{$t('listen.delete')}</button>
 			</div>
@@ -1236,6 +1324,10 @@
 			<span>{$t('listen.charsLabel', { count: totalChars.toLocaleString() })}</span>
 			<span class="expiry">{$t('listen.expiresIn', { days: expiryDays(doc.expires_at) })}</span>
 		</div>
+
+		{#if downloadNotice}
+			<p class="download-notice" role="status">{downloadNotice}</p>
+		{/if}
 
 		<p class="legend">
 			<span class="dot dot--cached"></span> {$t('listen.legendCached')}
@@ -1477,6 +1569,21 @@
 />
 
 <ConfirmDialog
+	open={confirmDownloadOpen}
+	title={$t('listen.download')}
+	message={$t('listen.downloadCostBody', {
+		count: uncachedCount,
+		credits: downloadCredits.toLocaleString()
+	})}
+	confirmLabel={$t('listen.downloadStart')}
+	onconfirm={() => {
+		confirmDownloadOpen = false;
+		void startDownload();
+	}}
+	oncancel={() => (confirmDownloadOpen = false)}
+/>
+
+<ConfirmDialog
 	open={confirmRemoveOpen}
 	title={$t('listen.delete')}
 	message={doc ? $t('listen.deleteConfirm', { title: doc.title }) : ''}
@@ -1527,7 +1634,21 @@
 		display: inline-flex; align-items: center;
 	}
 	.text-btn:hover { color: var(--text); }
+	.text-btn:disabled { opacity: 0.5; cursor: default; }
+	.text-btn svg { flex-shrink: 0; }
+	.text-btn .btn-label { margin-left: 0.3rem; }
+	@media (max-width: 519px) {
+		.text-btn .btn-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+	}
 	.text-btn.danger:hover { color: var(--danger-soft); }
+
+	/* Download status: informational, and long enough to wrap on a phone. */
+	.download-notice {
+		font-size: 0.8rem; color: var(--text-muted); line-height: 1.4;
+		background: var(--surface); border: 1px solid var(--border-muted);
+		border-radius: var(--r-md);
+		padding: 0.5rem 0.7rem; margin: 0 0 0.7rem;
+	}
 
 	.doc-sub { display: flex; flex-wrap: wrap; gap: 0.5rem 0.9rem; align-items: center; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.6rem; }
 	.expiry { color: var(--text-subtle); }
