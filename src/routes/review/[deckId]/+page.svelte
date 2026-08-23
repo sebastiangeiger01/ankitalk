@@ -4,6 +4,7 @@
 	import { fade } from 'svelte/transition';
 	import { createReviewEngine, type ReviewEvent, type SessionStats, type StartOptions, type IntervalLabels, type QueueCounts, type PrefetchedCards } from '$lib/client/review-engine';
 	import { preloadTTS, unlockAudioForGesture } from '$lib/client/audio';
+	import { setAudioSessionType } from '$lib/client/audio-session';
 	import { getPrepareAudioAhead } from '$lib/client/preferences';
 	import { locale, t } from '$lib/i18n';
 	import ReviewHelp from '$lib/components/ReviewHelp.svelte';
@@ -408,6 +409,10 @@
 	 */
 	async function acquireMicStream(): Promise<MediaStream | null> {
 		try {
+			// Declare the recording session explicitly. iOS otherwise infers the session type and
+			// keeps the inference for the rest of the tab's life, which is how a review session
+			// used to leave the listen reader's playback ducked by echo cancellation.
+			setAudioSessionType('play-and-record');
 			return await navigator.mediaDevices.getUserMedia({
 				audio: {
 					echoCancellation: true,
@@ -642,6 +647,9 @@
 		if (errorTimer) clearTimeout(errorTimer);
 		if (highlightTimer) clearTimeout(highlightTimer);
 		document.body.classList.remove('review-active');
+		// Hand the audio session back to the default so the next screen (notably the listen
+		// reader, which is playback-only) isn't left in the mic's echo-cancelled mode.
+		setAudioSessionType('auto');
 		engine.destroy();
 	});
 </script>

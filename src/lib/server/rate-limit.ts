@@ -50,6 +50,13 @@ export const RATE_LIMITS = {
 	 */
 	listen_stream_per_minute: { limit: 60, windowSec: 60 },
 	/**
+	 * Listen MP3 downloads. Unlike a stream, a download runs the whole document start to finish
+	 * with no pacing, so each one is a burst of R2 reads (and, for anything not yet cached,
+	 * ElevenLabs calls). Nobody legitimately downloads the same document over and over, so this
+	 * is deliberately tighter than the stream bucket.
+	 */
+	listen_download_per_hour: { limit: 20, windowSec: 3600 },
+	/**
 	 * Agent session minting. Each session can run for minutes and bills both LLM + voice
 	 * minutes through the user's ElevenLabs Conversational AI quota. Bring-your-own-key
 	 * means the spend is the user's, but the rate limit protects them from a buggy client
