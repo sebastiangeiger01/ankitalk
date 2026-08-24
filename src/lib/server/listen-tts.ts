@@ -1,6 +1,7 @@
 import { synthesizeElevenLabsSpeech, type ElevenLabsTtsSettings } from './tts';
 import { calculateElevenLabsTtsCost, logUsage } from './usage';
 import { estimateMp3DurationMs } from '$lib/listen/sentences';
+import { acquireSynthLock, releaseSynthLock } from './synth-lock';
 
 export const LISTEN_CACHE_KEY_PREFIX = 'listen-cache';
 const CACHE_EXTEND_DAYS = 14;
@@ -15,10 +16,8 @@ const MAX_SYNTH_RETRIES = 2;
  */
 const MIN_AUDIO_BYTES = 512;
 
-/** KV key namespace for the per-sentence synthesis lock that prevents concurrent double-billing. */
+/** Namespace for the per-sentence synthesis lock that prevents concurrent double-billing. */
 const SYNTH_LOCK_PREFIX = 'listen-synth';
-/** Lock auto-expires so a crashed generator can never wedge a sentence permanently. */
-const SYNTH_LOCK_TTL_SECONDS = 60;
 /** While another generator holds the lock, poll the cache this many times before giving up. */
 const LOCK_WAIT_ATTEMPTS = 20;
 const LOCK_WAIT_INTERVAL_MS = 300;
@@ -26,9 +25,8 @@ const LOCK_WAIT_INTERVAL_MS = 300;
 /**
  * Dedupe concurrent calls *within the same Worker isolate*: two simultaneous stream requests for
  * the same sentence share a single in-flight synthesis promise instead of both calling ElevenLabs.
- * This covers the common double-tap / two-tab case. The KV lock below extends best-effort dedupe
- * across isolates (KV has no atomic compare-and-set, so a sub-second cross-isolate race can still
- * slip through — acceptable: it only costs one extra generation, never corrupts state).
+ * This covers the common double-tap / two-tab case. The D1 lock below extends that across
+ * isolates — atomically, since an INSERT against a primary key either wins or does not.
  */
 const inFlightSynth = new Map<string, Promise<SynthesizeResult>>();
 
@@ -148,7 +146,6 @@ async function loadCached(
 export async function getOrSynthesizeSentence(
 	db: D1Database,
 	media: R2Bucket,
-	kv: KVNamespace,
 	userId: string,
 	apiKey: string,
 	text: string,
@@ -167,7 +164,7 @@ export async function getOrSynthesizeSentence(
 	const existing = inFlightSynth.get(lockKey);
 	if (existing) return existing;
 
-	const work = synthesizeAndCache(db, media, kv, userId, apiKey, text, charCount, sentenceHash, settings, languageCode, waitUntil, lockKey);
+	const work = synthesizeAndCache(db, media, userId, apiKey, text, charCount, sentenceHash, settings, languageCode, waitUntil, lockKey);
 	inFlightSynth.set(lockKey, work);
 	try {
 		return await work;
@@ -179,7 +176,6 @@ export async function getOrSynthesizeSentence(
 async function synthesizeAndCache(
 	db: D1Database,
 	media: R2Bucket,
-	kv: KVNamespace,
 	userId: string,
 	apiKey: string,
 	text: string,
@@ -190,11 +186,11 @@ async function synthesizeAndCache(
 	waitUntil: (p: Promise<unknown>) => void,
 	lockKey: string
 ): Promise<SynthesizeResult> {
-	const kvLock = `${SYNTH_LOCK_PREFIX}:${lockKey}`;
+	const synthLock = `${SYNTH_LOCK_PREFIX}:${lockKey}`;
 
-	// Cross-isolate soft lock: if another isolate is already generating this sentence, wait for it
-	// to land in the cache rather than generating (and billing) a second copy.
-	if (await kv.get(kvLock)) {
+	// Cross-isolate lock: if another isolate is already generating this sentence, wait for it to
+	// land in the cache rather than generating (and billing) a second copy.
+	if (!(await acquireSynthLock(db, synthLock))) {
 		for (let i = 0; i < LOCK_WAIT_ATTEMPTS; i++) {
 			await sleep(LOCK_WAIT_INTERVAL_MS);
 			const ready = await loadCached(db, media, userId, sentenceHash, waitUntil);
@@ -203,7 +199,6 @@ async function synthesizeAndCache(
 		// Timed out — the other generator likely died; fall through and generate ourselves.
 	}
 
-	await kv.put(kvLock, '1', { expirationTtl: SYNTH_LOCK_TTL_SECONDS });
 	try {
 		// A generator may have finished in the gap between our cache miss and acquiring the lock.
 		const justFinished = await loadCached(db, media, userId, sentenceHash, waitUntil);
@@ -236,7 +231,7 @@ async function synthesizeAndCache(
 
 		return { bytes, durationMs, cached: false };
 	} finally {
-		waitUntil(kv.delete(kvLock));
+		waitUntil(releaseSynthLock(db, synthLock));
 	}
 }
 

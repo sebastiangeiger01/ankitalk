@@ -12,11 +12,20 @@ const settings: ElevenLabsTtsSettings = {
 	elevenlabs_speaker_boost: true
 };
 
-/** Minimal D1 fake: records every run() and lets a test control what first() returns. */
+/**
+ * Minimal D1 fake: records every run() and lets a test control what first() returns.
+ *
+ * `meta.changes` matters — the synthesis lock is an upsert whose affected-row count decides
+ * whether this caller owns the lock, so a fake that omitted it would make every caller believe
+ * someone else was already generating. Lock rows are tracked for real, so the dedupe test
+ * exercises the same contention path as production.
+ */
 function makeDb(firstValue: unknown = null) {
 	const runs: { sql: string; args: unknown[] }[] = [];
+	const locks = new Set<string>();
 	const db = {
 		runs,
+		locks,
 		prepare(sql: string) {
 			return {
 				bind(...args: unknown[]) {
@@ -24,7 +33,17 @@ function makeDb(firstValue: unknown = null) {
 						first: async () => firstValue,
 						run: async () => {
 							runs.push({ sql, args });
-							return { success: true } as unknown;
+							if (sql.includes('INSERT INTO synth_locks')) {
+								const key = String(args[0]);
+								if (locks.has(key)) return { success: true, meta: { changes: 0 } } as unknown;
+								locks.add(key);
+								return { success: true, meta: { changes: 1 } } as unknown;
+							}
+							if (sql.includes('DELETE FROM synth_locks')) {
+								locks.delete(String(args[0]));
+								return { success: true, meta: { changes: 1 } } as unknown;
+							}
+							return { success: true, meta: { changes: 1 } } as unknown;
 						},
 						all: async () => ({ results: [] })
 					};
@@ -32,7 +51,7 @@ function makeDb(firstValue: unknown = null) {
 			};
 		}
 	};
-	return db as unknown as D1Database & { runs: typeof runs };
+	return db as unknown as D1Database & { runs: typeof runs; locks: Set<string> };
 }
 
 function makeR2(existing: Map<string, Uint8Array> = new Map()) {
@@ -87,7 +106,7 @@ describe('getOrSynthesizeSentence — billing guards', () => {
 		const { waitUntil, settle } = makeWaitUntil();
 
 		await expect(
-			getOrSynthesizeSentence(db, media, makeKv(), 'u1', 'key', 'A sentence long enough to synthesize.', 38, 'hash1', settings, 'de', waitUntil)
+			getOrSynthesizeSentence(db, media, 'u1', 'key', 'A sentence long enough to synthesize.', 38, 'hash1', settings, 'de', waitUntil)
 		).rejects.toThrow();
 		await settle();
 
@@ -106,7 +125,7 @@ describe('getOrSynthesizeSentence — billing guards', () => {
 		const { waitUntil, settle } = makeWaitUntil();
 
 		const result = await getOrSynthesizeSentence(
-			db, media, makeKv(), 'u1', 'key', 'A sentence long enough to synthesize.', 38, 'hash1', settings, 'de', waitUntil
+			db, media, 'u1', 'key', 'A sentence long enough to synthesize.', 38, 'hash1', settings, 'de', waitUntil
 		);
 		await settle();
 
@@ -126,7 +145,7 @@ describe('getOrSynthesizeSentence — billing guards', () => {
 		const { waitUntil, settle } = makeWaitUntil();
 
 		const result = await getOrSynthesizeSentence(
-			db, media, makeKv(), 'u1', 'key', 'A sentence long enough to synthesize.', 38, 'hash1', settings, 'de', waitUntil
+			db, media, 'u1', 'key', 'A sentence long enough to synthesize.', 38, 'hash1', settings, 'de', waitUntil
 		);
 		await settle();
 
@@ -145,8 +164,8 @@ describe('getOrSynthesizeSentence — billing guards', () => {
 
 		const args = ['u1', 'key', 'A sentence long enough to synthesize.', 38, 'hashX', settings, 'de'] as const;
 		const [a, b] = await Promise.all([
-			getOrSynthesizeSentence(db, media, makeKv(), ...args, waitUntil),
-			getOrSynthesizeSentence(db, media, makeKv(), ...args, waitUntil)
+			getOrSynthesizeSentence(db, media, ...args, waitUntil),
+			getOrSynthesizeSentence(db, media, ...args, waitUntil)
 		]);
 		await settle();
 

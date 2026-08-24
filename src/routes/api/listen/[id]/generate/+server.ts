@@ -91,7 +91,6 @@ export const POST: RequestHandler = async ({ params, url, request, platform, loc
 			await getOrSynthesizeSentence(
 				db,
 				platform!.env.MEDIA,
-				platform!.env.KV,
 				userId,
 				apiKey,
 				sentence.text,
