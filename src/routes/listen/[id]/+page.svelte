@@ -10,6 +10,7 @@
 	import { estimateCredits } from '$lib/listen/estimate';
 	import { setAudioSessionType } from '$lib/client/audio-session';
 	import { downloadFilename } from '$lib/listen/mp3';
+	import { DEFAULT_GENERATE_BATCH, type GenerateProgress } from '$lib/listen/generate';
 	import {
 		clampDocumentTime,
 		documentOffsetSec,
@@ -1150,19 +1151,29 @@
 	let confirmRemoveOpen = $state(false);
 
 	/**
-	 * MP3 download. The reader plays a live stream that exists only while the tab does; a file
-	 * is what survives a flight, a basement or a car stereo. The endpoint concatenates the whole
-	 * document server-side and streams it to disk, so nothing is buffered in page memory.
+	 * MP3 download, in two phases.
+	 *
+	 * A whole document cannot be synthesized in one request. The first version of this button
+	 * tried, and stopped after roughly fifty new sentences, handing back a file that ended early.
+	 * Which ceiling it hit is not settled — the runtime's grace period for work detached from the
+	 * response, or the provider's rate limit under an unpaced burst — but every candidate has the
+	 * same shape and the same answer: bound the work per request. So the page drives generation
+	 * itself, one batch at a time, showing progress and resuming wherever it left off. Only once
+	 * the server confirms the document is complete does the download start, and that part reads
+	 * nothing but cached audio.
 	 */
 	let confirmDownloadOpen = $state(false);
-	let downloadPreparing = $state(false);
+	let downloadBusy = $state(false);
 	let downloadNotice = $state('');
 	let downloadNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+	/** Generation progress, in sentences. Null while no generation phase is running. */
+	let generateProgress = $state<{ done: number; total: number } | null>(null);
+	let generateCancelled = false;
 
 	const downloadUrl = $derived(`/api/listen/${docId}/download?speed=${genSpeed}`);
 	const downloadName = $derived(downloadFilename(doc?.title ?? ''));
 
-	/** Sentences the download would have to synthesize, and what that costs. */
+	/** Sentences the download would have to synthesize first, and what that costs. */
 	const uncachedCount = $derived(sentences.filter((s) => !s.cached).length);
 	const downloadCredits = $derived.by(() => {
 		if (!doc || !uncachedCount) return 0;
@@ -1173,30 +1184,102 @@
 	function showDownloadNotice(message: string) {
 		downloadNotice = message;
 		if (downloadNoticeTimer) clearTimeout(downloadNoticeTimer);
-		downloadNoticeTimer = setTimeout(() => (downloadNotice = ''), 9000);
+		downloadNoticeTimer = setTimeout(() => (downloadNotice = ''), 12_000);
 	}
 
 	/**
-	 * Start the download without leaving the page — navigating here would tear down the reader
-	 * and stop playback. A HEAD preflight runs the server's checks first so a missing API key
-	 * surfaces as a message rather than as an error page saved under an .mp3 name.
+	 * Phase one: ask the server to synthesize the missing sentences, a batch at a time, until it
+	 * reports nothing left. Each batch is its own request with its own budget, so document length
+	 * stops being a limit. Everything a batch finishes is cached, so cancelling or failing
+	 * halfway costs nothing to pick up again later.
 	 */
-	async function startDownload() {
-		if (downloadPreparing) return;
-		downloadPreparing = true;
+	async function generateMissing(): Promise<boolean> {
+		generateCancelled = false;
+		generateProgress = { done: sentences.length - uncachedCount, total: sentences.length };
+
+		// Three independent brakes, because this loop spends the user's money. A batch that
+		// reports work left but never reduces it would otherwise re-bill the same sentences
+		// forever, so the loop stops unless `remaining` is actually falling; a run of failures
+		// stops it too, after backing off first — if the provider is rate-limiting us, waiting is
+		// what lets the run continue; and the round cap is a backstop for anything unforeseen.
+		const MAX_STUCK_ROUNDS = 3;
+		const MAX_ERROR_ROUNDS = 3;
+		const ERROR_BACKOFF_MS = [2000, 4000, 8000];
+		const maxRounds = Math.ceil(sentences.length / DEFAULT_GENERATE_BATCH) + 10;
+
+		let stuckRounds = 0;
+		let errorRounds = 0;
+		let lowestRemaining = Number.POSITIVE_INFINITY;
+
+		for (let round = 0; round < maxRounds; round++) {
+			if (generateCancelled) return false;
+
+			let data: GenerateProgress;
+			try {
+				const res = await fetch(`/api/listen/${docId}/generate?speed=${genSpeed}`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ limit: DEFAULT_GENERATE_BATCH })
+				});
+				if (!res.ok) {
+					showDownloadNotice(
+						res.status === 429 ? $t('listen.rateLimited') : $t('listen.downloadError')
+					);
+					return false;
+				}
+				data = (await res.json()) as GenerateProgress;
+			} catch {
+				showDownloadNotice($t('listen.downloadError'));
+				return false;
+			}
+
+			generateProgress = { done: data.total - data.remaining, total: data.total };
+			if (data.remaining === 0) return true;
+
+			if (data.remaining < lowestRemaining) {
+				lowestRemaining = data.remaining;
+				stuckRounds = 0;
+			} else if (++stuckRounds >= MAX_STUCK_ROUNDS) {
+				showDownloadNotice(data.error || $t('listen.downloadError'));
+				return false;
+			}
+
+			if (data.error) {
+				if (++errorRounds >= MAX_ERROR_ROUNDS) {
+					showDownloadNotice(data.error);
+					return false;
+				}
+				await new Promise((r) => setTimeout(r, ERROR_BACKOFF_MS[errorRounds - 1]));
+			} else {
+				errorRounds = 0;
+			}
+		}
+
+		showDownloadNotice($t('listen.downloadError'));
+		return false;
+	}
+
+	/**
+	 * Phase two. The anchor click keeps the browser on this page — navigating would tear down
+	 * the reader and stop playback — and the HEAD preflight confirms the server agrees the
+	 * document is complete before anything is written to disk.
+	 */
+	async function fetchDownload(): Promise<boolean> {
 		try {
 			const probe = await fetch(downloadUrl, { method: 'HEAD' });
 			if (!probe.ok) {
 				showDownloadNotice(
 					probe.status === 429 ? $t('listen.rateLimited') : $t('listen.downloadError')
 				);
-				return;
+				return false;
+			}
+			if (Number(probe.headers.get('X-Listen-Pending') ?? '0') > 0) {
+				showDownloadNotice($t('listen.downloadError'));
+				return false;
 			}
 		} catch {
 			showDownloadNotice($t('listen.downloadError'));
-			return;
-		} finally {
-			downloadPreparing = false;
+			return false;
 		}
 
 		const a = document.createElement('a');
@@ -1205,18 +1288,38 @@
 		document.body.appendChild(a);
 		a.click();
 		a.remove();
-		showDownloadNotice($t('listen.downloadStarted'));
+		return true;
+	}
+
+	async function runDownload() {
+		if (downloadBusy) return;
+		downloadBusy = true;
+		try {
+			if (uncachedCount > 0 && !(await generateMissing())) return;
+			generateProgress = null;
+			if (await fetchDownload()) showDownloadNotice($t('listen.downloadStarted'));
+		} finally {
+			downloadBusy = false;
+			generateProgress = null;
+			// Cache flags moved: refresh so the legend, seek bar and credit lines agree.
+			void refreshSentences();
+		}
+	}
+
+	function cancelDownload() {
+		generateCancelled = true;
+		showDownloadNotice($t('listen.downloadCancelled'));
 	}
 
 	function download() {
 		if (!doc) return;
-		// Anything still uncached gets synthesized (and billed) by the download, so say what it
-		// costs before starting. A fully cached document downloads straight away.
+		// Anything still uncached gets synthesized (and billed) first, so say what it costs
+		// before starting. A fully cached document downloads straight away.
 		if (uncachedCount > 0) {
 			confirmDownloadOpen = true;
 			return;
 		}
-		void startDownload();
+		void runDownload();
 	}
 
 	function rename() {
@@ -1301,11 +1404,11 @@
 				<button
 					class="text-btn"
 					onclick={download}
-					disabled={downloadPreparing}
-					aria-label={$t('listen.download')}
+					disabled={downloadBusy}
+					aria-label={downloadBusy ? $t('listen.downloading') : $t('listen.download')}
 					title={$t('listen.download')}
 				>
-					{#if downloadPreparing}
+					{#if downloadBusy}
 						<Spinner size={14} />
 					{:else}
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -1324,6 +1427,27 @@
 			<span>{$t('listen.charsLabel', { count: totalChars.toLocaleString() })}</span>
 			<span class="expiry">{$t('listen.expiresIn', { days: expiryDays(doc.expires_at) })}</span>
 		</div>
+
+		{#if generateProgress}
+			<div class="download-progress" role="status">
+				<div class="download-progress-head">
+					<span
+						>{$t('listen.downloadGenerating', {
+							done: generateProgress.done,
+							total: generateProgress.total
+						})}</span
+					>
+					<button class="text-btn" onclick={cancelDownload}>{$t('listen.cancel')}</button>
+				</div>
+				<div class="download-bar">
+					<div
+						class="download-bar-fill"
+						style={`width:${(generateProgress.done / Math.max(1, generateProgress.total)) * 100}%`}
+					></div>
+				</div>
+				<span class="download-progress-hint">{$t('listen.downloadKeepOpen')}</span>
+			</div>
+		{/if}
 
 		{#if downloadNotice}
 			<p class="download-notice" role="status">{downloadNotice}</p>
@@ -1578,7 +1702,7 @@
 	confirmLabel={$t('listen.downloadStart')}
 	onconfirm={() => {
 		confirmDownloadOpen = false;
-		void startDownload();
+		void runDownload();
 	}}
 	oncancel={() => (confirmDownloadOpen = false)}
 />
@@ -1649,6 +1773,19 @@
 		border-radius: var(--r-md);
 		padding: 0.5rem 0.7rem; margin: 0 0 0.7rem;
 	}
+
+	.download-progress {
+		display: flex; flex-direction: column; gap: 0.4rem;
+		background: var(--surface); border: 1px solid var(--border);
+		border-radius: var(--r-md);
+		padding: 0.6rem 0.7rem; margin: 0 0 0.7rem;
+		font-size: 0.82rem; color: var(--text);
+	}
+	.download-progress-head { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
+	.download-progress-head .text-btn { min-height: 32px; padding: 0.25rem 0.4rem; }
+	.download-progress-hint { font-size: 0.72rem; color: var(--text-subtle); line-height: 1.35; }
+	.download-bar { height: 6px; background: var(--border-muted); border-radius: var(--r-pill); overflow: hidden; }
+	.download-bar-fill { height: 100%; background: var(--primary); transition: width 0.3s var(--ease); }
 
 	.doc-sub { display: flex; flex-wrap: wrap; gap: 0.5rem 0.9rem; align-items: center; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.6rem; }
 	.expiry { color: var(--text-subtle); }

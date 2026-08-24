@@ -21,6 +21,8 @@
  * migrations notes); nothing here creates them.
  */
 
+import { acquireSynthLock, releaseSynthLock } from './synth-lock';
+
 const STD_PREFIX = 'tts/std/';
 const PIN_PREFIX = 'tts/pin/';
 
@@ -136,21 +138,40 @@ export async function refreshStoredAudio(
 }
 
 /**
- * Best-effort generation lock so two near-simultaneous first plays of the same clip don't both
- * call the (paid) speech provider. KV has no atomic compare-and-set, so this narrows the race
- * window rather than closing it completely; the caller re-checks R2 after a short wait.
+ * Generation lock so two near-simultaneous first plays of the same clip don't both call the
+ * (paid) speech provider.
+ *
+ * Backed by D1 rather than KV. The KV version spent a write on acquire and a delete on release
+ * against a free-tier budget of a thousand of each per day for the whole account — a budget a
+ * review session shares with everything else KV does, the rate limiter included. It also had no
+ * atomic compare-and-set, so it only ever narrowed the race. See `./synth-lock`.
  */
 function lockKey(hash: string): string {
-	return `ttslock:${hash}`;
+	return `tts:${hash}`;
 }
-export async function isGenerationLocked(kv: KVNamespace, hash: string): Promise<boolean> {
-	return (await kv.get(lockKey(hash))) !== null;
+
+export async function isGenerationLocked(db: D1Database, hash: string): Promise<boolean> {
+	try {
+		const row = await db
+			.prepare(
+				"SELECT 1 AS held FROM synth_locks WHERE lock_key = ? AND expires_at > datetime('now')"
+			)
+			.bind(lockKey(hash))
+			.first<{ held: number }>();
+		return row !== null;
+	} catch {
+		// Never let lock bookkeeping block a clip the user is waiting to hear.
+		return false;
+	}
 }
-export async function acquireGenerationLock(kv: KVNamespace, hash: string): Promise<void> {
-	await kv.put(lockKey(hash), '1', { expirationTtl: 60 });
+
+/** Returns true when this caller now owns the lock. */
+export async function acquireGenerationLock(db: D1Database, hash: string): Promise<boolean> {
+	return acquireSynthLock(db, lockKey(hash));
 }
-export async function releaseGenerationLock(kv: KVNamespace, hash: string): Promise<void> {
-	await kv.delete(lockKey(hash));
+
+export async function releaseGenerationLock(db: D1Database, hash: string): Promise<void> {
+	await releaseSynthLock(db, lockKey(hash));
 }
 
 /** True while the deck carries a future `audio_keep_until` date (an active exam pin). */

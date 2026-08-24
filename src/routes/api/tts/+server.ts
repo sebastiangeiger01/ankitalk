@@ -211,7 +211,7 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 			return response;
 		}
 
-		if (await isGenerationLocked(kv, hash)) {
+		if (await isGenerationLocked(db, hash)) {
 			for (let i = 0; i < LOCK_WAIT_ATTEMPTS; i++) {
 				await sleep(LOCK_WAIT_INTERVAL_MS);
 				const retry = await getStoredAudio(bucket, hash, deckPinned);
@@ -235,7 +235,7 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 				}
 			}
 		}
-		await acquireGenerationLock(kv, hash);
+		await acquireGenerationLock(db, hash);
 
 		const justStored = await getStoredAudio(bucket, hash, deckPinned);
 		if (justStored) {
@@ -243,7 +243,7 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 			if (cache && cacheKey) {
 				platform?.context?.waitUntil(cache.put(cacheKey, response.clone()).catch(() => undefined));
 			}
-			platform?.context?.waitUntil(releaseGenerationLock(kv, hash).catch(() => undefined));
+			platform?.context?.waitUntil(releaseGenerationLock(db, hash).catch(() => undefined));
 			logEvent('r2-hit');
 			return response;
 		}
@@ -332,6 +332,6 @@ const handleTts: RequestHandler = async ({ request, platform, locals }) => {
 		return response;
 	} finally {
 		// Release on every exit (success, missing-key early return, or throw). Delete is idempotent.
-		if (bucket) platform?.context?.waitUntil(releaseGenerationLock(kv, hash).catch(() => undefined));
+		if (bucket) platform?.context?.waitUntil(releaseGenerationLock(db, hash).catch(() => undefined));
 	}
 };
