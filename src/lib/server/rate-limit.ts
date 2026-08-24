@@ -21,13 +21,31 @@ export async function enforceRateLimit(
 ): Promise<void> {
 	const slot = Math.floor(Date.now() / 1000 / windowSec);
 	const key = `rl:${bucket}:${userId}:${slot}`;
-	const current = parseInt((await kv.get(key)) ?? '0', 10);
-	if (current >= limit) {
+
+	let current: number;
+	try {
+		current = parseInt((await kv.get(key)) ?? '0', 10);
+	} catch {
+		// KV itself is unavailable — the account's daily operation budget is spent, or the
+		// namespace is having a bad minute. Fail open. A limiter that cannot count is a soft
+		// cost guard; turning it into a hard outage across every endpoint that calls it (review
+		// audio, hints, the tutor, MCP, listening) is far worse than briefly not counting.
+		return;
+	}
+
+	if (Number.isFinite(current) && current >= limit) {
 		throw error(429, `Too many requests. Please slow down and try again in a moment.`);
 	}
+
 	// `expirationTtl` = 2× window so an in-flight slot doesn't get evicted prematurely under
 	// clock skew between isolates. The slot key naturally rolls over so old slots fall out.
-	await kv.put(key, String(current + 1), { expirationTtl: windowSec * 2 });
+	try {
+		await kv.put(key, String((Number.isFinite(current) ? current : 0) + 1), {
+			expirationTtl: windowSec * 2
+		});
+	} catch {
+		// Same reasoning: a request that was allowed stays allowed even if we cannot record it.
+	}
 }
 
 /**
@@ -56,6 +74,13 @@ export const RATE_LIMITS = {
 	 * is deliberately tighter than the stream bucket.
 	 */
 	listen_download_per_hour: { limit: 20, windowSec: 3600 },
+	/**
+	 * Batched synthesis for "generate the whole document". The client loops over this endpoint
+	 * one bounded batch at a time, so a long document legitimately makes many calls in a row —
+	 * the bucket has to cover a few hundred sentences per minute without tripping. Spend is
+	 * already bounded per sentence by the cache: a repeat call generates nothing.
+	 */
+	listen_generate_per_minute: { limit: 120, windowSec: 60 },
 	/**
 	 * Agent session minting. Each session can run for minutes and bills both LLM + voice
 	 * minutes through the user's ElevenLabs Conversational AI quota. Bring-your-own-key

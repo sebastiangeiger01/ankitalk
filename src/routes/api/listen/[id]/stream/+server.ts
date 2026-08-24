@@ -79,7 +79,6 @@ export const GET: RequestHandler = async ({ params, url, platform, locals }) => 
 	const settings = { ...buildListenTtsSettings(saved, doc.voice_id, doc.tts_model), elevenlabs_tts_speed: genSpeed };
 	const language = doc.language ?? undefined;
 	const media = platform!.env.MEDIA;
-	const kv = platform!.env.KV;
 
 	const ctx = platform!.context;
 	const waitUntil = (p: Promise<unknown>) => ctx.waitUntil(p.catch(() => undefined));
@@ -113,7 +112,6 @@ export const GET: RequestHandler = async ({ params, url, platform, locals }) => 
 					const result = await getOrSynthesizeSentence(
 						db,
 						media,
-						kv,
 						userId,
 						apiKey,
 						sentence.text,
